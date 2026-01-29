@@ -1,0 +1,13 @@
+; UI - Select 03
+; Reasoning: Short confirm chirp for selection.
+TITLE "UI - Select 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+SYSTEM PAL
+
+INSTR ui WAVE=TRI ADSR=0,3,12,2
+
+VOICE 1 ui:
+  O6 L32 E E R16

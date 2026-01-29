@@ -1,0 +1,13 @@
+; Enemy - Attack 06
+; Reasoning: Low pulse stab for enemy strike.
+TITLE "Enemy - Attack 06"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR atk WAVE=PULSE ADSR=0,4,10,4 PW=0600
+
+VOICE 1 atk:
+  O3 L16 G G R8

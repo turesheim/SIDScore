@@ -1,0 +1,16 @@
+; Game State - Level Start 01
+; Reasoning: Bright opening stinger for level start.
+TITLE "Game State - Level Start 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=1,4,10,4 PW=0800
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+
+VOICE 1 lead:
+  O5 L8 C E G > C4
+VOICE 2 bass:
+  O3 L4 C G

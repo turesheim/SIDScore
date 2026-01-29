@@ -1,0 +1,13 @@
+; Ambient - Wind 02
+; Reasoning: Noisy swell for windy space.
+TITLE "Ambient - Wind 02"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 70
+SYSTEM PAL
+
+INSTR amb WAVE=NOISE ADSR=0,9,4,9
+
+VOICE 3 amb:
+  L4 X2 R4 X2 R4

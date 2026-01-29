@@ -1,0 +1,7 @@
+net.resheim.sidscore/bin/
+/.trace/
+/externals/
+listening-tests/*.asm
+listening-tests/*.prg
+listening-tests/*.sid
+listening-tests/*.wav

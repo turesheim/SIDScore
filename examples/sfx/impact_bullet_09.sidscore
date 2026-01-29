@@ -1,0 +1,13 @@
+; Impact - Bullet Collide 09
+; Reasoning: Noisy ping for ricochet.
+TITLE "Impact - Bullet Collide 09"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 190
+SYSTEM PAL
+
+INSTR tik WAVE=NOISE ADSR=0,2,2,1
+
+VOICE 3 tik:
+  L32 X X R16

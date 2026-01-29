@@ -1,0 +1,13 @@
+; Damage/Alert - Critical 10
+; Reasoning: Noise pulse for critical alert.
+TITLE "Damage/Alert - Critical 10"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 100
+SYSTEM PAL
+
+INSTR crit WAVE=NOISE ADSR=0,6,4,5
+
+VOICE 3 crit:
+  L16 X X X8

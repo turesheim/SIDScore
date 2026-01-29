@@ -1,0 +1,13 @@
+; Ambient - Engine 03
+; Reasoning: Low pulse hum for engine loop.
+TITLE "Ambient - Engine 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 80
+SYSTEM PAL
+
+INSTR amb WAVE=PULSE ADSR=0,8,8,8 PW=0400
+
+VOICE 1 amb:
+  O2 L2 C2

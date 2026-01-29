@@ -1,0 +1,13 @@
+; Movement - Fall 08
+; Reasoning: Descending tones for falling motion.
+TITLE "Movement - Fall 08"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR fall WAVE=TRI ADSR=1,4,8,4
+
+VOICE 1 fall:
+  O5 L16 G F E D C

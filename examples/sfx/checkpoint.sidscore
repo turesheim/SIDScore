@@ -1,0 +1,16 @@
+; Checkpoint
+; Reasoning: Confirming cue for checkpoint reached.
+TITLE "Checkpoint"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=2,5,8,4
+INSTR pad WAVE=PULSE ADSR=1,5,8,5 PW=0700
+
+VOICE 1 lead:
+  O5 L8 E G > C4 R8
+VOICE 2 pad:
+  O4 L8 C E G4 R8

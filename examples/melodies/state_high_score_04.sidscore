@@ -1,0 +1,20 @@
+; Game State - High Score 04
+; Reasoning: Triumphant classic C64 cue with shared style and instrumentation. Style 04 (Syncopated stabs).
+TITLE "Game State - High Score 04"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE+TRI ADSR=2,5,10,4 PW=0700
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=PULSE ADSR=1,5,8,4 PW=0800
+
+VOICE 1 lead:
+  O6 L8 C R E R G R C R D R F R A R D R E R G R C R E R
+VOICE 2 bass:
+  O3 L4 C R G R F R C R G R D R
+VOICE 3 pad:
+  O4 L2 C R D R E R

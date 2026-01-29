@@ -1,0 +1,13 @@
+; Explosion - Crackle
+; Reasoning: Crackly noise pops for shrapnel.
+TITLE "Explosion - Crackle"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 170
+SYSTEM PAL
+
+INSTR crackle WAVE=NOISE ADSR=0,6,2,2
+
+VOICE 3 crackle:
+  L32 X X X R32 X X R32 X X X X R16

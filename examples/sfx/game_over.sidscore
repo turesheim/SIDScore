@@ -1,0 +1,16 @@
+; Game Over
+; Reasoning: Short stinger for game end state.
+TITLE "Game Over"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 90
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=2,6,8,6
+INSTR bass WAVE=PULSE ADSR=0,6,10,6 PW=0700
+
+VOICE 1 lead:
+  O4 L8 G E C < B A G4 R4
+VOICE 2 bass:
+  O2 L4 C G C2

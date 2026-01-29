@@ -1,0 +1,20 @@
+; Game State - High Score 05
+; Reasoning: Triumphant classic C64 cue with shared style and instrumentation. Style 05 (Stepwise melody).
+TITLE "Game State - High Score 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 145
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=1,4,8,3
+INSTR bass WAVE=PULSE ADSR=1,6,10,4 PW=0500
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O6 L8 C D E F G A G E D E F G A B A F E F G A G F E D
+VOICE 2 bass:
+  O3 L4 C G A E F C G D E B C G
+VOICE 3 pad:
+  O4 L2 C G A E F C

@@ -1,0 +1,20 @@
+; Game State - Get Ready 10
+; Reasoning: Optimistic classic C64 cue with shared style and instrumentation. Style 10 (Bright cadence).
+TITLE "Game State - Get Ready 10"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 152
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE+TRI ADSR=1,4,10,3 PW=0800
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O5 L8 C D E G A G E D E F G A B A G F G A B C B A G F
+VOICE 2 bass:
+  O3 L4 C G C G F C F C G D G D
+VOICE 3 pad:
+  O4 L2 C G F C G D

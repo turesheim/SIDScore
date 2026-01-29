@@ -1,0 +1,20 @@
+; Game State - Get Ready 09
+; Reasoning: Optimistic classic C64 cue with shared style and instrumentation. Style 09 (Driving arps).
+TITLE "Game State - Get Ready 09"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 158
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=1,5,8,4
+INSTR bass WAVE=PULSE ADSR=1,6,10,5 PW=0600
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O5 L16 C E G B C B G E D F A C D C A F E G B D E D B G F A C E F E C A D F A C D C A F E G B D E D B G
+VOICE 2 bass:
+  O3 L8 C G A E F C G D C G A E F C G D D A E B F C G D
+VOICE 3 pad:
+  O4 L2 E C F D G E

@@ -1,0 +1,13 @@
+; Power-Up - Activate 04
+; Reasoning: Rising sweep for power-up engage.
+TITLE "Power-Up - Activate 04"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR pu WAVE=TRI ADSR=1,5,10,4
+
+VOICE 1 pu:
+  O4 L16 E G B > D8

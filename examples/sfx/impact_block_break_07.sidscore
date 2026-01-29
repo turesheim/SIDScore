@@ -1,0 +1,13 @@
+; Impact - Block Break 07
+; Reasoning: Pulse click for block crack.
+TITLE "Impact - Block Break 07"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR brk WAVE=PULSE ADSR=0,3,10,2 PW=0800
+
+VOICE 1 brk:
+  O5 L32 C C R16

@@ -1,0 +1,13 @@
+; Movement - Roll 04
+; Reasoning: Repeating low pulse for rolling object.
+TITLE "Movement - Roll 04"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR roll WAVE=PULSE ADSR=0,4,8,4 PW=0500
+
+VOICE 1 roll:
+  O2 L16 C D E F

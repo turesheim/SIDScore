@@ -1,0 +1,13 @@
+; Environment - Water/Lava 09
+; Reasoning: Short noise ticks for liquid drip.
+TITLE "Environment - Water/Lava 09"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 200
+SYSTEM PAL
+
+INSTR liq WAVE=NOISE ADSR=0,3,2,2
+
+VOICE 3 liq:
+  L32 X R32 X R32 X

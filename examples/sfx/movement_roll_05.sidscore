@@ -1,0 +1,13 @@
+; Movement - Roll 05
+; Reasoning: Noisy roll tick for rough surface.
+TITLE "Movement - Roll 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR roll WAVE=NOISE ADSR=0,3,2,2
+
+VOICE 3 roll:
+  L32 X X R32 X X

@@ -1,0 +1,13 @@
+; Movement - Footstep 03
+; Reasoning: Triangle taps for lighter steps.
+TITLE "Movement - Footstep 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 170
+SYSTEM PAL
+
+INSTR step WAVE=TRI ADSR=0,3,8,2
+
+VOICE 1 step:
+  O3 L16 C R16 C R16

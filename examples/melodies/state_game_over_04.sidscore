@@ -1,0 +1,20 @@
+; Game State - Game Over 04
+; Reasoning: Really sad minor cue with shared style and instrumentation. Style 04 (Syncopated stabs).
+TITLE "Game State - Game Over 04"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 135
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE+TRI ADSR=2,5,10,4 PW=0700
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=PULSE ADSR=1,5,8,4 PW=0800
+
+VOICE 1 lead:
+  O4 L8 A R C R E R A R B R D R F R B R C R E R A R C R
+VOICE 2 bass:
+  O2 L4 A R E R D R A R E R B R
+VOICE 3 pad:
+  O3 L2 A R B R C R

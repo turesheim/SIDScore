@@ -1,0 +1,20 @@
+; Game State - Life Lost 15
+; Reasoning: Less‑sad minor cue with shared style and instrumentation. Style 15 (R-Type-like pulse; inspired by R-Type).
+TITLE "Game State - Life Lost 15"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=1,4,12,3 PW=0800
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O5 L16 A B C R D E F R E D C B A B C R C D E R F G A R G F E D C D E R E F G R A B C R B A G F E F G R
+VOICE 2 bass:
+  O3 L8 A R A R D R D R E R E R A R A R F R F R C R C R
+VOICE 3 pad:
+  O4 L2 A E D A E B

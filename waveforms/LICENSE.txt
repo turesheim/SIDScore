@@ -1,0 +1,52 @@
+Waveform binaries license and provenance
+
+Source headers:
+- externals/mame/src/devices/sound/sidw6581.h
+- externals/mame/src/devices/sound/sidw8580.h
+
+Both headers declare:
+- license: GPL-2.0+
+- copyright-holders: Dag Lem
+
+The 6581 header also states:
+"Read-out combined waveforms taken from reSID 0.5."
+
+The 8580 header also states:
+"MOS-8580 R5 waveforms $30,$50,$60,$70" and
+"Created with Deadman's Raw Data to C Header converter"
+
+Binary files in this directory (all GPL-2.0+):
+- waveform30_6581.bin (4096 bytes)
+  Source: waveform30_6581[] in sidw6581.h (GPL-2.0+).
+- waveform50_6581.bin (8192 bytes)
+  Source: waveform50_6581[] in sidw6581.h (GPL-2.0+).
+  Note: The initializer in the header provides 4096 values; the remaining
+  4096 bytes are zero-filled to match C initializer semantics for an array
+  of size 4096+4096.
+- waveform60_6581.bin (8192 bytes)
+  Source: waveform60_6581[] in sidw6581.h (GPL-2.0+).
+  Note: The initializer in the header provides 4096 values; the remaining
+  4096 bytes are zero-filled to match C initializer semantics for an array
+  of size 4096+4096.
+- waveform70_6581.bin (8192 bytes)
+  Source: waveform70_6581[] in sidw6581.h (GPL-2.0+).
+  Note: The initializer in the header provides 4096 values; the remaining
+  4096 bytes are zero-filled to match C initializer semantics for an array
+  of size 4096+4096.
+- waveform30_8580.bin (4096 bytes)
+  Source: waveform30_8580[] in sidw8580.h (GPL-2.0+).
+- waveform50_8580.bin (8192 bytes)
+  Source: waveform50_8580[] in sidw8580.h (GPL-2.0+).
+  Note: The initializer in the header provides 4096 values; the remaining
+  4096 bytes are zero-filled to match C initializer semantics for an array
+  of size 4096+4096.
+- waveform60_8580.bin (8192 bytes)
+  Source: waveform60_8580[] in sidw8580.h (GPL-2.0+).
+  Note: The initializer in the header provides 4096 values; the remaining
+  4096 bytes are zero-filled to match C initializer semantics for an array
+  of size 4096+4096.
+- waveform70_8580.bin (8192 bytes)
+  Source: waveform70_8580[] in sidw8580.h (GPL-2.0+).
+  Note: The initializer in the header provides 4096 values; the remaining
+  4096 bytes are zero-filled to match C initializer semantics for an array
+  of size 4096+4096.

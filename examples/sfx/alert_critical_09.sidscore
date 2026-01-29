@@ -1,0 +1,13 @@
+; Damage/Alert - Critical 09
+; Reasoning: Low sustained note for critical state.
+TITLE "Damage/Alert - Critical 09"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 90
+SYSTEM PAL
+
+INSTR crit WAVE=TRI ADSR=0,6,8,6
+
+VOICE 1 crit:
+  O2 L4 C2

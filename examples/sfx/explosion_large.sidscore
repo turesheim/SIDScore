@@ -1,0 +1,16 @@
+; Explosion - Large
+; Reasoning: Longer noise tail for a large explosion.
+TITLE "Explosion - Large"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 130
+SYSTEM PAL
+
+INSTR thud WAVE=PULSE+TRI ADSR=0,6,12,8 PW=0600 PWMIN=0200 PWMAX=0C00 PWSWEEP=-16
+INSTR boom WAVE=NOISE ADSR=0,10,6,9
+
+VOICE 1 thud:
+  O2 L8 C2 R8 C8 R8
+VOICE 3 boom:
+  L16 X X X X8 X16 R8

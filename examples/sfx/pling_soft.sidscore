@@ -1,0 +1,13 @@
+; Pling - Soft
+; Reasoning: Soft triangle pling for gentle feedback.
+TITLE "Pling - Soft"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR pling WAVE=TRI ADSR=2,4,6,3
+
+VOICE 1 pling:
+  O5 L16 C R8

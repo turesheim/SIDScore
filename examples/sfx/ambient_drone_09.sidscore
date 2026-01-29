@@ -1,0 +1,13 @@
+; Ambient - Drone 09
+; Reasoning: Noise drone with soft tail.
+TITLE "Ambient - Drone 09"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 60
+SYSTEM PAL
+
+INSTR amb WAVE=NOISE ADSR=0,10,4,10
+
+VOICE 3 amb:
+  L2 X2

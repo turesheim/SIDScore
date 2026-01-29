@@ -1,0 +1,36 @@
+; seqs.sidscore
+
+TEMPO 120
+TIME 4/4
+SYSTEM PAL
+
+
+TABLE wave LeadWave {
+  SAW   @1
+  PULSE @1
+  TRI   @1
+  PULSE @1
+  LOOP
+}
+
+TABLE wave SAWWave {
+  SAW   HOLD
+}
+
+TABLE wave TRIWave {
+  PULSE   HOLD
+}
+
+INSTR saw WAVE=PULSE ADSR=8,2,10,4 PW=0800 WAVESEQ=SAWWave
+INSTR tri WAVE=PULSE ADSR=8,2,10,4 PW=0800 WAVESEQ=TRIWave
+INSTR wave WAVE=PULSE ADSR=8,2,10,4 PW=0800 WAVESEQ=LeadWave
+
+VOICE 1 saw:
+  O4 L4
+  C D E F G A B >C
+
+VOICE 2 tri:
+  O4 L4
+  R R R R R R R R
+  C D E F G A B >C
+  

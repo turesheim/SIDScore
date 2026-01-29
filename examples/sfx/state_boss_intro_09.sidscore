@@ -1,0 +1,16 @@
+; Game State - Boss Intro 09
+; Reasoning: Low dramatic pulse for boss entry.
+TITLE "Game State - Boss Intro 09"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 110
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=1,5,10,5 PW=0500
+INSTR bass WAVE=TRI ADSR=1,6,8,6
+
+VOICE 1 lead:
+  O3 L8 C G C4
+VOICE 2 bass:
+  O2 L4 C C

@@ -1,0 +1,13 @@
+; Enemy - Spawn 01
+; Reasoning: Low pulse swell to signal enemy spawn.
+TITLE "Enemy - Spawn 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR spawn WAVE=PULSE ADSR=0,5,8,4 PW=0500
+
+VOICE 1 spawn:
+  O3 L16 C D E R8

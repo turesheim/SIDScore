@@ -1,0 +1,16 @@
+; Impact - Hit 01
+; Reasoning: Noise click with pulse thud for impact.
+TITLE "Impact - Hit 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR thud WAVE=PULSE ADSR=0,4,10,4 PW=0500
+INSTR hit WAVE=NOISE ADSR=0,4,3,3
+
+VOICE 1 thud:
+  O3 L8 C4 R8
+VOICE 3 hit:
+  L32 X X R16

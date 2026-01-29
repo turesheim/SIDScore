@@ -1,0 +1,20 @@
+; Game State - Extra Life 01
+; Reasoning: Jolly classic C64 cue with shared style and instrumentation. Style 01 (Classic arps).
+TITLE "Game State - Extra Life 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE+TRI ADSR=1,4,10,3 PW=0800
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O6 L8 C E G C D F A D E G C E D F A D C G E C D A F D
+VOICE 2 bass:
+  O3 L4 C G F C G D C G F C G D
+VOICE 3 pad:
+  O5 L2 E C F D G E

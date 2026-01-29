@@ -1,0 +1,20 @@
+; Game State - Life Lost 08
+; Reasoning: Less‑sad minor cue with shared style and instrumentation. Style 08 (Gallop rhythm).
+TITLE "Game State - Life Lost 08"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 165
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=1,4,10,3 PW=0A00
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=PULSE ADSR=1,5,8,4 PW=0700
+
+VOICE 1 lead:
+  O6 L16 A A A R B B B R C C C R B B B R C C C R D D D R E E E R D D D R E E E R F F F R E E E R C C C R
+VOICE 2 bass:
+  O3 L8 A R A R B R B R C R C R D R D R E R E R F R F R
+VOICE 3 pad:
+  O4 L2 A A B B C C

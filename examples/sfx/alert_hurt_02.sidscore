@@ -1,0 +1,13 @@
+; Damage/Alert - Hurt 02
+; Reasoning: Dissonant tone for pain cue.
+TITLE "Damage/Alert - Hurt 02"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR dmg WAVE=TRI ADSR=0,5,8,4
+
+VOICE 1 dmg:
+  O5 L16 F B R8

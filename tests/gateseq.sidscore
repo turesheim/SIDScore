@@ -1,0 +1,18 @@
+; demo_gateseq.sidscore
+; Demonstrates gate sequencing (stutter) on a sustained note
+
+TEMPO 120
+TIME 4/4
+SYSTEM PAL
+
+TABLE gate Stutter {
+  ON  @2
+  OFF @1
+  LOOP
+}
+
+INSTR gateLead WAVE=PULSE ADSR=8,2,10,4 PW=0800 GATESEQ=Stutter
+
+VOICE 1 gateLead:
+  O4 L1
+  C

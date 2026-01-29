@@ -1,0 +1,13 @@
+; Damage/Alert - Warning 06
+; Reasoning: High pulse beep for urgent warning.
+TITLE "Damage/Alert - Warning 06"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR warn WAVE=PULSE ADSR=0,3,12,3 PW=0900
+
+VOICE 1 warn:
+  O6 L16 G G R8

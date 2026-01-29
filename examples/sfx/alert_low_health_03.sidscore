@@ -1,0 +1,13 @@
+; Damage/Alert - Low Health 03
+; Reasoning: Repeating beep for low health.
+TITLE "Damage/Alert - Low Health 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+SYSTEM PAL
+
+INSTR warn WAVE=TRI ADSR=0,4,10,3
+
+VOICE 1 warn:
+  O4 L8 A R8 A R8

@@ -1,0 +1,13 @@
+; Environment - Door 01
+; Reasoning: Low sweep for door opening.
+TITLE "Environment - Door 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+SYSTEM PAL
+
+INSTR door WAVE=PULSE ADSR=0,5,8,5 PW=0500 PWMIN=0200 PWMAX=0C00 PWSWEEP=+10
+
+VOICE 1 door:
+  O3 L4 C4

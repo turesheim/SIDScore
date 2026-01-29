@@ -1,0 +1,13 @@
+; Damage/Alert - Hurt 01
+; Reasoning: Sharp noise pop for player damage.
+TITLE "Damage/Alert - Hurt 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 170
+SYSTEM PAL
+
+INSTR dmg WAVE=NOISE ADSR=0,4,3,3
+
+VOICE 3 dmg:
+  L16 X X R8

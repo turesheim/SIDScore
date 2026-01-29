@@ -1,0 +1,59 @@
+; bach-english-suite-1-bourree-1.sidscore
+; Converted from bach-english-suite-1-bourree-1.mid
+; Instruments: Harpsichord (V1-V2)
+; Articulation: (leg) pairs applied to slurred 8th-note groups from the score.
+
+TITLE "English Suite No. 1 - Bourree I"
+AUTHOR "J.S. Bach"
+
+TEMPO 184
+TIME 2/2
+SYSTEM PAL
+
+INSTR harpsichord "harpsichord.sidscore"
+
+VOICE 1 harpsichord:
+  O4 E4 (leg) A8 G#8 (end) (leg) B8 A8 (end) > (leg) C#8 < B8 (end) (leg) A8 G#8 (end) A4 E4 (leg) C#8
+  E8 (end) (leg) A8 B8 (end) > (leg) C#8 < B8 (end) > (leg) D8 C#8 (end) (leg) E8 D8 (end) (leg) C#8 <
+  B8 (end) > (leg) D8 C#8 (end) < (leg) B8 > C#8 (end) < (leg) A8 B8 (end) > (leg) C#8 D8 (end) E32
+  G32 E32 G32 E32 G32 E32 G32 F#4 G4. A8 F#32 A32 F#32 A32 F#32 A32 F#32 A32 G#4 A4. (leg) B8 G#8
+  (end) (leg) A8 G#8 (end) A8 A4. G#16 A16 B2 R4 < E4 (leg) A8 G#8 (end) (leg) B8 A8 (end) > (leg) C#8
+  < B8 (end) (leg) A8 G#8 (end) A4 E4 (leg) C#8 E8 (end) (leg) A8 B8 (end) > (leg) C#8 < B8 (end) >
+  (leg) D8 C#8 (end) (leg) E8 D8 (end) (leg) C#8 < B8 (end) > (leg) D8 C#8 (end) < (leg) B8 > C#8
+  (end) < (leg) A8 G#8 (end) (leg) B8 A8 (end) > (leg) C#8 < B8 (end) (leg) A8 G#8 (end) (leg) F#8 E8
+  (end) (leg) G#8 F#8 (end) (leg) A8 G#8 (end) (leg) F#8 E8 (end) (leg) D#8 C#8 (end) (leg) E8 D#8
+  (end) (leg) F#8 < B8 (end) > B4 G#4 (leg) F#8 E8 (end) E2. E4 (leg) A8 G#8 (end) (leg) B8 A8 (end) >
+  (leg) C#8 < B8 (end) (leg) A8 G#8 (end) E2. E4 (leg) B8 A8 (end) > (leg) C#8 < B8 (end) > (leg) D8
+  C#8 (end) E4 C#4 < (leg) B8 > C#8 (end) < (leg) A8 B8 (end) > (leg) C#8 D8 (end) (leg) E8 D8 (end)
+  (leg) F#8 E8 (end) (leg) G8 F#8 (end) A4 F#4 (leg) E8 F#8 (end) D4 F#4 (leg) F#8 D8 (end) (leg) C#8
+  < B8 (end) > (leg) D8 C#8 (end) (leg) E8 D8 (end) (leg) E8 C#8 (end) < (leg) B8 A#8 (end) > (leg)
+  C#8 < B8 (end) > (leg) D8 C#8 (end) (leg) E8 D8 (end) (leg) C#8 < B8 (end) > (leg) D8 C#8 (end) <
+  (leg) B8 A#8 (end) B2. B4 > (leg) F#8 E8 (end) (leg) G#8 F#8 (end) (leg) A8 G#8 (end) B4 G#4 (leg)
+  F#8 G#8 (end) E4 < E4 (leg) B8 A8 (end) > (leg) C#8 < B8 (end) > (leg) D8 C#8 (end) E4 C#4 < (leg)
+  B8 > C#8 (end) < (leg) A8 B8 (end) > (leg) C#8 D8 (end) (leg) E8 C#8 (end) < (leg) B8 A8 (end) >
+  (leg) E8 D8 (end) (leg) F#8 E8 (end) (leg) G8 C#8 (end) < (leg) B8 A8 (end) > (leg) D8 C#8 (end)
+  (leg) E8 D8 (end) (leg) F#8 C#8 (end) < (leg) B8 A8 (end) > (leg) E8 D8 (end) (leg) F#8 E8 (end)
+  (leg) G8 C#8 (end) < (leg) B8 A8 (end) > (leg) D8 C#8 (end) (leg) E8 D8 (end) (leg) F#8 D8 (end)
+  (leg) C#8 < B8 (end) > (leg) F#8 E8 (end) (leg) G#8 F#8 (end) (leg) A8 D#8 (end) (leg) C#8 < B8
+  (end) > (leg) E8 D#8 (end) (leg) F#8 E8 (end) (leg) G#8 D#8 (end) (leg) C#8 < B8 (end) > (leg) F#8
+  E8 (end) (leg) G#8 F#8 (end) (leg) A8 D#8 (end) (leg) C#8 < B8 (end) > (leg) E8 D#8 (end) (leg) F#8
+  E8 (end) (leg) G#8 F#8 (end) (leg) E8 F#8 (end) (leg) G#8 F#8 (end) (leg) A8 G#8 (end) (leg) B8 A8
+  (end) (leg) G#8 F#8 (end) (leg) A8 G#8 (end) (leg) F#8 E8 (end) A4. B8 G#4. A8 A2. E4 (leg) E8 C#8
+  (end) < (leg) B8 A8 (end) > (leg) C#8 < B8 (end) > (leg) D8 C#8 (end) (leg) D8 < B8 (end) (leg) A8
+  G#8 (end) (leg) B8 A8 (end) > (leg) C#8 < B8 (end) > (leg) D8 C#8 (end) < (leg) B8 A8 (end) > (leg)
+  C#8 < B8 (end) (leg) A8 G#8 (end) (leg) A8 E8 (end) (leg) F#8 G#8 (end) (leg) A8 B8 (end) > (leg)
+  C#8 D8 (end) (leg) E8 C#8 (end) < (leg) B8 A8 (end) > (leg) C#8 < B8 (end) > (leg) D8 C#8 (end)
+  (leg) D8 < B8 (end) (leg) A8 G#8 (end) (leg) B8 A8 (end) > (leg) C#8 < B8 (end) > (leg) D8 C#8 (end)
+  < (leg) B8 A8 (end) > (leg) C#8 < B8 (end) (leg) A8 G#8 (end) A2.
+
+VOICE 2 harpsichord:
+  R1. R2. O3 A8 R8 (leg) B8 A8 (end) > (leg) C#8 < B8 (end) A8 R8 A4 R2 (leg) A8 B8 (end) > (leg) C#8
+  < B8 (end) > (leg) D8 C#8 (end) (leg) E8 D8 (end) (leg) C#8 < A8 (end) > (leg) D8 C#8 (end) (leg) E8
+  D8 (end) (leg) F#8 E8 (end) (leg) D#8 < B8 (end) > (leg) E8 F#8 (end) (leg) E8 D8 (end) (leg) C#8 <
+  B8 (end) > (leg) C#8 < A8 (end) > (leg) E8 D#8 (end) (leg) F#8 E8 (end) (leg) G#8 F#8 (end) (leg) E8
+  D8 (end) (leg) C#8 < B8 (end) > (leg) D8 C#8 (end) (leg) E8 D8 (end) (leg) C#8 < B8 (end) > (leg)
+  C#8 D8 (end) (leg) C#8 < B8 (end) A4 R4 A8 R8 (leg) B8 A8 (end) > (leg) C#8 < B8 (end) A8 R8 A4 R1
+  R4 A8 R8 (leg) B8 A8 (end) > (leg) C#8 < B8 (end) A8 R2 R8 A8 R4. B4 R1. R1 E2 R1 R4 A8 R8 (leg) B8
+  A8 (end) > (leg) C#8 < B8 (end) > E4 C#4 < (leg) B8 > C#8 (end) < A4 R1 > D4 R2. C#4 R2. < B4 R1.
+  R1. R2. A4 R1 A8 R8 (leg) B8 A8 (end) > (leg) C#8 < B8 (end) > E4 C#4 D4 C#4 < B4 A4 A4 A4 A4 A4 A4
+  A4 A4 A4 R1. R1. R1. R1. R1. R2. (leg) A8 B8 (end) > C#4 R2. < B4 R2. A4 R1. R1. R1. R2. < E4 A4

@@ -1,0 +1,13 @@
+; Power-Up - Upgrade 08
+; Reasoning: Sparkly rise for upgrade success.
+TITLE "Power-Up - Upgrade 08"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 170
+SYSTEM PAL
+
+INSTR pu WAVE=TRI ADSR=1,4,8,3
+
+VOICE 1 pu:
+  O5 L16 D E F A R8

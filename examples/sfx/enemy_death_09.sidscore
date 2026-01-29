@@ -1,0 +1,13 @@
+; Enemy - Death 09
+; Reasoning: Descending tone for enemy death.
+TITLE "Enemy - Death 09"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+SYSTEM PAL
+
+INSTR death WAVE=TRI ADSR=1,6,8,6
+
+VOICE 1 death:
+  O4 L8 E D C B A4

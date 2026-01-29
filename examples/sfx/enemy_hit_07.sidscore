@@ -1,0 +1,13 @@
+; Enemy - Hit 07
+; Reasoning: Short noisy pop for enemy hit.
+TITLE "Enemy - Hit 07"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 190
+SYSTEM PAL
+
+INSTR hit WAVE=NOISE ADSR=0,3,2,2
+
+VOICE 3 hit:
+  L32 X X R16

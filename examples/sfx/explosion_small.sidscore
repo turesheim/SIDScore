@@ -1,0 +1,13 @@
+; Explosion - Small
+; Reasoning: Short noisy burst for a small explosion.
+TITLE "Explosion - Small"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR boom WAVE=NOISE ADSR=0,8,3,5
+
+VOICE 3 boom:
+  L32 X X X X L16 X8 R8

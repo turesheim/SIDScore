@@ -1,0 +1,13 @@
+; Power-Up - Expire 05
+; Reasoning: Downward cue for power ending.
+TITLE "Power-Up - Expire 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+SYSTEM PAL
+
+INSTR pu WAVE=TRI ADSR=1,6,8,4
+
+VOICE 1 pu:
+  O5 L16 G E D C R8

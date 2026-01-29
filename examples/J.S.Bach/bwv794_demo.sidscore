@@ -1,0 +1,58 @@
+; bwv794_demo.sidscore
+; J.S. Bach Sinfonia No. 8 in F major (BWV 794)
+; Simplified 16-bar excerpt, quantized to 16ths with triplets.
+
+TITLE "Sinfonia No. 8 (Excerpt)"
+AUTHOR "J.S. Bach"
+RELEASED "1723"
+
+TEMPO 80
+TIME 4/4
+SYSTEM PAL
+
+INSTR sop  WAVE=PULSE+TRI ADSR=3,4,10,4 PW=0800
+INSTR alto WAVE=TRI ADSR=4,6,8,4
+INSTR bass WAVE=PULSE ADSR=6,4,10,4 PW=0800 PWMIN=0100 PWMAX=0F00 PWSWEEP=-16
+
+VOICE 1 sop:
+  O5 L16
+  R8 C < A > D8 C8 L32 T{ < A# > C C } L16 < A# A G
+  > C D < A# > C < A A# > F E A8
+  G8 L32 T{ F G G } L16 F E D G A F G E F D
+  E F2 E4 F8 C < A > D4 < B8 > D <
+  B > E4 C8 E C F4 & F E F G E4 A
+  F G A D4. C < B > C2 < B4 > C8 G
+  E A8 G8 F8 E D G A F G E D E C
+  F8 E8 D8 C# < B > E F D E C#8 A F
+  A#8 A8 G8 F E A A# G A L32 T{ F# G G } L16 F# D8
+  G2 F#4 G2. F4. D#8 D2 C#8 E8 < A G A F A#8
+  A8 D8 F E A A# G A F2 & F8 E G C#8.
+  R1 R2 R
+VOICE 2 alto:
+  O4 L16
+  R2 L32 T{ R A# A# } L16 R2 R > C2 & C8 < B4 > C8
+  < A#8 A A# > C D < G2 F4 R8 A F R8
+  B R8. B G R8 > C R8. C < A > D4 &
+  D < B > C4. & C < A B R G F G
+  E A8 G8 F8 E D G A F G E8 R1 R1 R2.
+  R8 L32 T{ R > F# F# } L16 R8 < A# > D#8 D8 C8 < A# A
+  > D D# C D < A# A A# G > C D <
+  A# > C < A2 G4. F8 
+
+VOICE 3 bass:
+  O2 L16
+  F4 > F2 E4 F8 A G F8 E8 D8 G F G8 <
+  G8 > C8 > C < A > D8 C8 < A#8 A G
+  > C D < A# > C < A8 G8 F E F D
+  G8 < G8 > G F G E A8 < A8 > A G
+  A F B8 G E A8 G8 F8 E D G A F G
+  E8 A G F8 E8 D8 G F G8 < G8 > C8 <
+  C8 R8 > > C < A > D8 C8 < B8 A G
+  > C D < A# > C < A G A F A#8 A8
+  G8 F E A A# G A D8 > D < B > E8
+  D8 C#8 < B A > D C < A# A G A A#
+  G A8 > D C D8 < D8 G8 D < A# > D#8
+  D8 C8 < A# A > D D# C D < A#8 > G
+  F A#8 A8 G8 F E A A# G A F E F D
+  G8 F8 E8 A G A8 < A8 A#8 A F G8 F D
+  A# A A# G A4 D4 

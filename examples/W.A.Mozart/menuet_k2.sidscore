@@ -1,0 +1,28 @@
+; menuet_k2.sidscore
+; Converted from menuet_k2.mid
+; Instruments: Harpsichord (V1/V2/V3)
+; Quantization: 1/32 note grid, lower track split by median pitch
+
+TITLE "Menuet K. 2"
+AUTHOR "W.A. Mozart"
+
+TEMPO 160
+TIME 3/4
+SYSTEM PAL
+
+INSTR harpsichord "../J.S.Bach/harpsichord.sidscore"
+
+VOICE 1 harpsichord:
+  O5 F8 A8 C4 C4 D8 F8 < A#4 A#4 A8 > C8 < F4 E4 E2 F4 C8 E8 G4 G4 C8 F8 A4 A4 C16. E16 G16. A#4 A4 A2
+  G4 > C8 D#8 < A4 A4 A#8 > D8 < G4 G4 A8 > C8 < F#4 F#4 F#2 G4 A#8 > D8 < G4 G4 A8 > C8 < F4 F4 G8
+  A#8 E4 E4 E2 F4 > F8 A8 C4 C4 D8 F8 < A#4 A#4 A8 > C8 < F4 E4 E2 F4 > F8 A8 C4 C4 D8 F8 < A#4 A#4 A8
+  > C8 < F4 E4 E2 F4
+
+VOICE 2 harpsichord:
+  R2 O3 A4 A#2 A#4 > C2 R1. R1. R4 C4 < G4 R4 F#2. G2. > C4 D4 R4 < G4 R1. R2 A#4 > C4 R1 < A2. A#2. >
+  C2 R1 < A2. A#2. > C2
+
+VOICE 3 harpsichord:
+  O3 F2 R1. C4 F4 C4 < F4 > C2. C2. C4 E4 F4 R2 C4 R1. R2 D4 R4 D4 < G4 > E2. F2. R2 C4 F4 C4 < F4 R1.
+  R2 > C4 D2. R1. R2 C4 F4 C4 < F4
+

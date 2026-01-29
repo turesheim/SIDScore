@@ -1,0 +1,28 @@
+; bach-english-suite-1-bourree-2.sidscore
+; Converted from bach-english-suite-1-bourree-2.mid
+; Instruments: Harpsichord (V1-V2)
+
+TITLE "English Suite No. 1 - Bourree II"
+AUTHOR "J.S. Bach"
+
+TEMPO 184
+TIME 2/2
+SYSTEM PAL
+
+INSTR harpsichord "harpsichord.sidscore"
+
+VOICE 1 harpsichord:
+  O4 C8 D8 E4 F4 E4 D4 E4 < A2 G#4 A4 > F4 E4 D4 E4 < A2 G#4 A4 > F4 E4 D4 A4 G8 F8 E4 D4 C4 < B8 > C8
+  D8 < B8 > C8 < A8 B8 A8 G#8 A8 B8 > C8 D8 < B8 > C8 D8 E8 F8 E8 D8 C8 D8 E8 D8 C8 < B8 A8 B8 > C8 D8
+  E8 F8 G8 A8 G8 F8 E8 F8 G8 F8 E8 D8 C8 D8 E8 F#8 G8 A8 B8 > C8 < B8 A8 G8 A8 B8 A8 G8 F#8 E8 D#8 E8
+  F#8 < B4 > G4. F#8 E8 D#8 E2. E8 D8 C#4 < B4 > C#4 D4 E8 G8 A#2 A8 G8 F8 E8 F8 > D8 C#8 < B8 A8 G8
+  F8 G8 A8 G8 F8 E8 D8 C8 < B4 B8 A8 B4 B8 > C8 D8 F8 A2 G8 F8 E8 D8 E8 > C8 < B8 A8 G8 F8 E8 F8 G8 F8
+  E8 D8 C8 < B8 A8 > G8 F8 E8 A4 < A4 G#8 F#8 G#8 > F8 E4 < G4 F#8 E8 F8 > E8 D8 C8 < B8 A8 > A8 G#8
+  F#8 E8 B4 E8 D8 E4 > D4 C4 < B4 > C4 < E2 D8 C8 D4 > C4 < B8 A8 G#8 A8 B4 D2 C8 < B8 > C8 A8 G8 E8
+  F8 E8 D8 C8 < B8 > F8 E8 C8 D8 C8 < B8 A8 G#8 > D8 C8 < A8 > C8 < B8 A8 G#8 A2.
+
+VOICE 2 harpsichord:
+  O3 E8 R1. R4. E8 R1. R4. E8 R1. R4. E8 F8 E8 R1. R8 E8 F8 E4 R1. E8 F8 G4 F4 E4 R4 E4 R4 E8 F#8 G8
+  A8 B4 A4 G4 F#4 G4 E4 > C4 < A4. G8 F#8 E8 B4 R4 E4 R2 E8 F8 G8 F8 E8 F8 G8 F8 E8 F8 G8 F8 E8 F8 G4
+  R1. R2 R8 E8 F8 E8 R8 E8 F8 E8 R8 E8 F8 E8 R8 E8 F8 G8 A8 B8 > C4 < A4 F4 G4 R2 R8 F8 E8 R2. E8 R1.
+  R2. E8 D#8 E4. R1. R4. E8 F#8 G#8 A8 G#8 A8 B8 A8 G#8 A8 B8 A8 G#8 F#8 E8 R1. R1. R8 E4 R2 < A2

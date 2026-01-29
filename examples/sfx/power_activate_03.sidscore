@@ -1,0 +1,13 @@
+; Power-Up - Activate 03
+; Reasoning: Longer arpeggio for power activation.
+TITLE "Power-Up - Activate 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR pu WAVE=PULSE+TRI ADSR=1,5,10,4 PW=0700
+
+VOICE 1 pu:
+  O4 L16 C E G > C8

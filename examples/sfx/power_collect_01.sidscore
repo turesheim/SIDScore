@@ -1,0 +1,13 @@
+; Power-Up - Collect 01
+; Reasoning: Upward arpeggio for item collect.
+TITLE "Power-Up - Collect 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR pu WAVE=TRI ADSR=1,4,8,3
+
+VOICE 1 pu:
+  O5 L16 C E G R8

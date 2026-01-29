@@ -1,0 +1,13 @@
+; Environment - Teleporter 05
+; Reasoning: Rising arpeggio for teleport start.
+TITLE "Environment - Teleporter 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR tp WAVE=TRI ADSR=1,4,8,3
+
+VOICE 1 tp:
+  O4 L16 C E G > C8

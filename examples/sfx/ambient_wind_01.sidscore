@@ -1,0 +1,13 @@
+; Ambient - Wind 01
+; Reasoning: Soft noise loop for wind ambience.
+TITLE "Ambient - Wind 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 60
+SYSTEM PAL
+
+INSTR amb WAVE=NOISE ADSR=0,8,3,8
+
+VOICE 3 amb:
+  L4 X2 (R4 X4)x2

@@ -1,0 +1,16 @@
+; Impact - Explosion 03
+; Reasoning: Noise burst with low pulse tail.
+TITLE "Impact - Explosion 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+SYSTEM PAL
+
+INSTR boom WAVE=NOISE ADSR=0,9,4,6
+INSTR low WAVE=PULSE ADSR=0,6,10,6 PW=0400
+
+VOICE 3 boom:
+  L16 X X X X8 R8
+VOICE 1 low:
+  O2 L8 C2

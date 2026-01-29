@@ -1,0 +1,13 @@
+; Ambient - Machinery 05
+; Reasoning: Repeated noise ticks for machinery.
+TITLE "Ambient - Machinery 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 100
+SYSTEM PAL
+
+INSTR amb WAVE=NOISE ADSR=0,4,2,3
+
+VOICE 3 amb:
+  L16 X R16 X R16 X R16 X

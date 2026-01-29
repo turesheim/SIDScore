@@ -1,0 +1,13 @@
+; Movement - Slide 06
+; Reasoning: Noisy slide with short tail.
+TITLE "Movement - Slide 06"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR slide WAVE=NOISE ADSR=0,6,3,5
+
+VOICE 3 slide:
+  L16 X X8 R8

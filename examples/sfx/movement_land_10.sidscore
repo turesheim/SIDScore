@@ -1,0 +1,13 @@
+; Movement - Land 10
+; Reasoning: Short thud for landing impact.
+TITLE "Movement - Land 10"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+SYSTEM PAL
+
+INSTR land WAVE=TRI ADSR=0,5,8,5
+
+VOICE 1 land:
+  O2 L8 C4

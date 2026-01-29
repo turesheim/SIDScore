@@ -1,0 +1,13 @@
+; Player Action - Attack 07
+; Reasoning: Two-hit pulse for heavy attack feel.
+TITLE "Player Action - Attack 07"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR atk WAVE=PULSE ADSR=0,4,12,4 PW=0600
+
+VOICE 1 atk:
+  O3 L16 G G R8

@@ -1,0 +1,13 @@
+; Impact - Bullet Collide 10
+; Reasoning: Dual click for heavier impact.
+TITLE "Impact - Bullet Collide 10"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+SYSTEM PAL
+
+INSTR tik WAVE=PULSE ADSR=0,2,10,2 PW=0900
+
+VOICE 1 tik:
+  O6 L32 A A R16

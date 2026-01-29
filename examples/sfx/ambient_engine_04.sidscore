@@ -1,0 +1,13 @@
+; Ambient - Engine 04
+; Reasoning: Triangle drone for steady motor.
+TITLE "Ambient - Engine 04"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 80
+SYSTEM PAL
+
+INSTR amb WAVE=TRI ADSR=0,8,8,8
+
+VOICE 1 amb:
+  O2 L2 G2

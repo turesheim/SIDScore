@@ -1,0 +1,20 @@
+; Game State - Get Ready 03
+; Reasoning: Optimistic classic C64 cue with shared style and instrumentation. Style 03 (PWM sweep).
+TITLE "Game State - Get Ready 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 145
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=2,4,10,3 PW=0600 PWMIN=0400 PWMAX=0C00 PWSWEEP=+6
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O6 L8 C G E C D A F D E C G E D A F D G E C G A F D A
+VOICE 2 bass:
+  O3 L4 C C G G F F D D G G C C
+VOICE 3 pad:
+  O4 L2 C G D A E C

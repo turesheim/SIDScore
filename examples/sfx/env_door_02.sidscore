@@ -1,0 +1,13 @@
+; Environment - Door 02
+; Reasoning: Short thud for door close.
+TITLE "Environment - Door 02"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 130
+SYSTEM PAL
+
+INSTR door WAVE=TRI ADSR=0,5,8,5
+
+VOICE 1 door:
+  O3 L8 C4

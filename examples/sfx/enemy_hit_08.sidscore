@@ -1,0 +1,13 @@
+; Enemy - Hit 08
+; Reasoning: Muted pulse knock for enemy damage.
+TITLE "Enemy - Hit 08"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 170
+SYSTEM PAL
+
+INSTR hit WAVE=TRI ADSR=0,4,6,3
+
+VOICE 1 hit:
+  O3 L16 D R8

@@ -1,0 +1,13 @@
+; Damage/Alert - Low Health 04
+; Reasoning: Pulse siren for danger state.
+TITLE "Damage/Alert - Low Health 04"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 110
+SYSTEM PAL
+
+INSTR warn WAVE=PULSE ADSR=0,4,10,3 PW=0800
+
+VOICE 1 warn:
+  O4 L8 C R8 C R8

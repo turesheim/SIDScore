@@ -1,0 +1,13 @@
+; Impact - Block Break 06
+; Reasoning: Chopped noise ticks for breakage.
+TITLE "Impact - Block Break 06"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+SYSTEM PAL
+
+INSTR brk WAVE=NOISE ADSR=0,3,2,2
+
+VOICE 3 brk:
+  L32 X R32 X R32 X R16

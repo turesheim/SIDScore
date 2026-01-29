@@ -1,0 +1,20 @@
+; Game State - Extra Life 08
+; Reasoning: Jolly classic C64 cue with shared style and instrumentation. Style 08 (Gallop rhythm).
+TITLE "Game State - Extra Life 08"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=1,4,10,3 PW=0A00
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=PULSE ADSR=1,5,8,4 PW=0700
+
+VOICE 1 lead:
+  O7 L16 C C C R D D D R E E E R D D D R E E E R F F F R G G G R F F F R G G G R A A A R G G G R E E E R
+VOICE 2 bass:
+  O3 L8 C R C R D R D R E R E R F R F R G R G R A R A R
+VOICE 3 pad:
+  O5 L2 C C D D E E

@@ -1,0 +1,13 @@
+; Enemy - Death 10
+; Reasoning: Noisy collapse with short tail.
+TITLE "Enemy - Death 10"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 130
+SYSTEM PAL
+
+INSTR death WAVE=NOISE ADSR=0,8,4,6
+
+VOICE 3 death:
+  L16 X X X8 R8

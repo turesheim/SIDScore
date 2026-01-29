@@ -1,0 +1,20 @@
+; Game State - Game Over 10
+; Reasoning: Really sad minor cue with shared style and instrumentation. Style 10 (Bright cadence).
+TITLE "Game State - Game Over 10"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 132
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE+TRI ADSR=1,4,10,3 PW=0800
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O4 L8 A B C E F E C B C D E F G F E D E F G A G F E D
+VOICE 2 bass:
+  O2 L4 A E A E D A D A E B E B
+VOICE 3 pad:
+  O3 L2 A E D A E B

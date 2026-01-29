@@ -1,0 +1,30 @@
+; demo_sync_ring.sidscore
+; Demonstrates SYNC, RING, and combined waveforms
+
+TITLE "SID Sync/Ring Demo"
+TEMPO 140
+TIME  4/4
+SYSTEM PAL
+
+INSTR syncLead WAVE=SAW+PULSE SYNC=ON ADSR=6,2,12,4 PW=0600
+INSTR mod     WAVE=SAW ADSR=4,4,10,4
+INSTR ringPad WAVE=TRI RING=ON ADSR=4,3,10,4
+
+VOICE 1 syncLead:
+  O5 L8
+  ( C  D  E  G  E  D  C  R )x2
+  ( G  A  B  >C  B  A  G  R )x2
+  C4 R4
+
+VOICE 2 mod:
+  O3 L4
+  ( C  C  G  G )x2
+  ( F  F  C  C )x2
+  ( G  G  D  D )x2
+  C1
+
+VOICE 3 ringPad:
+  O4 L8
+  ( C  G  C  G  D  A  D  A )x2
+  ( E  B  E  B  F  C  F  C )x2
+  C2 R2

@@ -1,0 +1,13 @@
+; Enemy - Move 04
+; Reasoning: Noisy step for heavier enemy movement.
+TITLE "Enemy - Move 04"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 170
+SYSTEM PAL
+
+INSTR move WAVE=NOISE ADSR=0,4,3,2
+
+VOICE 3 move:
+  L32 X R32 X R16

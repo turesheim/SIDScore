@@ -1,0 +1,13 @@
+; Player Action - Menu Confirm 10
+; Reasoning: Clean confirm beep for UI action.
+TITLE "Player Action - Menu Confirm 10"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+SYSTEM PAL
+
+INSTR conf WAVE=TRI ADSR=0,3,12,2
+
+VOICE 1 conf:
+  O6 L32 C C R16

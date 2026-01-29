@@ -1,0 +1,13 @@
+; Ambient - Drone 10
+; Reasoning: Pulse+tri drone for thick ambience.
+TITLE "Ambient - Drone 10"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 60
+SYSTEM PAL
+
+INSTR amb WAVE=PULSE+TRI ADSR=0,9,8,9 PW=0600
+
+VOICE 1 amb:
+  O2 L2 C2

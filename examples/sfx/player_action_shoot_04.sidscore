@@ -1,0 +1,13 @@
+; Player Action - Shoot 04
+; Reasoning: Noise burst for a tiny weapon shot.
+TITLE "Player Action - Shoot 04"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 200
+SYSTEM PAL
+
+INSTR shoot WAVE=NOISE ADSR=0,3,2,2
+
+VOICE 3 shoot:
+  L32 X X X R16

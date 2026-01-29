@@ -1,0 +1,20 @@
+; Game State - Get Ready 11
+; Reasoning: Optimistic classic C64 cue with shared style and instrumentation. Style 11 (Turrican-like drive; inspired by Turrican).
+TITLE "Game State - Get Ready 11"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE+TRI ADSR=1,4,10,3 PW=0800
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O5 L16 C E G C E G B C D F A D F A C D E G B E G B D E F A C F A C E F G B D G B D F G A C E A C E G A
+VOICE 2 bass:
+  O3 L8 C R G R A R E R F R C R G R D R E R B R C R G R
+VOICE 3 pad:
+  O4 L2 C G D A E B

@@ -1,0 +1,16 @@
+; You Died
+; Reasoning: Descending line for failure feedback.
+TITLE "You Died"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 100
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=2,6,8,6
+INSTR bass WAVE=PULSE ADSR=0,6,10,6 PW=0800
+
+VOICE 1 lead:
+  O5 L8 E D C B A4 R4
+VOICE 2 bass:
+  O3 L4 E D C B A2

@@ -1,0 +1,13 @@
+; Impact - Explosion 05
+; Reasoning: Crackly noise pop for debris.
+TITLE "Impact - Explosion 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 170
+SYSTEM PAL
+
+INSTR crack WAVE=NOISE ADSR=0,4,2,2
+
+VOICE 3 crack:
+  L32 X X X R32 X X R16

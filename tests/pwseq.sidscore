@@ -1,0 +1,26 @@
+; demo_pwm.sidscore
+; Demonstrates PWM sweep vs PW table modulation
+
+TEMPO 120
+TIME 4/4
+SYSTEM PAL
+
+TABLE pw PulseWobble {
+  0600 @4
+  0800 @4
+  0A00 @4
+  0800 @4
+  LOOP
+}
+
+INSTR sweepPad WAVE=PULSE ADSR=6,4,10,4 PW=0800 PWMIN=0100 PWMAX=0F00 PWSWEEP=-16
+INSTR tablePad WAVE=PULSE ADSR=6,4,10,4 PW=0800 PWSEQ=PulseWobble
+
+VOICE 1 sweepPad:
+  O3 L4
+  C D E F G A B >C
+
+;VOICE 2 tablePad:
+;  O4 L4
+;  R R R R
+;  C C C C

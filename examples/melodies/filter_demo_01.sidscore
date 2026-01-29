@@ -1,0 +1,40 @@
+; Filter Demo 01
+; Reasoning: Demonstrates a global SID filter sweep on a single routed voice.
+; Only VOICE 1 uses FILTER to avoid global filter conflicts.
+TITLE "Filter Demo 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 136
+TIME 4/4
+SYSTEM PAL
+
+TABLE wave LeadWave {
+  SAW   @2
+  PULSE @2
+  SAW   @2
+  TRI   HOLD
+}
+
+TABLE filter LeadCut {
+  0200 @2
+  0400 @2
+  0600 @2
+  0700 @2
+  07A0 @2
+  0700 @2
+  0600 @2
+  0400 @2
+  LOOP
+}
+
+INSTR lead WAVE=SAW+PULSE ADSR=2,4,10,3 PW=0800 WAVESEQ=LeadWave FILTER=LP CUTOFF=600 RES=10 FILTERSEQ=LeadCut GATE=RETRIGGER GATEMIN=1
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=SAW ADSR=2,8,8,5
+
+VOICE 1 lead:
+  O5 L8 C E G B O6 C B A G O5 F E D C
+VOICE 2 bass:
+  O3 L4 C G A E F C G D
+VOICE 3 pad:
+  O4 L2 C G A F

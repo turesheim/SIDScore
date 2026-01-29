@@ -1,0 +1,20 @@
+; Game State - Game Over 13
+; Reasoning: Really sad minor cue with shared style and instrumentation. Style 13 (Arkanoid-like melody; inspired by Arkanoid).
+TITLE "Game State - Game Over 13"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=1,4,8,3
+INSTR bass WAVE=PULSE ADSR=1,6,10,4 PW=0600
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O4 L8 A C D E F E D C B D E F G F E D C E F G A G F E
+VOICE 2 bass:
+  O2 L4 A E F C D A E B C G A E
+VOICE 3 pad:
+  O3 L2 A E D A E B

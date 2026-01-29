@@ -1,0 +1,13 @@
+; Damage/Alert - Danger 08
+; Reasoning: Low pulse alarm for danger.
+TITLE "Damage/Alert - Danger 08"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+SYSTEM PAL
+
+INSTR warn WAVE=PULSE ADSR=0,4,10,4 PW=0500
+
+VOICE 1 warn:
+  O3 L8 G R8 G R8

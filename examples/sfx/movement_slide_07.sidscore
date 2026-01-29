@@ -1,0 +1,13 @@
+; Movement - Slide 07
+; Reasoning: Pulse slide with smooth decay.
+TITLE "Movement - Slide 07"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 130
+SYSTEM PAL
+
+INSTR slide WAVE=PULSE ADSR=0,6,8,5 PW=0600
+
+VOICE 1 slide:
+  O3 L8 C2

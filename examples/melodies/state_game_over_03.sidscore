@@ -1,0 +1,20 @@
+; Game State - Game Over 03
+; Reasoning: Really sad minor cue with shared style and instrumentation. Style 03 (PWM sweep).
+TITLE "Game State - Game Over 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 125
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=2,4,10,3 PW=0600 PWMIN=0400 PWMAX=0C00 PWSWEEP=+6
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O5 L8 A E C A B F D B C A E C B F D B E C A E F D B F
+VOICE 2 bass:
+  O2 L4 A A E E D D B B E E A A
+VOICE 3 pad:
+  O3 L2 A E B F C A

@@ -1,0 +1,13 @@
+; Movement - Footstep 02
+; Reasoning: Low pulse ticks for heavy steps.
+TITLE "Movement - Footstep 02"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR step WAVE=PULSE ADSR=0,3,8,3 PW=0400
+
+VOICE 1 step:
+  O2 L16 C R16 C R16

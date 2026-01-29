@@ -1,0 +1,13 @@
+; Pling - Descend
+; Reasoning: Descending pling for downward cue.
+TITLE "Pling - Descend"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR pling WAVE=TRI ADSR=1,4,8,3
+
+VOICE 1 pling:
+  O6 L16 G F E D R8

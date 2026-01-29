@@ -1,0 +1,20 @@
+; Game State - Life Lost 14
+; Reasoning: Less‑sad minor cue with shared style and instrumentation. Style 14 (Last Ninja-like mood; inspired by The Last Ninja).
+TITLE "Game State - Life Lost 14"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 130
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE+TRI ADSR=1,5,10,4 PW=0700
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O5 L8 A C B A R C D E F E D C R B A B C E F E R D C B
+VOICE 2 bass:
+  O3 L4 A R E R D R A R E R B R
+VOICE 3 pad:
+  O4 L2 A E B F C G

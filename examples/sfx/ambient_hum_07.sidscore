@@ -1,0 +1,13 @@
+; Ambient - Hum 07
+; Reasoning: Triangle hum for room tone.
+TITLE "Ambient - Hum 07"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 70
+SYSTEM PAL
+
+INSTR amb WAVE=TRI ADSR=0,7,8,7
+
+VOICE 1 amb:
+  O3 L2 C2

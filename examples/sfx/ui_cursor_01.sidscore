@@ -1,0 +1,13 @@
+; UI - Cursor Move 01
+; Reasoning: Tiny high blip for cursor movement.
+TITLE "UI - Cursor Move 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 200
+SYSTEM PAL
+
+INSTR ui WAVE=TRI ADSR=0,2,10,1
+
+VOICE 1 ui:
+  O6 L32 C R16

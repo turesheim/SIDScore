@@ -1,0 +1,20 @@
+; Game State - Game Over 09
+; Reasoning: Really sad minor cue with shared style and instrumentation. Style 09 (Driving arps).
+TITLE "Game State - Game Over 09"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 138
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=1,5,8,4
+INSTR bass WAVE=PULSE ADSR=1,6,10,5 PW=0600
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O4 L16 A C E G A G E C B D F A B A F D C E G B C B G E D F A C D C A F B D F A B A F D C E G B C B G E
+VOICE 2 bass:
+  O2 L8 A E F C D A E B A E F C D A E B B F C G D A E B
+VOICE 3 pad:
+  O3 L2 C A D B E C

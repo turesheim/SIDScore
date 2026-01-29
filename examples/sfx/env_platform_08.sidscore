@@ -1,0 +1,13 @@
+; Environment - Platform 08
+; Reasoning: Noisy clunk for platform lock.
+TITLE "Environment - Platform 08"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 130
+SYSTEM PAL
+
+INSTR plat WAVE=NOISE ADSR=0,4,3,3
+
+VOICE 3 plat:
+  L16 X R8

@@ -1,0 +1,13 @@
+; Game State - Level Start 02
+; Reasoning: Short rising cue for new stage.
+TITLE "Game State - Level Start 02"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=1,4,8,4
+
+VOICE 1 lead:
+  O5 L8 D F A > D4

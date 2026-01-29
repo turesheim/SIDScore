@@ -1,0 +1,13 @@
+; Impact - Bullet Collide 08
+; Reasoning: Sharp high tick for bullet impact.
+TITLE "Impact - Bullet Collide 08"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 200
+SYSTEM PAL
+
+INSTR tik WAVE=TRI ADSR=0,2,8,1
+
+VOICE 1 tik:
+  O6 L32 G G R16

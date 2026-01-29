@@ -1,0 +1,13 @@
+; Environment - Platform 07
+; Reasoning: Low tick for platform movement.
+TITLE "Environment - Platform 07"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR plat WAVE=TRI ADSR=0,4,8,3
+
+VOICE 1 plat:
+  O3 L16 C R8

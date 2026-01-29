@@ -1,0 +1,13 @@
+; Power-Up - Expire 06
+; Reasoning: Lower falloff for expiration.
+TITLE "Power-Up - Expire 06"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 110
+SYSTEM PAL
+
+INSTR pu WAVE=PULSE ADSR=1,6,8,4 PW=0600
+
+VOICE 1 pu:
+  O4 L16 E D C B R8

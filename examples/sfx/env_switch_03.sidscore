@@ -1,0 +1,13 @@
+; Environment - Switch 03
+; Reasoning: Clicky tick for switch toggle.
+TITLE "Environment - Switch 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+SYSTEM PAL
+
+INSTR sw WAVE=PULSE ADSR=0,2,10,2 PW=0900
+
+VOICE 1 sw:
+  O6 L32 C R16

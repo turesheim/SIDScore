@@ -1,0 +1,17 @@
+; legato.sidscore
+;
+; A simple SIDScore file for testing the legato feature
+
+TEMPO 120
+TIME 4/4
+SYSTEM PAL
+
+INSTR piano WAVE=SAW+PULSE ADSR=2,8,3,4 PW=0600
+
+VOICE 1 piano:
+  O3 L4
+  (leg)
+    C D E F G A B >C
+  (end)
+  O3 L4
+  C D E F G A B >C

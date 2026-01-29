@@ -1,0 +1,13 @@
+; Explosion - Rumble
+; Reasoning: Repeated noise hits for rumbling debris.
+TITLE "Explosion - Rumble"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 120
+SYSTEM PAL
+
+INSTR rumble WAVE=NOISE ADSR=0,10,4,8
+
+VOICE 3 rumble:
+  L16 X X R16 X X R16 X8 R8

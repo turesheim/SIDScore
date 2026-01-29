@@ -1,0 +1,13 @@
+; Player Action - Jump 01
+; Reasoning: Short upward blip for jump feedback.
+TITLE "Player Action - Jump 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR jump WAVE=TRI ADSR=1,4,8,3
+
+VOICE 1 jump:
+  O5 L16 D E F R8

@@ -1,0 +1,13 @@
+; Movement - Footstep 01
+; Reasoning: Rhythmic noise ticks for footsteps.
+TITLE "Movement - Footstep 01"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+SYSTEM PAL
+
+INSTR step WAVE=NOISE ADSR=0,3,2,2
+
+VOICE 3 step:
+  L32 X R32 X R32 X R32 X

@@ -1,0 +1,13 @@
+; Player Action - Jump 03
+; Reasoning: Short two-step leap for a quick hop.
+TITLE "Player Action - Jump 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR jump WAVE=PULSE ADSR=0,4,8,2 PW=0800
+
+VOICE 1 jump:
+  O5 L16 F A R8

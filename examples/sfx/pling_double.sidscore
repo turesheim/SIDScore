@@ -1,0 +1,13 @@
+; Pling - Double
+; Reasoning: Two-note pling for double confirmation.
+TITLE "Pling - Double"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR pling WAVE=PULSE+TRI ADSR=0,3,10,3 PW=0800
+
+VOICE 1 pling:
+  O5 L16 C E R8

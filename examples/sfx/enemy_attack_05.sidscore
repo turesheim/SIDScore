@@ -1,0 +1,13 @@
+; Enemy - Attack 05
+; Reasoning: Gritty noise hit for enemy attack.
+TITLE "Enemy - Attack 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR atk WAVE=NOISE ADSR=0,5,4,3
+
+VOICE 3 atk:
+  L16 X X R8

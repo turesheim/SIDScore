@@ -1,0 +1,20 @@
+; Game State - Extra Life 07
+; Reasoning: Jolly classic C64 cue with shared style and instrumentation. Style 07 (Chordy arps).
+TITLE "Game State - Extra Life 07"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 158
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE+TRI ADSR=2,4,10,3 PW=0800
+INSTR bass WAVE=TRI ADSR=1,6,8,4
+INSTR pad WAVE=TRI ADSR=1,5,8,4
+
+VOICE 1 lead:
+  O6 L8 C E G E D F A F E G C G D F A F F A C A G B D B
+VOICE 2 bass:
+  O3 L4 C F G C D G C D E A D E
+VOICE 3 pad:
+  O5 L2 C G D A E B

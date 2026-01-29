@@ -1,0 +1,20 @@
+; pitchseq.sidscore
+; Demonstrates PITCHSEQ (per-step semitone offsets)
+
+TEMPO 120
+TIME 4/4
+SYSTEM PAL
+
+TABLE pitch Vibrato {
+  0  @2
+  +1 @2
+  0  @2
+  -1 @2
+  LOOP
+}
+
+INSTR lead WAVE=TRI ADSR=8,2,10,4 PITCHSEQ=Vibrato
+
+VOICE 1 lead:
+  O4 L4
+  C D E F G A B >C

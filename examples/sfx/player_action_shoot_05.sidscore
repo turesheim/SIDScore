@@ -1,0 +1,13 @@
+; Player Action - Shoot 05
+; Reasoning: Snappy noise hit for a rapid fire shot.
+TITLE "Player Action - Shoot 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 210
+SYSTEM PAL
+
+INSTR shoot WAVE=NOISE ADSR=0,4,2,2
+
+VOICE 3 shoot:
+  L32 X X R32 X R16

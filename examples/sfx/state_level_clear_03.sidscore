@@ -1,0 +1,16 @@
+; Game State - Level Clear 03
+; Reasoning: Upward arpeggio for success.
+TITLE "Game State - Level Clear 03"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 160
+SYSTEM PAL
+
+INSTR lead WAVE=TRI ADSR=1,4,8,3
+INSTR bass WAVE=PULSE ADSR=1,5,10,4 PW=0700
+
+VOICE 1 lead:
+  O5 L8 C E G C4
+VOICE 2 bass:
+  O3 L4 C G

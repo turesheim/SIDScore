@@ -1,0 +1,13 @@
+; Pling - Bright
+; Reasoning: Bright pulse pling for sharp feedback.
+TITLE "Pling - Bright"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+SYSTEM PAL
+
+INSTR pling WAVE=PULSE ADSR=0,3,8,2 PW=0A00
+
+VOICE 1 pling:
+  O6 L32 G G R16

@@ -1,0 +1,13 @@
+; Enemy - Spawn 02
+; Reasoning: Noisy burst for a harsher spawn cue.
+TITLE "Enemy - Spawn 02"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR spawn WAVE=NOISE ADSR=0,6,4,4
+
+VOICE 3 spawn:
+  L32 X X X X R16

@@ -1,0 +1,13 @@
+; Pling - Rise
+; Reasoning: Rising pling for upward cue.
+TITLE "Pling - Rise"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 150
+SYSTEM PAL
+
+INSTR pling WAVE=TRI ADSR=1,4,8,3
+
+VOICE 1 pling:
+  O4 L16 C D E G R8

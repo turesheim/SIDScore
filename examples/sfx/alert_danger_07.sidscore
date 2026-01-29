@@ -1,0 +1,13 @@
+; Damage/Alert - Danger 07
+; Reasoning: Fast noisy ticks for imminent danger.
+TITLE "Damage/Alert - Danger 07"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 180
+SYSTEM PAL
+
+INSTR warn WAVE=NOISE ADSR=0,3,2,2
+
+VOICE 3 warn:
+  L32 X R32 X R32 X R16

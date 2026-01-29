@@ -1,0 +1,13 @@
+; UI - Error 06
+; Reasoning: Low harsh pulse for error feedback.
+TITLE "UI - Error 06"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 140
+SYSTEM PAL
+
+INSTR ui WAVE=PULSE ADSR=0,4,10,4 PW=0400
+
+VOICE 1 ui:
+  O3 L16 C C R8

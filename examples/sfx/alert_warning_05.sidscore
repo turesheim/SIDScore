@@ -1,0 +1,13 @@
+; Damage/Alert - Warning 05
+; Reasoning: Alternating tones to draw attention.
+TITLE "Damage/Alert - Warning 05"
+AUTHOR "SIDScore SFX"
+RELEASED "2026"
+
+TEMPO 130
+SYSTEM PAL
+
+INSTR warn WAVE=TRI ADSR=0,4,10,3
+
+VOICE 1 warn:
+  O5 L8 E C E C
