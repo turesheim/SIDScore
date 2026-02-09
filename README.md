@@ -40,6 +40,17 @@ The GUI player lets you edit and audition scores interactively:
 - Examples navigator that loads and plays on activation.
 - Three voice oscilloscope views for quick feedback.
 
+![](docs/SRAP.png)
+
+Start the realtime player after building the module:
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.ui.RealtimeAudioPlayerUI
+```
+
+Run it from the repo root so the examples browser and banner image resolve correctly.
+
 
 ## Resources
 
