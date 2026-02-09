@@ -29,9 +29,9 @@ Use `--no-play` with `--wav`, `--asm`, `--prg`, or `--sid` to export without rea
 
 ### Documentation
 
-- `SIDScore_Language_Specification.md` describes the language and instrument system in detail.
+- [SIDScore_Language_Specification.md](SIDScore_Language_Specification.md) describes the language and instrument system in detail.
 
-### Realtime player UI
+### SIDScore Realtime Audio Player (SRAP) UI
 
 The GUI player lets you edit and audition scores interactively:
 
