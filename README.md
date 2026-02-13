@@ -2,6 +2,12 @@
 
 SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound effects for the Commodore 64 SID (MOS6581). It lets you write scores, define instruments, audition them in a realtime player, and export to C64-ready formats.
 
+<video controls width="600">
+    <source src="https://github.com/turesheim/SIDScore/blob/main/docs/SIDScore%202026-02-09.mov" type="video/mp4">
+    Your browser does not support the video tag.
+</video>
+
+
 ### What it includes
 
 - A SID-aware DSL with instruments, tables/sequences, and reusable imports for instrument definitions.
