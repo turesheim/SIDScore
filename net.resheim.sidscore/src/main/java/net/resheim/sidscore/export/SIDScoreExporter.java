@@ -570,13 +570,15 @@ public final class SIDScoreExporter {
 	}
 
 	public void assemble(Path asm, Path outPrg) throws IOException, InterruptedException {
-		if (!Files.exists(KICKASS_JAR)) {
-			throw new IOException("KickAssembler jar not found: " + KICKASS_JAR);
+		Path kickAssJar = resolveKickAssJar();
+		if (kickAssJar == null) {
+			throw new IOException("KickAssembler jar not found. Tried: " + KICKASS_JAR + " and "
+					+ Path.of("net.resheim.sidscore/lib/KickAss.jar"));
 		}
 		List<String> cmd = List.of(
 				"java",
 				"-jar",
-				KICKASS_JAR.toString(),
+				kickAssJar.toString(),
 				asm.toString(),
 				"-o",
 				outPrg.toString()
@@ -589,6 +591,17 @@ public final class SIDScoreExporter {
 		if (code != 0) {
 			throw new IOException("KickAssembler failed (exit " + code + "):\n" + new String(out, StandardCharsets.UTF_8));
 		}
+	}
+
+	private Path resolveKickAssJar() {
+		if (Files.isRegularFile(KICKASS_JAR)) {
+			return KICKASS_JAR;
+		}
+		Path repoRelative = Path.of("net.resheim.sidscore/lib/KickAss.jar");
+		if (Files.isRegularFile(repoRelative)) {
+			return repoRelative;
+		}
+		return null;
 	}
 
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid) throws IOException {

@@ -58,8 +58,10 @@ The GUI player lets you edit and audition scores interactively:
 
 - Editor with auto-reload for fast iteration.
 - Play/Stop controls plus a file loader.
+- Playback renderer selector: `SRAP` (built-in realtime synth) or `VICE` (external `vsid` direct playback).
 - Examples navigator that loads and plays on activation.
 - Three voice oscilloscope views for quick feedback.
+- `Messages` panel shows `vsid` output during VICE playback.
 
 ![](docs/SRAP.png)
 
@@ -71,6 +73,10 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 ```
 
 Run it from the repo root so the examples browser and banner image resolve correctly.
+
+If `VICE` playback is selected, SIDScore uses `vsid` from `PATH` (or `SIDSCORE_VICE_BIN` if set) for direct audio playback.
+Optional: set `SIDSCORE_VICE_DATA_DIR` to the VICE data directory if your installation needs explicit sysfile lookup.
+By default, VICE logs are shown in full in `Messages`. To re-enable compact/suppressed log mode, start UI with `--compact-vice-log` (or set `SIDSCORE_VICE_COMPACT_LOG=1` / `-Dsidscore.vice.compactLog=true`). Use `--full-vice-log` to force full logs.
 
 
 ## Resources

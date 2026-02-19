@@ -23,17 +23,23 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.TimeUnit;
 
 import javax.imageio.ImageIO;
 import javax.sound.sampled.LineUnavailableException;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
@@ -50,6 +56,7 @@ import javax.swing.SwingConstants;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
 import javax.swing.UIManager;
+import javax.swing.DefaultListCellRenderer;
 import javax.swing.plaf.basic.BasicSplitPaneDivider;
 import javax.swing.plaf.basic.BasicSplitPaneUI;
 import javax.swing.text.BadLocationException;
@@ -102,6 +109,16 @@ public final class RealtimeAudioPlayerUI {
 	private static final int BANNER_HEIGHT = 48;
 	private static final int GRILLE_LINES = 6;
 	private static final int GRILLE_SPACING = 1;
+	private static final double SID_CLOCK_NTSC = 1022727.0;
+	private static final double SID_CLOCK_PAL = 985248.0;
+	private static final double RASTER_RATE_PAL = 50.124542;
+	private static final double RASTER_RATE_NTSC = 60.098814;
+	private static final long MIN_VICE_LIMIT_CYCLES = 250_000L;
+	private static final long MAX_VICE_LIMIT_CYCLES = 2_000_000_000L;
+	private static final double VICE_TAIL_SECONDS = 1.5;
+	private static final int COMPACT_VICE_CAPTURE_MAX = 12_000;
+	private static final int COMPACT_MESSAGES_MAX = 16_000;
+	private static volatile boolean compactViceLogs = isCompactLogEnabledByDefault();
 
 	private final JFrame frame = new JFrame("SIDScore Realtime Player");
 	private final JTextArea input = new JTextArea(18, 72);
@@ -110,6 +127,7 @@ public final class RealtimeAudioPlayerUI {
 	private final JButton loadButton = new JButton("Load");
 	private final JButton playButton = new JButton("Play");
 	private final JButton stopButton = new JButton("Stop");
+	private final JComboBox<PlaybackRenderer> rendererCombo = new JComboBox<>(PlaybackRenderer.values());
 	private final JToggleButton autoReloadButton = new JToggleButton("Auto Reload");
 	private final JButton exportAsmButton = new JButton("ASM");
 	private final JButton exportWavButton = new JButton("WAV");
@@ -123,6 +141,8 @@ public final class RealtimeAudioPlayerUI {
 	private final JLabel elapsedLabel = new JLabel("00:00");
 	private volatile Thread playThread;
 	private volatile RealtimeAudioPlayer player;
+	private volatile Process viceProcess;
+	private volatile boolean viceStopRequested = false;
 	private final Timer autoReloadTimer;
 	private final Timer clockTimer;
 	private final Timer highlightTimer;
@@ -143,6 +163,7 @@ public final class RealtimeAudioPlayerUI {
 	private final Path examplesRoot;
 
 	public static void main(String[] args) {
+		compactViceLogs = resolveCompactLogMode(args);
 		System.out.println("Working directory: " + Path.of("").toAbsolutePath().normalize());
 		SwingUtilities.invokeLater(() -> new RealtimeAudioPlayerUI().show());
 	}
@@ -151,6 +172,7 @@ public final class RealtimeAudioPlayerUI {
 		JPanel controlsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
 		controlsPanel.setBackground(C64_BG);
 		controlsPanel.add(createSectionLabel("Playback:"));
+		controlsPanel.add(rendererCombo);
 		controlsPanel.add(loadButton);
 		controlsPanel.add(playButton);
 		controlsPanel.add(stopButton);
@@ -172,6 +194,7 @@ public final class RealtimeAudioPlayerUI {
 		styleButton(exportWavButton);
 		styleButton(exportSidButton);
 		styleButton(exportPrgButton);
+		styleComboBox(rendererCombo);
 
 		stopButton.setEnabled(false);
 
@@ -282,7 +305,7 @@ public final class RealtimeAudioPlayerUI {
 		messageArea.setLineWrap(true);
 		messageArea.setWrapStyleWord(true);
 		messageArea.setFont(C64_FONT);
-		messageArea.setForeground(C64_NAVIGATOR_TEXT);
+		messageArea.setForeground(SCOPE_BG);
 		messageArea.setBackground(C64_BG);
 		JScrollPane messageScroll = new JScrollPane(messageArea);
 		styleScrollPane(messageScroll);
@@ -372,10 +395,18 @@ public final class RealtimeAudioPlayerUI {
 		if (clearRestart) {
 			restartPending = false;
 		}
+		viceStopRequested = true;
 		if (playbackStartNanos > 0 && playbackStopNanos < 0) {
 			playbackStopNanos = System.nanoTime();
 		}
 		resetPlaybackHighlighting();
+		Process renderProcess = viceProcess;
+		if (renderProcess != null) {
+			renderProcess.destroy();
+			if (renderProcess.isAlive()) {
+				renderProcess.destroyForcibly();
+			}
+		}
 		RealtimeAudioPlayer current = player;
 		if (current != null) {
 			current.stop();
@@ -700,6 +731,23 @@ public final class RealtimeAudioPlayerUI {
 		button.setBackground(C64_BUTTON);
 	}
 
+	private static void styleComboBox(JComboBox<?> combo) {
+		combo.setFont(C64_FONT_BOLD);
+		combo.setForeground(C64_BUTTON);
+		combo.setRenderer(new DefaultListCellRenderer() {
+			private static final long serialVersionUID = -1849548976203434835L;
+
+			@Override
+			public java.awt.Component getListCellRendererComponent(javax.swing.JList<?> list, Object value, int index,
+					boolean isSelected, boolean cellHasFocus) {
+				JLabel label = (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
+				label.setFont(C64_FONT_BOLD);
+				label.setOpaque(true);
+				return label;
+			}
+		});
+	}
+
 	private static void styleScrollPane(JScrollPane pane) {
 		pane.setBorder(BorderFactory.createEmptyBorder());
 	}
@@ -751,10 +799,23 @@ public final class RealtimeAudioPlayerUI {
 	private void setPlaybackButtons(boolean playing) {
 		playButton.setEnabled(!playing);
 		stopButton.setEnabled(playing);
+		rendererCombo.setEnabled(!playing);
 	}
 
 	private void updatePlaybackButtons() {
 		setPlaybackButtons(isPlaying());
+	}
+
+	private boolean markPlaybackStartIfUnset() {
+		synchronized (this) {
+			if (playbackStartNanos > 0) {
+				return false;
+			}
+			playbackStartNanos = System.nanoTime();
+			playbackStopNanos = -1;
+		}
+		SwingUtilities.invokeLater(this::updateElapsedClock);
+		return true;
 	}
 
 	private void updateElapsedClock() {
@@ -795,50 +856,378 @@ public final class RealtimeAudioPlayerUI {
 		if (timed == null) {
 			return false;
 		}
-		playbackStartNanos = System.nanoTime();
-		playbackStopNanos = -1;
-		updateElapsedClock();
 		for (OscilloscopePanel scope : scopes) {
 			scope.clear();
 		}
-		prepareHighlighting(timed);
+
+		PlaybackRenderer renderer = (PlaybackRenderer) rendererCombo.getSelectedItem();
+		if (renderer == null) {
+			renderer = PlaybackRenderer.SRAP;
+		}
+		prepareHighlighting(timed, renderer == PlaybackRenderer.VICE ? HighlightTimeline.FRAMES : HighlightTimeline.TICKS);
 		setPlaybackButtons(true);
 
-		RealtimeAudioPlayer currentPlayer = new RealtimeAudioPlayer();
-		player = currentPlayer;
-		Thread thread = new Thread(() -> {
-			try {
-				currentPlayer.play(timed, (v1, v2, v3, length, sampleRate) -> {
-					scopes[0].append(v1, length);
-					scopes[1].append(v2, length);
-					scopes[2].append(v3, length);
-				});
-			} catch (LineUnavailableException e) {
-				SwingUtilities.invokeLater(
-						() -> JOptionPane.showMessageDialog(frame, e.getMessage(), "Audio Error",
-								JOptionPane.ERROR_MESSAGE));
-			} finally {
-				SwingUtilities.invokeLater(() -> {
-					if (player != currentPlayer) {
-						return;
-					}
-					setPlaybackButtons(false);
-					if (playbackStartNanos > 0 && playbackStopNanos < 0) {
-						playbackStopNanos = System.nanoTime();
-					}
-					resetPlaybackHighlighting();
-					updateElapsedClock();
-					if (restartPending && autoReloadEnabled) {
-						boolean show = restartShowDialogs;
-						restartPending = false;
-						startPlayback(show);
-					}
-				});
-			}
-		}, "sidscore-realtime-player");
+		Thread thread;
+		if (renderer == PlaybackRenderer.VICE) {
+			thread = new Thread(() -> runVicePlayback(timed), "sidscore-vice-player");
+		} else {
+			thread = new Thread(() -> runSrapPlayback(timed), "sidscore-realtime-player");
+		}
+		thread.setDaemon(true);
 		playThread = thread;
 		playThread.start();
 		return true;
+	}
+
+	private void runSrapPlayback(SIDScoreIR.TimedScore timed) {
+		playbackStartNanos = -1;
+		playbackStopNanos = -1;
+		viceStopRequested = false;
+		SwingUtilities.invokeLater(this::updateElapsedClock);
+		java.util.concurrent.atomic.AtomicBoolean startMarked = new java.util.concurrent.atomic.AtomicBoolean(false);
+
+		RealtimeAudioPlayer currentPlayer = new RealtimeAudioPlayer();
+		player = currentPlayer;
+		try {
+			currentPlayer.play(timed, (v1, v2, v3, length, sampleRate) -> {
+				if (startMarked.compareAndSet(false, true)) {
+					markPlaybackStartIfUnset();
+				}
+				scopes[0].append(v1, length);
+				scopes[1].append(v2, length);
+				scopes[2].append(v3, length);
+			});
+		} catch (LineUnavailableException e) {
+			SwingUtilities.invokeLater(
+					() -> JOptionPane.showMessageDialog(frame, e.getMessage(), "Audio Error",
+							JOptionPane.ERROR_MESSAGE));
+		} finally {
+			if (player == currentPlayer) {
+				player = null;
+			}
+			markPlaybackStartIfUnset();
+			finishPlayback();
+		}
+	}
+
+	private void runVicePlayback(SIDScoreIR.TimedScore timed) {
+		viceStopRequested = false;
+		playbackStartNanos = -1;
+		playbackStopNanos = -1;
+		SwingUtilities.invokeLater(this::updateElapsedClock);
+
+		Path tempDir = null;
+		try {
+			setMessageAsync("VICE: generating SID...", MSG_INFO);
+			tempDir = Files.createTempDirectory("sidscore-vice-");
+			Path asmPath = tempDir.resolve("preview.asm");
+			Path prgPath = tempDir.resolve("preview.prg");
+			Path sidPath = tempDir.resolve("preview.sid");
+
+			SIDScoreExporter exporter = new SIDScoreExporter();
+			exporter.writeAsm(timed, asmPath, false);
+			exporter.assemble(asmPath, prgPath);
+			exporter.writeSid(prgPath, timed, sidPath, SidModel.MOS6581);
+
+			setMessageAsync("VICE: direct playback...", MSG_INFO);
+			playWithViceDirect(sidPath, timed);
+			if (viceStopRequested) {
+				return;
+			}
+			appendMessageAsync("VICE: playback complete.", MSG_INFO);
+		} catch (Exception ex) {
+			if (!viceStopRequested) {
+				String msg = "Playback failed: " + ex.getMessage();
+				appendMessageAsync(msg, MSG_ERROR);
+			}
+		} finally {
+			viceProcess = null;
+			deleteRecursively(tempDir);
+			finishPlayback();
+		}
+	}
+
+	private void finishPlayback() {
+		SwingUtilities.invokeLater(() -> {
+			setPlaybackButtons(false);
+			playThread = null;
+			if (playbackStartNanos > 0 && playbackStopNanos < 0) {
+				playbackStopNanos = System.nanoTime();
+			}
+			resetPlaybackHighlighting();
+			updateElapsedClock();
+			if (restartPending && autoReloadEnabled) {
+				boolean show = restartShowDialogs;
+				restartPending = false;
+				startPlayback(show);
+			}
+		});
+	}
+
+	private void playWithViceDirect(Path sidPath, SIDScoreIR.TimedScore timed)
+			throws IOException, InterruptedException {
+		String viceBinary = resolveViceBinary();
+		long limitCycles = estimateLimitCycles(timed);
+		long timeoutMillis = estimateViceTimeoutMillis(limitCycles, timed.system());
+
+		List<String> cmd = new java.util.ArrayList<>();
+		cmd.add(viceBinary);
+		cmd.add("-default");
+		String viceDataDir = resolveViceDataDir(viceBinary);
+		if (viceDataDir != null) {
+			cmd.add("-directory");
+			cmd.add(viceDataDir);
+		}
+		if (compactViceLogs) {
+			cmd.add("-silent");
+		} else {
+			cmd.add("-verbose");
+		}
+		cmd.add("-console");
+		cmd.add("-sound");
+		cmd.add("-sounddev");
+		cmd.add("coreaudio");
+		cmd.add("-soundrate");
+		cmd.add("44100");
+		cmd.add("-sidmodel");
+		cmd.add("0");
+		cmd.add(timed.system() == SIDScoreIR.VideoSystem.NTSC ? "-ntsc" : "-pal");
+		cmd.add("-limitcycles");
+		cmd.add(Long.toString(limitCycles));
+		cmd.add(sidPath.toString());
+
+		appendMessageAsync("VICE command: " + String.join(" ", cmd), MSG_INFO);
+		ProcessBuilder pb = new ProcessBuilder(cmd);
+		pb.redirectErrorStream(true);
+		Process process = pb.start();
+		viceProcess = process;
+		playbackStartNanos = -1;
+		playbackStopNanos = -1;
+		SwingUtilities.invokeLater(this::updateElapsedClock);
+
+		java.util.concurrent.atomic.AtomicBoolean startMarked = new java.util.concurrent.atomic.AtomicBoolean(false);
+		java.util.concurrent.atomic.AtomicBoolean soundDeviceOpened = new java.util.concurrent.atomic.AtomicBoolean(false);
+		Thread startFallback = new Thread(() -> {
+			try {
+				Thread.sleep(1200);
+			} catch (InterruptedException ignored) {
+				Thread.currentThread().interrupt();
+			}
+			if (!viceStopRequested && process.isAlive() && startMarked.compareAndSet(false, true)) {
+				markPlaybackStartIfUnset();
+			}
+		}, "sidscore-vice-start-fallback");
+		startFallback.setDaemon(true);
+		startFallback.start();
+
+		StringBuffer viceLog = new StringBuffer();
+		Thread logThread = new Thread(() -> {
+			try (BufferedReader br = new BufferedReader(
+					new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+				String line;
+				while ((line = br.readLine()) != null) {
+					appendMessageAsync("vsid> " + line, MSG_INFO);
+					String lower = line.toLowerCase(Locale.ROOT);
+					if (lower.contains("sound: opened device")) {
+						soundDeviceOpened.set(true);
+					}
+					if (soundDeviceOpened.get() && lower.contains("vsync: sync reset")
+							&& startMarked.compareAndSet(false, true)) {
+						markPlaybackStartIfUnset();
+					}
+					if (!compactViceLogs || viceLog.length() < COMPACT_VICE_CAPTURE_MAX) {
+						viceLog.append(line).append('\n');
+					}
+				}
+			} catch (IOException e) {
+				appendMessageAsync("VICE log read error: " + e.getMessage(), MSG_WARN);
+			}
+		}, "sidscore-vice-log");
+		logThread.setDaemon(true);
+		logThread.start();
+
+		boolean finished = process.waitFor(timeoutMillis, TimeUnit.MILLISECONDS);
+		if (!finished) {
+			appendMessageAsync("VICE timeout after " + (timeoutMillis / 1000) + "s. Terminating process.", MSG_WARN);
+			process.destroy();
+			if (process.isAlive()) {
+				process.destroyForcibly();
+			}
+			logThread.join(1000);
+			throw new IOException("VICE timed out while rendering audio.");
+		}
+
+		logThread.join(1000);
+		startFallback.join(1000);
+		int code = process.exitValue();
+		viceProcess = null;
+		if (viceStopRequested) {
+			return;
+		}
+		markPlaybackStartIfUnset();
+		String text = viceLog.toString().trim();
+		boolean cycleLimitReached = text.toLowerCase(Locale.ROOT).contains("cycle limit reached");
+		if (code != 0) {
+			if (cycleLimitReached) {
+				appendMessageAsync("VICE: cycle limit reached (expected end of preview).", MSG_WARN);
+				return;
+			}
+			String sanitized = sanitizeViceErrorLog(text);
+			if (sanitized.isBlank()) {
+				throw new IOException("VICE exited with code " + code);
+			}
+			throw new IOException("VICE exited with code " + code + ": " + sanitized);
+		}
+	}
+
+	private static long estimateLimitCycles(SIDScoreIR.TimedScore timed) {
+		int maxTicks = 0;
+		for (int voice = 1; voice <= 3; voice++) {
+			SIDScoreIR.TimedVoice tv = timed.voices().get(voice);
+			if (tv == null) {
+				continue;
+			}
+			int ticks = tv.events().stream().mapToInt(SIDScoreIR.TimedEvent::durationTicks).sum();
+			if (ticks > maxTicks) {
+				maxTicks = ticks;
+			}
+		}
+		double ticksPerSecond = timed.ticksPerWhole() / 4.0 * timed.tempoBpm() / 60.0;
+		if (ticksPerSecond <= 0.0) {
+			return MIN_VICE_LIMIT_CYCLES;
+		}
+		double durationSeconds = (maxTicks / ticksPerSecond) + VICE_TAIL_SECONDS;
+		double clock = timed.system() == SIDScoreIR.VideoSystem.NTSC ? SID_CLOCK_NTSC : SID_CLOCK_PAL;
+		long cycles = (long) Math.ceil(durationSeconds * clock);
+		if (cycles < MIN_VICE_LIMIT_CYCLES) {
+			return MIN_VICE_LIMIT_CYCLES;
+		}
+		if (cycles > MAX_VICE_LIMIT_CYCLES) {
+			return MAX_VICE_LIMIT_CYCLES;
+		}
+		return cycles;
+	}
+
+	private static long estimateViceTimeoutMillis(long limitCycles, SIDScoreIR.VideoSystem system) {
+		double clock = system == SIDScoreIR.VideoSystem.NTSC ? SID_CLOCK_NTSC : SID_CLOCK_PAL;
+		double emulatedSeconds = limitCycles / clock;
+		long ms = (long) Math.ceil((emulatedSeconds + 10.0) * 1000.0);
+		long min = 15_000L;
+		long max = 5 * 60 * 1000L;
+		if (ms < min) {
+			return min;
+		}
+		if (ms > max) {
+			return max;
+		}
+		return ms;
+	}
+
+	private static String resolveViceBinary() {
+		String override = System.getenv("SIDSCORE_VICE_BIN");
+		if (override != null && !override.isBlank()) {
+			return override.trim();
+		}
+		return "vsid";
+	}
+
+	private static boolean resolveCompactLogMode(String[] args) {
+		boolean mode = isCompactLogEnabledByDefault();
+		if (args == null) {
+			return mode;
+		}
+		for (String arg : args) {
+			if ("--compact-vice-log".equals(arg)) {
+				mode = true;
+			} else if ("--full-vice-log".equals(arg)) {
+				mode = false;
+			}
+		}
+		return mode;
+	}
+
+	private static boolean isCompactLogEnabledByDefault() {
+		String env = System.getenv("SIDSCORE_VICE_COMPACT_LOG");
+		if (isTruthy(env)) {
+			return true;
+		}
+		return Boolean.getBoolean("sidscore.vice.compactLog");
+	}
+
+	private static boolean isTruthy(String value) {
+		if (value == null) {
+			return false;
+		}
+		String normalized = value.trim().toLowerCase(Locale.ROOT);
+		return "1".equals(normalized) || "true".equals(normalized) || "yes".equals(normalized)
+				|| "on".equals(normalized);
+	}
+
+	private static String resolveViceDataDir(String viceBinary) {
+		String override = System.getenv("SIDSCORE_VICE_DATA_DIR");
+		if (override != null && !override.isBlank()) {
+			return override.trim();
+		}
+		try {
+			Path binaryPath = Path.of(viceBinary);
+			if (!binaryPath.isAbsolute()) {
+				return null;
+			}
+			Path real = binaryPath.toRealPath();
+			Path cellarRoot = real.getParent() != null && real.getParent().getParent() != null
+					? real.getParent().getParent()
+					: null;
+			if (cellarRoot == null) {
+				return null;
+			}
+			Path candidate = cellarRoot.resolve("share").resolve("vice");
+			if (Files.isDirectory(candidate)) {
+				return candidate.toString();
+			}
+		} catch (Exception ignored) {
+			// best effort only
+		}
+		return null;
+	}
+
+	private static String sanitizeViceErrorLog(String raw) {
+		if (raw == null || raw.isBlank()) {
+			return "";
+		}
+		if (!compactViceLogs) {
+			return raw.trim();
+		}
+		StringBuilder sb = new StringBuilder();
+		for (String line : raw.split("\\R")) {
+			String trimmed = line.trim();
+			if (trimmed.isEmpty()) {
+				continue;
+			}
+			String lower = trimmed.toLowerCase(Locale.ROOT);
+			if (lower.contains("failed to retrieve executable path")
+					|| lower.contains("invalid or unset autosave screenshot format")) {
+				continue;
+			}
+			sb.append(trimmed).append('\n');
+		}
+		return sb.toString().trim();
+	}
+
+	private static void deleteRecursively(Path root) {
+		if (root == null || !Files.exists(root)) {
+			return;
+		}
+		try (var stream = Files.walk(root)) {
+			stream.sorted(Comparator.reverseOrder()).forEach(path -> {
+				try {
+					Files.deleteIfExists(path);
+				} catch (IOException ignored) {
+					// best effort cleanup
+				}
+			});
+		} catch (IOException ignored) {
+			// best effort cleanup
+		}
 	}
 
 	private SIDScoreIR.TimedScore parseScore(String src, boolean showErrors, boolean showWarnings) {
@@ -907,8 +1296,46 @@ public final class RealtimeAudioPlayerUI {
 	}
 
 	private void setMessage(String message, Color color) {
-		messageArea.setForeground(color);
+		messageArea.setForeground(SCOPE_BG);
 		messageArea.setText(message == null ? "" : message);
+	}
+
+	private void setMessageAsync(String message, Color color) {
+		if (SwingUtilities.isEventDispatchThread()) {
+			setMessage(message, color);
+			return;
+		}
+		SwingUtilities.invokeLater(() -> setMessage(message, color));
+	}
+
+	private void appendMessageAsync(String message, Color color) {
+		if (message == null || message.isBlank()) {
+			return;
+		}
+		if (SwingUtilities.isEventDispatchThread()) {
+			appendMessage(message, color);
+			return;
+		}
+		SwingUtilities.invokeLater(() -> appendMessage(message, color));
+	}
+
+	private void appendMessage(String message, Color color) {
+		messageArea.setForeground(SCOPE_BG);
+		String current = messageArea.getText();
+		StringBuilder sb = new StringBuilder();
+		if (current != null && !current.isBlank()) {
+			sb.append(current);
+			if (!current.endsWith("\n")) {
+				sb.append('\n');
+			}
+		}
+		sb.append(message);
+		String out = sb.toString();
+		if (compactViceLogs && out.length() > COMPACT_MESSAGES_MAX) {
+			out = "...(truncated)\n" + out.substring(out.length() - COMPACT_MESSAGES_MAX);
+		}
+		messageArea.setText(out);
+		messageArea.setCaretPosition(messageArea.getDocument().getLength());
 	}
 
 	private void copyErrorMessages() {
@@ -922,8 +1349,10 @@ public final class RealtimeAudioPlayerUI {
 		setMessage("Copied messages to clipboard.", MSG_INFO);
 	}
 
-	private void prepareHighlighting(SIDScoreIR.TimedScore timed) {
-		playbackTicksPerSecond = timed.ticksPerWhole() / 4.0 * timed.tempoBpm() / 60.0;
+	private void prepareHighlighting(SIDScoreIR.TimedScore timed, HighlightTimeline timeline) {
+		playbackTicksPerSecond = timeline == HighlightTimeline.FRAMES
+				? (timed.system() == SIDScoreIR.VideoSystem.NTSC ? RASTER_RATE_NTSC : RASTER_RATE_PAL)
+				: timed.ticksPerWhole() / 4.0 * timed.tempoBpm() / 60.0;
 		for (int i = 0; i < highlightIndices.length; i++) {
 			highlightIndices[i] = 0;
 		}
@@ -931,7 +1360,7 @@ public final class RealtimeAudioPlayerUI {
 			highlightEventsByVoice = null;
 			return;
 		}
-		highlightEventsByVoice = buildHighlightEvents(lastParseTree, timed);
+		highlightEventsByVoice = buildHighlightEvents(lastParseTree, timed, timeline);
 		updatePlaybackHighlight();
 	}
 
@@ -983,7 +1412,8 @@ public final class RealtimeAudioPlayerUI {
 		playbackTicksPerSecond = 0.0;
 	}
 
-	private List<EventSpan>[] buildHighlightEvents(SIDScoreParser.FileContext tree, SIDScoreIR.TimedScore timed) {
+	private List<EventSpan>[] buildHighlightEvents(SIDScoreParser.FileContext tree, SIDScoreIR.TimedScore timed,
+			HighlightTimeline timeline) {
 		@SuppressWarnings("unchecked")
 		List<EventSpan>[] out = (List<EventSpan>[]) new List[4];
 		for (SIDScoreParser.StmtContext stmt : tree.stmt()) {
@@ -1005,17 +1435,50 @@ public final class RealtimeAudioPlayerUI {
 				continue;
 			}
 			int count = Math.min(events.size(), spans.size());
+			List<Integer> frameDurations = timeline == HighlightTimeline.FRAMES
+					? computeFrameDurations(tv, timed)
+					: List.of();
 			List<EventSpan> voiceSpans = new java.util.ArrayList<>(count);
 			int tickCursor = 0;
 			for (int i = 0; i < count; i++) {
 				SIDScoreIR.TimedEvent ev = events.get(i);
 				Span sp = spans.get(i);
+				int duration = ev.durationTicks();
+				if (timeline == HighlightTimeline.FRAMES && i < frameDurations.size()) {
+					duration = frameDurations.get(i);
+				}
+				if (duration < 1) {
+					duration = 1;
+				}
 				int startTick = tickCursor;
-				int endTick = tickCursor + ev.durationTicks();
+				int endTick = tickCursor + duration;
 				tickCursor = endTick;
 				voiceSpans.add(new EventSpan(sp.startOffset, sp.endOffset, startTick, endTick));
 			}
 			out[voiceIndex] = voiceSpans;
+		}
+		return out;
+	}
+
+	private static List<Integer> computeFrameDurations(SIDScoreIR.TimedVoice voice, SIDScoreIR.TimedScore score) {
+		if (voice == null || voice.instrument() == null || voice.events().isEmpty()) {
+			return List.of();
+		}
+		List<Integer> out = new java.util.ArrayList<>(voice.events().size());
+		double ticksPerQuarter = score.ticksPerWhole() / 4.0;
+		double secondsPerTick = 60.0 / score.tempoBpm() / ticksPerQuarter;
+		double frameRate = score.system() == SIDScoreIR.VideoSystem.PAL ? RASTER_RATE_PAL : RASTER_RATE_NTSC;
+		double rem = 0.0;
+		int gateMin = Math.max(0, voice.instrument().gateMin());
+
+		for (SIDScoreIR.TimedEvent ev : voice.events()) {
+			double framesExact = ev.durationTicks() * secondsPerTick * frameRate + rem;
+			int frames = (int) Math.max(1, Math.round(framesExact));
+			rem = framesExact - frames;
+			if ((ev.type() == SIDScoreIR.TimedType.NOTE || ev.type() == SIDScoreIR.TimedType.NOISE) && gateMin > 0) {
+				frames = Math.max(frames, gateMin);
+			}
+			out.add(frames);
 		}
 		return out;
 	}
@@ -1113,6 +1576,27 @@ public final class RealtimeAudioPlayerUI {
 			this.endOffset = endOffset;
 			this.startTick = startTick;
 			this.endTick = endTick;
+		}
+	}
+
+	private enum HighlightTimeline {
+		TICKS,
+		FRAMES
+	}
+
+	private enum PlaybackRenderer {
+		SRAP("SRAP"),
+		VICE("VICE");
+
+		private final String label;
+
+		PlaybackRenderer(String label) {
+			this.label = label;
+		}
+
+		@Override
+		public String toString() {
+			return label;
 		}
 	}
 
