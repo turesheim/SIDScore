@@ -18,19 +18,28 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import net.resheim.sidscore.export.driver.DriverAddresses;
 import net.resheim.sidscore.ir.FrameEventCompiler;
 import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.sid.SidModel;
 
 public final class SIDScoreExporter {
+	public static final int BASIC_LOAD_ADDR = 0x0801;
 	public static final int LOAD_ADDR = 0x1000;
 	public static final int INIT_ADDR = LOAD_ADDR + 7;
 	public static final int PLAY_ADDR = 0x1400;
+	public static final int NOTE_FREQ_TABLE_BYTES = 128 * 2;
 
 	private static final Path KICKASS_JAR = Path.of("lib/KickAss.jar");
 	private static final double SID_CLOCK_NTSC = 1022727.0;
 	private static final double SID_CLOCK_PAL = 985248.0;
 	private static final int RASTER_LINE = 0;
+
+	public static final record ProgramStats(int voiceEventBytes, int tableBytes, int noteFreqTableBytes) {
+		public int scoreBytes() {
+			return voiceEventBytes + tableBytes;
+		}
+	}
 
 	public void writeAsm(SIDScoreIR.TimedScore score, Path outAsm) throws IOException {
 		writeAsm(score, outAsm, true);
@@ -567,14 +576,46 @@ public final class SIDScoreExporter {
 		Files.writeString(outAsm, sb.toString(), StandardCharsets.US_ASCII);
 	}
 
+	public ProgramStats estimateProgramStats(SIDScoreIR.TimedScore score) {
+		int voiceEventBytes = 0;
+		for (int voice = 1; voice <= 3; voice++) {
+			SIDScoreIR.TimedVoice tv = score.voices().get(voice);
+			SIDScoreIR.InstrumentIR instr = tv != null ? tv.instrument() : null;
+			if (tv != null && instr != null) {
+				voiceEventBytes += buildVoiceData(tv, instr, score).size();
+			} else {
+				voiceEventBytes += 6; // terminator-only stream
+			}
+		}
+
+		int tableBytes = 0;
+		for (SIDScoreIR.TableIR table : score.tables().values()) {
+			int steps = table.steps().size();
+			switch (table.type()) {
+				case PW -> tableBytes += 2 + (steps * 4);     // count + loop + (dur,pw)
+				case WAVE -> tableBytes += steps * 8;         // 8 bytes per step
+				case GATE -> tableBytes += steps * 4;         // .word dur + gate + pad
+				case PITCH -> tableBytes += steps * 4;        // .word dur + off + pad
+				case FILTER -> tableBytes += steps * 4;       // .word dur + cutoff
+				default -> {
+					// not emitted by assembler backend
+				}
+			}
+		}
+
+		return new ProgramStats(voiceEventBytes, tableBytes, NOTE_FREQ_TABLE_BYTES);
+	}
+
 	public void assemble(Path asm, Path outPrg) throws IOException, InterruptedException {
-		if (!Files.exists(KICKASS_JAR)) {
-			throw new IOException("KickAssembler jar not found: " + KICKASS_JAR);
+		Path kickAssJar = resolveKickAssJar();
+		if (kickAssJar == null) {
+			throw new IOException("KickAssembler jar not found. Tried: " + KICKASS_JAR + " and "
+					+ Path.of("net.resheim.sidscore/lib/KickAss.jar"));
 		}
 		List<String> cmd = List.of(
 				"java",
 				"-jar",
-				KICKASS_JAR.toString(),
+				kickAssJar.toString(),
 				asm.toString(),
 				"-o",
 				outPrg.toString()
@@ -589,19 +630,40 @@ public final class SIDScoreExporter {
 		}
 	}
 
+	private Path resolveKickAssJar() {
+		if (Files.isRegularFile(KICKASS_JAR)) {
+			return KICKASS_JAR;
+		}
+		Path repoRelative = Path.of("net.resheim.sidscore/lib/KickAss.jar");
+		if (Files.isRegularFile(repoRelative)) {
+			return repoRelative;
+		}
+		return null;
+	}
+
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid) throws IOException {
-		writeSid(prg, score, outSid, SidModel.MOS6581);
+		writeSid(prg, score, outSid, SidModel.MOS6581, new DriverAddresses(BASIC_LOAD_ADDR, LOAD_ADDR, PLAY_ADDR));
 	}
 
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid, SidModel model) throws IOException {
+		writeSid(prg, score, outSid, model, new DriverAddresses(BASIC_LOAD_ADDR, LOAD_ADDR, PLAY_ADDR));
+	}
+
+	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid, SidModel model, DriverAddresses addresses) throws IOException {
 		byte[] prgBytes = Files.readAllBytes(prg);
 		if (prgBytes.length < 2) {
 			throw new IOException("PRG too small: " + prg);
 		}
 		byte[] data = prgBytes;
 
-		int initAddr = LOAD_ADDR;
-		int playAddr = PLAY_ADDR;
+		DriverAddresses effective = addresses != null ? addresses : new DriverAddresses(BASIC_LOAD_ADDR, LOAD_ADDR, PLAY_ADDR);
+		int prgLoadAddr = (prgBytes[0] & 0xFF) | ((prgBytes[1] & 0xFF) << 8);
+		if (prgLoadAddr != effective.loadAddress()) {
+			throw new IOException("PRG load address $" + hex4(prgLoadAddr)
+					+ " does not match backend load address $" + hex4(effective.loadAddress()));
+		}
+		int initAddr = effective.initAddress();
+		int playAddr = effective.playAddress();
 
 		byte[] header = new byte[0x7C];
 		writeAscii(header, 0x00, "PSID");
