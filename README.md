@@ -2,6 +2,8 @@
 
 SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound effects for the Commodore 64 SID. It lets you write scores, define instruments, audition them in a realtime player, and export to C64-ready formats including assembly files that can be used in your own projects.
 
+In SIDScore, a **renderer** is used for auditioning during development (for example SRAP or VICE playback), while a **driver** is the generated 6502 playback program that runs your exported score in `ASM/PRG/SID` output. In short: renderer = monitoring path, driver = runtime path for PSID/C64 targets.
+
 **What it includes:**
 
 - SID-aware Domain Specific Language (DSL) with instruments, tables/sequences, and reusable imports.
