@@ -8,6 +8,17 @@ SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound e
 - The built-in `sidscore` assembly backend ("SIDScore Driver") aims to reproduce SRAP behavior in exported `ASM/PRG/SID`.
 - Driver backends are pluggable, so alternative exporters (for example reverse-engineered legacy drivers) can be added without changing the DSL or SRAP.
 
+### `sidscore` Driver
+
+- Purpose: `sidscore` is the reference export backend. It prioritizes SRAP parity and PSID/C64 compatibility over emulating legacy tracker driver quirks.
+- Shared timing model: score events are compiled to frame events once and reused by both SRAP and the assembler exporter, so note/gate timing stays aligned.
+- Runtime model: the generated driver keeps per-voice state and updates SID registers for note frequency, gate/wave control, PWM, pitch, and filter sequences on each play tick.
+- Output behavior (`ASM/PRG`): standalone builds include IRQ installation for native C64 execution.
+- Output behavior (`SID`): builds skip IRQ installation and rely on player callbacks (`init`/`play`) for PSID compatibility.
+- Compatibility target: PSID metadata is emitted for common players (for example VSID/VICE).
+- Compatibility target: SID model metadata (6581/8580) is carried through export settings.
+- Introspection: CLI export reports compiled backend id and size stats (program size, estimated driver/score split, and SID size) to make regressions easier to spot.
+
 ### What it includes
 
 - A SID-aware DSL with instruments, tables/sequences, and reusable imports for instrument definitions.
@@ -62,6 +73,8 @@ The GUI player lets you edit and audition scores interactively:
 - Examples navigator that loads and plays on activation.
 - Three voice oscilloscope views for quick feedback.
 - `Messages` panel shows `vsid` output during VICE playback.
+- Score note highlighting is approximate. It is tuned to be fairly correct with the built-in `sidscore` driver.
+- For other driver backends, note highlighting should be considered unsupported and must be disabled (timing semantics are driver-specific).
 
 ![](docs/SRAP.png)
 
