@@ -148,6 +148,7 @@ public final class RealtimeAudioPlayerUI {
 	private final Timer highlightTimer;
 	private volatile boolean autoReloadEnabled = false;
 	private volatile boolean restartPending = false;
+	private volatile boolean restartOnlyWhenAutoReload = false;
 	private volatile boolean restartShowDialogs = false;
 	private volatile long playbackStartNanos = -1;
 	private volatile long playbackStopNanos = -1;
@@ -394,6 +395,7 @@ public final class RealtimeAudioPlayerUI {
 	private void onStop(boolean clearRestart) {
 		if (clearRestart) {
 			restartPending = false;
+			restartOnlyWhenAutoReload = false;
 		}
 		viceStopRequested = true;
 		if (playbackStartNanos > 0 && playbackStopNanos < 0) {
@@ -420,6 +422,7 @@ public final class RealtimeAudioPlayerUI {
 			requestAutoRestart();
 		} else {
 			restartPending = false;
+			restartOnlyWhenAutoReload = false;
 			autoReloadTimer.stop();
 		}
 	}
@@ -573,8 +576,14 @@ public final class RealtimeAudioPlayerUI {
 			input.setText(text);
 			input.setCaretPosition(0);
 			setMessage("Loaded: " + entry.label, MSG_INFO);
-			onStop(true);
-			startPlayback(true);
+			if (isPlaying()) {
+				restartPending = true;
+				restartOnlyWhenAutoReload = false;
+				restartShowDialogs = true;
+				onStop(false);
+			} else {
+				startPlayback(true);
+			}
 		} catch (IOException ex) {
 			String msg = "Failed to load: " + entry.label + " (" + ex.getMessage() + ")";
 			setMessage(msg, MSG_ERROR);
@@ -841,9 +850,11 @@ public final class RealtimeAudioPlayerUI {
 
 	private void requestAutoRestart() {
 		restartPending = true;
+		restartOnlyWhenAutoReload = true;
 		restartShowDialogs = false;
 		if (!isPlaying()) {
 			restartPending = false;
+			restartOnlyWhenAutoReload = false;
 			startPlayback(false);
 		} else {
 			onStop(false);
@@ -906,7 +917,7 @@ public final class RealtimeAudioPlayerUI {
 				player = null;
 			}
 			markPlaybackStartIfUnset();
-			finishPlayback();
+			finishPlayback(Thread.currentThread());
 		}
 	}
 
@@ -944,12 +955,15 @@ public final class RealtimeAudioPlayerUI {
 		} finally {
 			viceProcess = null;
 			deleteRecursively(tempDir);
-			finishPlayback();
+			finishPlayback(Thread.currentThread());
 		}
 	}
 
-	private void finishPlayback() {
+	private void finishPlayback(Thread ownerThread) {
 		SwingUtilities.invokeLater(() -> {
+			if (playThread != ownerThread) {
+				return;
+			}
 			setPlaybackButtons(false);
 			playThread = null;
 			if (playbackStartNanos > 0 && playbackStopNanos < 0) {
@@ -957,9 +971,10 @@ public final class RealtimeAudioPlayerUI {
 			}
 			resetPlaybackHighlighting();
 			updateElapsedClock();
-			if (restartPending && autoReloadEnabled) {
+			if (restartPending && (!restartOnlyWhenAutoReload || autoReloadEnabled)) {
 				boolean show = restartShowDialogs;
 				restartPending = false;
+				restartOnlyWhenAutoReload = false;
 				startPlayback(show);
 			}
 		});
