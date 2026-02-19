@@ -30,6 +30,12 @@ Lines starting with `;` are comments and MUST be ignored.
 
 Whitespace (spaces, tabs, newlines) is insignificant except where noted.
 
+### 2.1 Numeric Notation
+
+- Unprefixed integers are **decimal** (base 10).
+- Hexadecimal values MUST be prefixed with `$` (for example `$0800`, `$0A00`).
+- Bare hex-style values without `$` are invalid.
+
 ## 3. Metadata Statements
 
 ### 3.1 TITLE
@@ -148,7 +154,7 @@ LOOP
   **Legacy form:** a step may be just the waveform value (e.g., `SAW @2`).  
   **Control form:** a step may include multiple control fields (see below).
 - `pw`: sets the SID pulse width on each step (useful for PWM animation).  
-  Values: 4 hex digits `0000`–`0FFF` (12-bit SID pulse width).  
+  Values: decimal `0–4095` or `$`-prefixed hex `$0000`–`$0FFF` (12-bit SID pulse width).  
   If the active waveform is not `PULSE`, the value MAY be ignored with a warning.
 - `gate`: toggles the gate bit on each step, creating hard retriggers or stutters.  
   Values: `ON` or `OFF`.  
@@ -158,7 +164,7 @@ LOOP
   Offsets are applied to the note's base pitch before SID quantization.  
   For `NOISE` events, offsets are ignored (or MAY map to noise frequency).
 - `filter`: sets the SID filter cutoff per step.  
-  Values: integer `0–2047` (hex allowed).  
+  Values: integer `0–2047` (decimal, or `$`-prefixed hex).  
   Lower values are darker/more muffled, higher values are brighter.
 
 #### 4.3.1 Wave Table Controls (SidTracker-style)
@@ -224,10 +230,10 @@ TABLE wave LeadCtrl {
   LOOP
 }
 TABLE pw LeadPWM {
-  0600 @2
-  0800 @2
-  0A00 @2
-  0800 @2
+  $0600 @2
+  $0800 @2
+  $0A00 @2
+  $0800 @2
   LOOP
 }
 TABLE pitch LeadVib {
@@ -246,7 +252,7 @@ INSTR lead WAVE=PULSE ADSR=8,2,10,4 WAVESEQ=LeadWave PWSEQ=LeadPWM PITCHSEQ=Lead
 ### 5.1 Syntax
 
 ```
-INSTR <name> WAVE=<wave> ADSR=a,d,s,r [PW=hhhh] [SYNC=ON|OFF] [RING=ON|OFF]
+INSTR <name> WAVE=<wave> ADSR=a,d,s,r [PW=<int|$hex>] [SYNC=ON|OFF] [RING=ON|OFF]
             [FILTER=OFF|LP|BP|HP|LP+BP|LP+HP|BP+HP|LP+BP+HP] [CUTOFF=<int>] [RES=<int>]
             [GATE=RETRIGGER|LEGATO] [GATEMIN=<int>]
             [WAVESEQ=<name>] [PWSEQ=<name>] [GATESEQ=<name>] [PITCHSEQ=<name>] [FILTERSEQ=<name>]
@@ -308,7 +314,7 @@ INSTR lead WAVE=SAW ADSR=6,4,10,4
 Example (combined):
 
 ```
-INSTR lead WAVE=SAW+PULSE ADSR=6,4,10,4 PW=0800
+INSTR lead WAVE=SAW+PULSE ADSR=6,4,10,4 PW=$0800
 ```
 
 #### ADSR
@@ -355,7 +361,7 @@ Notes:
 #### PW (Pulse Width)
 
 - OPTIONAL
-- Hexadecimal value, 1–4 digits (`0x0000–0xFFFF`)
+- Value `0–65535` (decimal) or `$`-prefixed hex (`$0`–`$FFFF`)
 - Meaningful only for `PULSE`
 - Using PW with other waveforms SHOULD emit a warning
   
@@ -364,13 +370,13 @@ Plain-language: changes the pulse wave's timbre from thin to hollow.
 Example:
 
 ```
-INSTR lead WAVE=PULSE ADSR=8,2,10,4 PW=0800
+INSTR lead WAVE=PULSE ADSR=8,2,10,4 PW=$0800
 ```
 
 #### PWM Sweep (PWMIN / PWMAX / PWSWEEP)
 
 - OPTIONAL pulse width modulation parameters
-- `PWMIN` / `PWMAX`: hexadecimal bounds (1–4 digits, `0x0000–0x0FFF`)
+- `PWMIN` / `PWMAX`: bounds `0–4095` (decimal) or `$`-prefixed hex (`$0000–$0FFF`)
 - `PWSWEEP`: signed decimal delta applied each player frame
 - Values are clamped at the min/max edges (no bounce)
 - Ignored if waveform does not include `PULSE` (should warn)
@@ -378,7 +384,7 @@ INSTR lead WAVE=PULSE ADSR=8,2,10,4 PW=0800
 Example:
 
 ```
-INSTR pad WAVE=PULSE ADSR=6,4,10,4 PW=0800 PWMIN=0400 PWMAX=0C00 PWSWEEP=+8
+INSTR pad WAVE=PULSE ADSR=6,4,10,4 PW=$0800 PWMIN=$0400 PWMAX=$0C00 PWSWEEP=+8
 ```
 
 #### FILTER (routing + mode)
@@ -400,7 +406,7 @@ INSTR lead WAVE=SAW ADSR=6,4,10,4 FILTER=LP
 #### CUTOFF
 
 - OPTIONAL, default `0`
-- Integer `0–2047` (decimal; hex also allowed)
+- Integer `0–2047` (decimal; `$`-prefixed hex also allowed)
 - Only meaningful when `FILTER` is not `OFF`
 
 #### RES
@@ -443,19 +449,19 @@ TABLE pitch LeadVib {
 
 ; --- Pulse Modulation (PWM) ---
 TABLE pw LeadPWM {
-  0600 @2
-  0800 @2
-  0A00 @2
-  0800 @2
+  $0600 @2
+  $0800 @2
+  $0A00 @2
+  $0800 @2
   LOOP
 }
 
 ; --- Filter Modulation ---
 TABLE filter LeadCut {
-  0400 @2
-  0600 @2
-  0700 @2
-  0600 @2
+  $0400 @2
+  $0600 @2
+  $0700 @2
+  $0600 @2
   LOOP
 }
 
@@ -559,20 +565,20 @@ PWSEQ drives the pulse width over time while a note is playing.
     LOOP repeats from the first step.
   - Overrides base PW/PWM: While the PW table is active, it replaces the pulse width. The base PW=,
     PWMIN/PWMAX, and PWSWEEP are ignored during table playback.
-  - Clamped to 12‑bit: Values are clamped to 0000..0FFF.
+  - Clamped to 12‑bit: Values are clamped to `0..4095` (`$0000..$0FFF`).
 
   Example:
 
 ```
   TABLE pw PulseWobble {
-    0600 @2
-    0800 @2
-    0A00 @2
-    0800 @2
+    $0600 @2
+    $0800 @2
+    $0A00 @2
+    $0800 @2
     LOOP
   }
 
-  INSTR lead WAVE=PULSE ADSR=8,2,10,4 PW=0800 PWSEQ=PulseWobble
+  INSTR lead WAVE=PULSE ADSR=8,2,10,4 PW=$0800 PWSEQ=PulseWobble
 ```
 
 This will cycle the pulse width through those values for as long as the note sustains, producing PWM

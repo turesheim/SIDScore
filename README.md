@@ -29,6 +29,11 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 
 Use `--no-play` with `--wav`, `--asm`, `--prg`, or `--sid` to export without realtime audio.
 
+Number notation in `.sidscore`:
+
+- Decimal values are unprefixed (for example `600`).
+- Hex values must be `$`-prefixed (for example `$0800`).
+
 List available driver backends:
 
 ```sh

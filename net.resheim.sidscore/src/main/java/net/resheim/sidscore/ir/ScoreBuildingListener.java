@@ -417,15 +417,18 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 				if (valCtx.signedInt() != null
 						&& (valCtx.signedInt().MINUS() != null || valCtx.signedInt().PLUS() != null)) {
 					throw new ValidationException(posLine(valCtx.getStart()), posCol(valCtx.getStart()),
-							"TABLE pw expects hex values (no sign)");
+							"TABLE pw expects unsigned values (decimal or $hex)");
 				}
-				String raw = (valCtx.HEX() != null) ? valCtx.HEX().getText()
-						: (valCtx.signedInt() != null ? valCtx.signedInt().INT().getText()
-								: valCtx.INT().getText());
-				value = parseHexValue(raw, valCtx.getStart(), "TABLE pw value");
+				if (valCtx.HEX() != null) {
+					value = parseHexValue(valCtx.HEX().getText(), valCtx.getStart(), "TABLE pw value");
+				} else if (valCtx.signedInt() != null) {
+					value = Integer.parseInt(valCtx.signedInt().INT().getText());
+				} else {
+					value = Integer.parseInt(valCtx.INT().getText());
+				}
 				if (value > 0x0FFF) {
 					throw new ValidationException(posLine(valCtx.getStart()), posCol(valCtx.getStart()),
-							"TABLE pw value out of range 0000..0FFF");
+							"TABLE pw value out of range 0..4095 ($0000..$0FFF)");
 				}
 			}
 
@@ -529,12 +532,15 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 				int r = Integer.parseInt(p.INT(3).getText());
 				adsr = new SIDScoreIR.AdsrIR(a, d, s, r);
 			} else if (p.PW() != null) {
-				// Parser allows (HEX | INT). Interpret as HEX semantics.
-				String raw = (p.HEX() != null) ? p.HEX().getText() : p.INT(0).getText();
-				int v = parseHexValue(raw, p.getStart(), "PW");
+				int v;
+				if (p.HEX() != null) {
+					v = parseHexValue(p.HEX().getText(), p.getStart(), "PW");
+				} else {
+					v = Integer.parseInt(p.INT(0).getText());
+				}
 				if (v > 0x0FFF) {
 					throw new ValidationException(posLine(p.getStart()), posCol(p.getStart()),
-							"PW out of range 0000..0FFF");
+							"PW out of range 0..4095 ($0000..$0FFF)");
 				}
 				pw = OptionalInt.of(v);
 			} else if (p.FILTER() != null) {
@@ -582,19 +588,27 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 			} else if (p.GATEMIN() != null) {
 				gateMin = Integer.parseInt(p.INT(0).getText());
 			} else if (p.PWMIN() != null) {
-				String raw = (p.HEX() != null) ? p.HEX().getText() : p.INT(0).getText();
-				int v = parseHexValue(raw, p.getStart(), "PWMIN");
+				int v;
+				if (p.HEX() != null) {
+					v = parseHexValue(p.HEX().getText(), p.getStart(), "PWMIN");
+				} else {
+					v = Integer.parseInt(p.INT(0).getText());
+				}
 				if (v > 0x0FFF) {
 					throw new ValidationException(posLine(p.getStart()), posCol(p.getStart()),
-							"PWMIN out of range 0000..0FFF");
+							"PWMIN out of range 0..4095 ($0000..$0FFF)");
 				}
 				pwMin = OptionalInt.of(v);
 			} else if (p.PWMAX() != null) {
-				String raw = (p.HEX() != null) ? p.HEX().getText() : p.INT(0).getText();
-				int v = parseHexValue(raw, p.getStart(), "PWMAX");
+				int v;
+				if (p.HEX() != null) {
+					v = parseHexValue(p.HEX().getText(), p.getStart(), "PWMAX");
+				} else {
+					v = Integer.parseInt(p.INT(0).getText());
+				}
 				if (v > 0x0FFF) {
 					throw new ValidationException(posLine(p.getStart()), posCol(p.getStart()),
-							"PWMAX out of range 0000..0FFF");
+							"PWMAX out of range 0..4095 ($0000..$0FFF)");
 				}
 				pwMax = OptionalInt.of(v);
 			} else if (p.PWSWEEP() != null) {
@@ -1007,13 +1021,16 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 
 	private static int parseHexValue(String raw, Token where, String label) {
 		int v;
+		if (raw == null || raw.isEmpty() || raw.charAt(0) != '$') {
+			throw new ValidationException(posLine(where), posCol(where), label + " must be $-prefixed hex");
+		}
 		try {
-			v = Integer.parseInt(raw, 16);
+			v = Integer.parseInt(raw.substring(1), 16);
 		} catch (NumberFormatException e) {
-			throw new ValidationException(posLine(where), posCol(where), label + " must be hex");
+			throw new ValidationException(posLine(where), posCol(where), label + " must be $-prefixed hex");
 		}
 		if (v < 0 || v > 0xFFFF) {
-			throw new ValidationException(posLine(where), posCol(where), label + " out of range 0000..FFFF");
+			throw new ValidationException(posLine(where), posCol(where), label + " out of range $0000..$FFFF");
 		}
 		return v;
 	}

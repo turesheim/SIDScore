@@ -97,7 +97,7 @@ HIT   : 'X' DIGITS? DOT?;
 // --------------------
 ID     : [A-Za-z_] [A-Za-z0-9_]*;
 INT    : DIGITS;                 // for general integers (e.g. TEMPO 120)
-HEX    : [0-9A-Fa-f]+;           // for PW=0800
+HEX    : '$' [0-9A-Fa-f]+;       // for PW=$0800
 
 STRING : '"' (~["\r\n])* '"';
 
