@@ -27,6 +27,7 @@ VOICE 1 sop:
   A#8 A8 G8 F E A A# G A L32 T{ F# G G } L16 F# D8
   G2 F#4 G2. F4. D#8 D2 C#8 E8 < A G A F A#8
   A8 D8 F E A A# G A F2 & F8 E G C#8.
+
 VOICE 2 alto:
   O4 L16
   R2 L32 T{ R A# A# } L16 R2 R > C2 & C8 < B4 > C8
