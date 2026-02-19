@@ -18,6 +18,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 
+import net.resheim.sidscore.export.driver.DriverAddresses;
 import net.resheim.sidscore.ir.FrameEventCompiler;
 import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.sid.SidModel;
@@ -590,18 +591,28 @@ public final class SIDScoreExporter {
 	}
 
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid) throws IOException {
-		writeSid(prg, score, outSid, SidModel.MOS6581);
+		writeSid(prg, score, outSid, SidModel.MOS6581, new DriverAddresses(LOAD_ADDR, LOAD_ADDR, PLAY_ADDR));
 	}
 
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid, SidModel model) throws IOException {
+		writeSid(prg, score, outSid, model, new DriverAddresses(LOAD_ADDR, LOAD_ADDR, PLAY_ADDR));
+	}
+
+	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid, SidModel model, DriverAddresses addresses) throws IOException {
 		byte[] prgBytes = Files.readAllBytes(prg);
 		if (prgBytes.length < 2) {
 			throw new IOException("PRG too small: " + prg);
 		}
 		byte[] data = prgBytes;
 
-		int initAddr = LOAD_ADDR;
-		int playAddr = PLAY_ADDR;
+		DriverAddresses effective = addresses != null ? addresses : new DriverAddresses(LOAD_ADDR, LOAD_ADDR, PLAY_ADDR);
+		int prgLoadAddr = (prgBytes[0] & 0xFF) | ((prgBytes[1] & 0xFF) << 8);
+		if (prgLoadAddr != effective.loadAddress()) {
+			throw new IOException("PRG load address $" + hex4(prgLoadAddr)
+					+ " does not match backend load address $" + hex4(effective.loadAddress()));
+		}
+		int initAddr = effective.initAddress();
+		int playAddr = effective.playAddress();
 
 		byte[] header = new byte[0x7C];
 		writeAscii(header, 0x00, "PSID");

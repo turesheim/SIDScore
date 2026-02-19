@@ -1,13 +1,20 @@
 ![SIDScore](docs/banner.png)
 
-SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound effects for the Commodore 64 SID (MOS6581). It lets you write scores, define instruments, audition them in a realtime player, and export to C64-ready formats.
+SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound effects for the Commodore 64 SID. It lets you write scores, define instruments, audition them in a realtime player, and export to C64-ready formats.
+
+### Design focus
+
+- SRAP (SIDScore Realtime Audio Player) is the reference renderer. It's aim is to be able to play music true to the score. It has less focus on the more advanced features of the SID-chips, such as filters and tables.
+- The built-in `sidscore` assembly backend ("SIDScore Driver") aims to reproduce SRAP behavior in exported `ASM/PRG/SID`.
+- Driver backends are pluggable, so alternative exporters (for example reverse-engineered legacy drivers) can be added without changing the DSL or SRAP.
 
 ### What it includes
 
 - A SID-aware DSL with instruments, tables/sequences, and reusable imports for instrument definitions.
-- A basic MOS6581 synthesizer/emulator implemented in Java.
+- SRAP: a SID-oriented realtime renderer with 6581/8580 model support.
 - A realtime player UI with editor, auto-reload, oscilloscope per voice, and example browser.
 - Exporters that produce MOS6502 assembly + player (driver) code, plus `*.prg`, `*.sid`, and `.wav` output (via KickAssembler for PRG/SID).
+- A pluggable driver backend layer (`--driver`) with built-in `sidscore` backend.
 - A growing collection of examples (SFX and melodies), including pieces derived from MIDI and sheet music.
 
 ### Quick start
@@ -26,6 +33,20 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 ```
 
 Use `--no-play` with `--wav`, `--asm`, `--prg`, or `--sid` to export without realtime audio.
+
+List available driver backends:
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.SIDScoreCLI --list-drivers
+```
+
+Select a backend explicitly (defaults to `sidscore`):
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.SIDScoreCLI examples/test.sidscore --driver sidscore --sid out.sid --no-play
+```
 
 ### Documentation
 

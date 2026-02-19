@@ -16,6 +16,8 @@ import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 
 import net.resheim.sidscore.export.SIDScoreExporter;
+import net.resheim.sidscore.export.driver.SidDriverBackend;
+import net.resheim.sidscore.export.driver.SidDriverRegistry;
 import net.resheim.sidscore.ir.RealtimeAudioPlayer;
 import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.ir.ScoreBuildingListener;
@@ -36,15 +38,23 @@ import java.util.stream.Collectors;
  * - Prints a short summary + first events per voice
  *
  * Usage:
- *   java SidScoreMain demo.sidscore
+ *   java SIDScoreCLI demo.sidscore
  */ 
 public final class SIDScoreCLI {
 
-  private static final String USAGE = "Usage: java SidScoreMain <file.sidscore> [--wav <out.wav>] [--asm <out.asm>] "
-      + "[--prg <out.prg>] [--sid <out.sid>] [--sid-model <6581|8580>] [--sid-waveforms <path>] [--no-play]";
+  private static final String DEFAULT_DRIVER = "sidscore";
+  private static final String USAGE = "Usage: java SIDScoreCLI <file.sidscore> [--wav <out.wav>] [--asm <out.asm>] "
+      + "[--prg <out.prg>] [--sid <out.sid>] [--driver <id>] [--list-drivers] "
+      + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--no-play]";
 
   public static void main(String[] args) throws Exception {
-    if (args.length < 1) {
+    SidDriverRegistry driverRegistry = SidDriverRegistry.load();
+
+    if (args.length == 1 && "--list-drivers".equals(args[0])) {
+      printDrivers(driverRegistry);
+      return;
+    }
+    if (args.length < 1 || args[0].startsWith("--")) {
       System.err.println(USAGE);
       System.exit(2);
     }
@@ -55,6 +65,7 @@ public final class SIDScoreCLI {
     Path sidOut = null;
     Path sidWaveforms = null;
     SidModel sidModel = SidModel.MOS6581;
+    String driverId = DEFAULT_DRIVER;
     boolean noPlay = false;
     for (int i = 1; i < args.length; i++) {
       switch (args[i]) {
@@ -106,6 +117,17 @@ public final class SIDScoreCLI {
           }
           sidWaveforms = Path.of(args[++i]);
         }
+        case "--driver" -> {
+          if (i + 1 >= args.length) {
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          driverId = args[++i];
+        }
+        case "--list-drivers" -> {
+          printDrivers(driverRegistry);
+          return;
+        }
         case "--no-play" -> noPlay = true;
         default -> {
           System.err.println(USAGE);
@@ -154,9 +176,17 @@ public final class SIDScoreCLI {
 
     // --- Print summary ---
     SIDScoreIR.TimedScore timed = result.timedScore();
+    SidDriverBackend driver = driverRegistry.find(driverId).orElse(null);
+    if (driver == null) {
+      System.err.println("Unknown driver backend: " + driverId);
+      printDrivers(driverRegistry);
+      System.exit(2);
+      return;
+    }
 
     if (asmOut != null || prgOut != null || sidOut != null) {
       SIDScoreExporter exporter = new SIDScoreExporter();
+      System.out.println("Driver: " + driver.id() + " (" + driver.description() + ")");
 
       Path asmForPrg = null;
       Path asmForSid = null;
@@ -177,12 +207,12 @@ public final class SIDScoreCLI {
 
       if (asmForPrg != null) {
         deleteIfExists(asmForPrg);
-        exporter.writeAsm(timed, asmForPrg, true);
+        driver.writeAsm(timed, asmForPrg, true);
         System.out.println("ASM: " + asmForPrg);
       }
       if (asmForSid != null && (asmForPrg == null || !asmForSid.equals(asmForPrg))) {
         deleteIfExists(asmForSid);
-        exporter.writeAsm(timed, asmForSid, false);
+        driver.writeAsm(timed, asmForSid, false);
         System.out.println("ASM (SID): " + asmForSid);
       }
 
@@ -192,7 +222,7 @@ public final class SIDScoreCLI {
         if (asmForPrg == null) {
           asmForPrg = withExtension(prgForPrg, ".asm");
           deleteIfExists(asmForPrg);
-          exporter.writeAsm(timed, asmForPrg, true);
+          driver.writeAsm(timed, asmForPrg, true);
           System.out.println("ASM: " + asmForPrg);
         }
         deleteIfExists(prgForPrg);
@@ -201,13 +231,16 @@ public final class SIDScoreCLI {
       }
 
       if (sidOut != null) {
+        if (!driver.supportsSidExport()) {
+          throw new IllegalStateException("Driver backend does not support SID export: " + driver.id());
+        }
         Path prgForSid = (prgForPrg != null && asmForSid != null && asmForSid.equals(asmForPrg))
             ? prgForPrg
             : withExtension(sidOut, ".prg");
         if (asmForSid == null) {
           asmForSid = withExtension(sidOut, ".asm");
           deleteIfExists(asmForSid);
-          exporter.writeAsm(timed, asmForSid, false);
+          driver.writeAsm(timed, asmForSid, false);
           System.out.println("ASM (SID): " + asmForSid);
         }
         if (prgForPrg == null || !prgForSid.equals(prgForPrg)) {
@@ -216,7 +249,7 @@ public final class SIDScoreCLI {
           System.out.println("PRG (SID): " + prgForSid);
         }
         deleteIfExists(sidOut);
-        exporter.writeSid(prgForSid, timed, sidOut, sidModel);
+        exporter.writeSid(prgForSid, timed, sidOut, sidModel, driver.psidAddresses());
         System.out.println("SID: " + sidOut);
       }
       System.out.println();
@@ -272,6 +305,13 @@ public final class SIDScoreCLI {
         throw new IllegalStateException("Output path is a directory: " + path);
       }
       Files.delete(path);
+    }
+  }
+
+  private static void printDrivers(SidDriverRegistry registry) {
+    System.out.println("Available driver backends:");
+    for (SidDriverBackend backend : registry.list()) {
+      System.out.println("  - " + backend.id() + ": " + backend.description());
     }
   }
 
