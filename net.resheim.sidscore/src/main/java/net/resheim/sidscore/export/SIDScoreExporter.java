@@ -28,11 +28,18 @@ public final class SIDScoreExporter {
 	public static final int LOAD_ADDR = 0x1000;
 	public static final int INIT_ADDR = LOAD_ADDR + 7;
 	public static final int PLAY_ADDR = 0x1400;
+	public static final int NOTE_FREQ_TABLE_BYTES = 128 * 2;
 
 	private static final Path KICKASS_JAR = Path.of("lib/KickAss.jar");
 	private static final double SID_CLOCK_NTSC = 1022727.0;
 	private static final double SID_CLOCK_PAL = 985248.0;
 	private static final int RASTER_LINE = 0;
+
+	public static final record ProgramStats(int voiceEventBytes, int tableBytes, int noteFreqTableBytes) {
+		public int scoreBytes() {
+			return voiceEventBytes + tableBytes;
+		}
+	}
 
 	public void writeAsm(SIDScoreIR.TimedScore score, Path outAsm) throws IOException {
 		writeAsm(score, outAsm, true);
@@ -567,6 +574,36 @@ public final class SIDScoreExporter {
 		appendNoteFreqTable(sb, score);
 
 		Files.writeString(outAsm, sb.toString(), StandardCharsets.US_ASCII);
+	}
+
+	public ProgramStats estimateProgramStats(SIDScoreIR.TimedScore score) {
+		int voiceEventBytes = 0;
+		for (int voice = 1; voice <= 3; voice++) {
+			SIDScoreIR.TimedVoice tv = score.voices().get(voice);
+			SIDScoreIR.InstrumentIR instr = tv != null ? tv.instrument() : null;
+			if (tv != null && instr != null) {
+				voiceEventBytes += buildVoiceData(tv, instr, score).size();
+			} else {
+				voiceEventBytes += 6; // terminator-only stream
+			}
+		}
+
+		int tableBytes = 0;
+		for (SIDScoreIR.TableIR table : score.tables().values()) {
+			int steps = table.steps().size();
+			switch (table.type()) {
+				case PW -> tableBytes += 2 + (steps * 4);     // count + loop + (dur,pw)
+				case WAVE -> tableBytes += steps * 8;         // 8 bytes per step
+				case GATE -> tableBytes += steps * 4;         // .word dur + gate + pad
+				case PITCH -> tableBytes += steps * 4;        // .word dur + off + pad
+				case FILTER -> tableBytes += steps * 4;       // .word dur + cutoff
+				default -> {
+					// not emitted by assembler backend
+				}
+			}
+		}
+
+		return new ProgramStats(voiceEventBytes, tableBytes, NOTE_FREQ_TABLE_BYTES);
 	}
 
 	public void assemble(Path asm, Path outPrg) throws IOException, InterruptedException {

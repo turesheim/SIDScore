@@ -190,6 +190,7 @@ public final class SIDScoreCLI {
 
       Path asmForPrg = null;
       Path asmForSid = null;
+      Path compiledProgram = null;
 
       if (sidOut != null) {
         asmForSid = asmOut != null ? asmOut : withExtension(sidOut, ".asm");
@@ -228,6 +229,7 @@ public final class SIDScoreCLI {
         deleteIfExists(prgForPrg);
         exporter.assemble(asmForPrg, prgForPrg);
         System.out.println("PRG: " + prgForPrg);
+        compiledProgram = prgForPrg;
       }
 
       if (sidOut != null) {
@@ -248,9 +250,13 @@ public final class SIDScoreCLI {
           exporter.assemble(asmForSid, prgForSid);
           System.out.println("PRG (SID): " + prgForSid);
         }
+        compiledProgram = prgForSid;
         deleteIfExists(sidOut);
         exporter.writeSid(prgForSid, timed, sidOut, sidModel, driver.psidAddresses());
         System.out.println("SID: " + sidOut);
+      }
+      if (compiledProgram != null && Files.exists(compiledProgram)) {
+        printProgramStats(driver, exporter, timed, compiledProgram, sidOut);
       }
       System.out.println();
     }
@@ -313,6 +319,53 @@ public final class SIDScoreCLI {
     for (SidDriverBackend backend : registry.list()) {
       System.out.println("  - " + backend.id() + ": " + backend.description());
     }
+  }
+
+  private static void printProgramStats(SidDriverBackend driver,
+                                        SIDScoreExporter exporter,
+                                        SIDScoreIR.TimedScore timed,
+                                        Path prgPath,
+                                        Path sidPath) throws Exception {
+    long imageBytes = prgImageBytes(prgPath);
+    int loadAddress = (int) ((read16le(prgPath) & 0xFFFF));
+    System.out.println("Compiled With Driver: " + driver.id());
+    System.out.println("Program Size: " + imageBytes + " bytes (load $" + hex4(loadAddress) + ")");
+
+    if ("sidscore".equalsIgnoreCase(driver.id())) {
+      SIDScoreExporter.ProgramStats stats = exporter.estimateProgramStats(timed);
+      long scoreBytes = stats.scoreBytes();
+      long driverBytes = Math.max(0L, imageBytes - scoreBytes);
+      System.out.println("Size Split: driver~" + driverBytes + " bytes, score~" + scoreBytes + " bytes");
+      System.out.println("Score Data: voice-events=" + stats.voiceEventBytes() + " bytes, tables="
+          + stats.tableBytes() + " bytes");
+      System.out.println("Driver Data: note-freq-table=" + stats.noteFreqTableBytes() + " bytes");
+    } else {
+      System.out.println("Size Split: unavailable for backend '" + driver.id() + "'");
+    }
+
+    if (sidPath != null && Files.exists(sidPath)) {
+      System.out.println("SID Size: " + Files.size(sidPath) + " bytes");
+    }
+  }
+
+  private static long prgImageBytes(Path prgPath) throws Exception {
+    byte[] bytes = Files.readAllBytes(prgPath);
+    if (bytes.length < 2) {
+      throw new IllegalStateException("PRG too small: " + prgPath);
+    }
+    return bytes.length - 2L;
+  }
+
+  private static int read16le(Path path) throws Exception {
+    byte[] bytes = Files.readAllBytes(path);
+    if (bytes.length < 2) {
+      throw new IllegalStateException("File too small: " + path);
+    }
+    return (bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8);
+  }
+
+  private static String hex4(int v) {
+    return String.format("%04x", v & 0xFFFF);
   }
 
   /** ErrorListener that throws immediately on syntax errors. */

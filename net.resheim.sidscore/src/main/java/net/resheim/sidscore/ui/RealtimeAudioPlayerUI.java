@@ -918,7 +918,7 @@ public final class RealtimeAudioPlayerUI {
 
 		Path tempDir = null;
 		try {
-			setMessageAsync("VICE: generating SID...", MSG_INFO);
+			appendMessageAsync("VICE: generating SID...", MSG_INFO);
 			tempDir = Files.createTempDirectory("sidscore-vice-");
 			Path asmPath = tempDir.resolve("preview.asm");
 			Path prgPath = tempDir.resolve("preview.prg");
@@ -928,8 +928,9 @@ public final class RealtimeAudioPlayerUI {
 			exporter.writeAsm(timed, asmPath, false);
 			exporter.assemble(asmPath, prgPath);
 			exporter.writeSid(prgPath, timed, sidPath, SidModel.MOS6581);
+			appendCompiledProgramStatsForVice(timed, exporter, prgPath, sidPath);
 
-			setMessageAsync("VICE: direct playback...", MSG_INFO);
+			appendMessageAsync("VICE: direct playback...", MSG_INFO);
 			playWithViceDirect(sidPath, timed);
 			if (viceStopRequested) {
 				return;
@@ -1188,6 +1189,36 @@ public final class RealtimeAudioPlayerUI {
 			// best effort only
 		}
 		return null;
+	}
+
+	private void appendCompiledProgramStatsForVice(SIDScoreIR.TimedScore timed,
+			SIDScoreExporter exporter,
+			Path prgPath,
+			Path sidPath) throws IOException {
+		long prgSize = Files.size(prgPath);
+		if (prgSize < 2) {
+			return;
+		}
+		byte[] header = Files.readAllBytes(prgPath);
+		int loadAddress = (header[0] & 0xFF) | ((header[1] & 0xFF) << 8);
+		long imageBytes = prgSize - 2;
+		SIDScoreExporter.ProgramStats stats = exporter.estimateProgramStats(timed);
+		long scoreBytes = stats.scoreBytes();
+		long driverBytes = Math.max(0L, imageBytes - scoreBytes);
+
+		appendMessageAsync("Compiled With Driver: sidscore", MSG_INFO);
+		appendMessageAsync("Program Size: " + imageBytes + " bytes (load $" + hex4(loadAddress) + ")", MSG_INFO);
+		appendMessageAsync("Size Split: driver~" + driverBytes + " bytes, score~" + scoreBytes + " bytes", MSG_INFO);
+		appendMessageAsync("Score Data: voice-events=" + stats.voiceEventBytes() + " bytes, tables="
+				+ stats.tableBytes() + " bytes", MSG_INFO);
+		appendMessageAsync("Driver Data: note-freq-table=" + stats.noteFreqTableBytes() + " bytes", MSG_INFO);
+		if (Files.exists(sidPath)) {
+			appendMessageAsync("SID Size: " + Files.size(sidPath) + " bytes", MSG_INFO);
+		}
+	}
+
+	private static String hex4(int v) {
+		return String.format("%04x", v & 0xFFFF);
 	}
 
 	private static String sanitizeViceErrorLog(String raw) {
