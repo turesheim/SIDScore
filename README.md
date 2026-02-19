@@ -4,29 +4,18 @@ SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound e
 
 ### Design focus
 
-- SRAP (SIDScore Realtime Audio Player) is the reference renderer. It's aim is to be able to play music true to the score. It has less focus on the more advanced features of the SID-chips, such as filters and tables.
-- The built-in `sidscore` assembly backend ("SIDScore Driver") aims to reproduce SRAP behavior in exported `ASM/PRG/SID`.
-- Driver backends are pluggable, so alternative exporters (for example reverse-engineered legacy drivers) can be added without changing the DSL or SRAP.
-
-### `sidscore` Driver
-
-- Purpose: `sidscore` is the reference export backend. It prioritizes SRAP parity and PSID/C64 compatibility over emulating legacy tracker driver quirks.
-- Shared timing model: score events are compiled to frame events once and reused by both SRAP and the assembler exporter, so note/gate timing stays aligned.
-- Runtime model: the generated driver keeps per-voice state and updates SID registers for note frequency, gate/wave control, PWM, pitch, and filter sequences on each play tick.
-- Output behavior (`ASM/PRG`): standalone builds include IRQ installation for native C64 execution.
-- Output behavior (`SID`): builds skip IRQ installation and rely on player callbacks (`init`/`play`) for PSID compatibility.
-- Compatibility target: PSID metadata is emitted for common players (for example VSID/VICE).
-- Compatibility target: SID model metadata (6581/8580) is carried through export settings.
-- Introspection: CLI export reports compiled backend id and size stats (program size, estimated driver/score split, and SID size) to make regressions easier to spot.
+- SRAP (SIDScore Realtime Audio Player) is the reference playback engine.
+- Export backends should reproduce SRAP timing and behavior when generating `ASM/PRG/SID`.
+- Export backends are pluggable, so alternative driver targets can be added without changing the DSL.
 
 ### What it includes
 
-- A SID-aware DSL with instruments, tables/sequences, and reusable imports for instrument definitions.
-- SRAP: a SID-oriented realtime renderer with 6581/8580 model support.
-- A realtime player UI with editor, auto-reload, oscilloscope per voice, and example browser.
-- Exporters that produce MOS6502 assembly + player (driver) code, plus `*.prg`, `*.sid`, and `.wav` output (via KickAssembler for PRG/SID).
-- A pluggable driver backend layer (`--driver`) with built-in `sidscore` backend.
-- A growing collection of examples (SFX and melodies), including pieces derived from MIDI and sheet music.
+- SID-aware DSL with instruments, tables/sequences, and reusable imports.
+- SRAP renderer with 6581/8580 model support for auditioning and WAV rendering.
+- Realtime UI with editor, auto-reload, oscilloscope, and example browser.
+- Export pipeline for `ASM`, `PRG`, and `SID` (KickAssembler used for PRG/SID assembly).
+- Driver backend selection via `--driver` (built-in `sidscore` included).
+- Example library (SFX and melodies), including MIDI/sheet-derived pieces.
 
 ### Quick start
 
@@ -90,6 +79,19 @@ Run it from the repo root so the examples browser and banner image resolve corre
 If `VICE` playback is selected, SIDScore uses `vsid` from `PATH` (or `SIDSCORE_VICE_BIN` if set) for direct audio playback.
 Optional: set `SIDSCORE_VICE_DATA_DIR` to the VICE data directory if your installation needs explicit sysfile lookup.
 By default, VICE logs are shown in full in `Messages`. To re-enable compact/suppressed log mode, start UI with `--compact-vice-log` (or set `SIDSCORE_VICE_COMPACT_LOG=1` / `-Dsidscore.vice.compactLog=true`). Use `--full-vice-log` to force full logs.
+
+### Technical Details
+
+#### `sidscore` Driver
+
+- Purpose: `sidscore` is the reference export backend. It prioritizes SRAP parity and PSID/C64 compatibility over emulating legacy tracker driver quirks.
+- Shared timing model: score events are compiled to frame events once and reused by both SRAP and the assembler exporter, so note/gate timing stays aligned.
+- Runtime model: the generated driver keeps per-voice state and updates SID registers for note frequency, gate/wave control, PWM, pitch, and filter sequences on each play tick.
+- Output behavior (`ASM/PRG`): standalone builds include IRQ installation for native C64 execution.
+- Output behavior (`SID`): builds skip IRQ installation and rely on player callbacks (`init`/`play`) for PSID compatibility.
+- Compatibility target: PSID metadata is emitted for common players (for example VSID/VICE).
+- Compatibility target: SID model metadata (6581/8580) is carried through export settings.
+- Introspection: CLI export reports compiled backend id and size stats (program size, estimated driver/score split, and SID size) to make regressions easier to spot.
 
 
 ## Resources
