@@ -4,18 +4,15 @@ SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound e
 
 In SIDScore, a **renderer** is used for auditioning during development (for example SRAP or VICE playback), while a **driver** is the generated 6502 playback program that runs your exported score in `ASM/PRG/SID` output. In short: renderer = monitoring path, driver = runtime path for PSID/C64 targets.
 
-**What it includes:**
+**What this project includes:**
 
-- SID-aware Domain Specific Language (DSL) with instruments, tables/sequences, and reusable imports.
-- A score renderer with 6581/8580 model support for auditioning.
-- Realtime UI with editor, auto-reload, oscilloscope, and example browser.
+- A SID-aware [Domain Specific Language (DSL)](SIDScore_Language_Specification.md) with instruments, tables/sequences, and reusable imports.
+- A score renderer with 6581 model support for auditioning while composing masterpieces, the _SIDScore Realtime Audio Player_ (SRAP).
+- A user interface with editor, auto-reload, oscilloscope, and example browser. Playback using the built-in renderer (SRAP) or optionally a reSID based renderer using the `vsid` (VICE) binary.
 - Export pipeline for `ASM`, `PRG`, and `SID` (KickAssembler used for PRG/SID assembly).
-- Driver backend selection via `--driver` (built-in `sidscore` included).
 - Example library (SFX and melodies), including MIDI/sheet-derived pieces.
 
-The [SIDScore_Language_Specification.md](SIDScore_Language_Specification.md) describes the language and instrument system in detail.
-
-# Quick start
+## Quick start
 
 Build the module:
 
@@ -46,7 +43,7 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
   net.resheim.sidscore.SIDScoreCLI examples/test.sidscore --driver sidscore --sid out.sid --no-play
 ```
 
-# The SIDScore Realtime Audio Player (SRAP) UI
+## SIDScore GUI
 
 The GUI player lets you edit and audition scores interactively:
 
@@ -56,7 +53,7 @@ The GUI player lets you edit and audition scores interactively:
 - Examples navigator that loads and plays on activation.
 - Three voice oscilloscope views for quick feedback.
 - `Messages` panel shows `vsid` output during VICE playback.
-- Score note highlighting is approximate. It is tuned to be fairly correct with the built-in `sidscore` driver.
+- Score note highlighting is accurate when auditioning using SRAP, but only approximate when using the VICE renderer. It is tuned to be fairly correct with the built-in `sidscore` driver.
 - For other driver backends, note highlighting should be considered unsupported and must be disabled (timing semantics are driver-specific).
 
 ![](docs/SRAP.png)
@@ -74,13 +71,13 @@ If `VICE` playback is selected, SIDScore uses `vsid` from `PATH` (or `SIDSCORE_V
 Optional: set `SIDSCORE_VICE_DATA_DIR` to the VICE data directory if your installation needs explicit sysfile lookup.
 By default, VICE logs are shown in full in `Messages`. To re-enable compact/suppressed log mode, start UI with `--compact-vice-log` (or set `SIDSCORE_VICE_COMPACT_LOG=1` / `-Dsidscore.vice.compactLog=true`). Use `--full-vice-log` to force full logs.
 
-# Technical Details
+## Technical Details
 
-## `sidscore` Driver
+### `sidscore` Driver
 
-- Purpose: `sidscore` is the reference export backend. It prioritizes SRAP parity and PSID/C64 compatibility over emulating legacy tracker driver quirks.
+- `sidscore` is the reference export backend. It prioritizes SRAP parity and PSID/C64 compatibility over emulating legacy tracker driver quirks. It does a pretty good job on emulating plain ADSR and waveforms.
 - Shared timing model: score events are compiled to frame events once and reused by both SRAP and the assembler exporter, so note/gate timing stays aligned.
-- Runtime model: the generated driver keeps per-voice state and updates SID registers for note frequency, gate/wave control, PWM, pitch, and filter sequences on each play tick.
+- The generated driver keeps per-voice state and updates SID registers for note frequency, gate/wave control, PWM, pitch, and filter sequences on each play tick.
 - Output behavior (`ASM/PRG`): standalone builds include IRQ installation for native C64 execution.
 - Output behavior (`SID`): builds skip IRQ installation and rely on player callbacks (`init`/`play`) for PSID compatibility.
 - Compatibility target: PSID metadata is emitted for common players (for example VSID/VICE).
