@@ -24,6 +24,7 @@ import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.sid.SidModel;
 
 public final class SIDScoreExporter {
+	public static final int BASIC_LOAD_ADDR = 0x0801;
 	public static final int LOAD_ADDR = 0x1000;
 	public static final int INIT_ADDR = LOAD_ADDR + 7;
 	public static final int PLAY_ADDR = 0x1400;
@@ -591,11 +592,11 @@ public final class SIDScoreExporter {
 	}
 
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid) throws IOException {
-		writeSid(prg, score, outSid, SidModel.MOS6581, new DriverAddresses(LOAD_ADDR, LOAD_ADDR, PLAY_ADDR));
+		writeSid(prg, score, outSid, SidModel.MOS6581, new DriverAddresses(BASIC_LOAD_ADDR, LOAD_ADDR, PLAY_ADDR));
 	}
 
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid, SidModel model) throws IOException {
-		writeSid(prg, score, outSid, model, new DriverAddresses(LOAD_ADDR, LOAD_ADDR, PLAY_ADDR));
+		writeSid(prg, score, outSid, model, new DriverAddresses(BASIC_LOAD_ADDR, LOAD_ADDR, PLAY_ADDR));
 	}
 
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid, SidModel model, DriverAddresses addresses) throws IOException {
@@ -605,7 +606,7 @@ public final class SIDScoreExporter {
 		}
 		byte[] data = prgBytes;
 
-		DriverAddresses effective = addresses != null ? addresses : new DriverAddresses(LOAD_ADDR, LOAD_ADDR, PLAY_ADDR);
+		DriverAddresses effective = addresses != null ? addresses : new DriverAddresses(BASIC_LOAD_ADDR, LOAD_ADDR, PLAY_ADDR);
 		int prgLoadAddr = (prgBytes[0] & 0xFF) | ((prgBytes[1] & 0xFF) << 8);
 		if (prgLoadAddr != effective.loadAddress()) {
 			throw new IOException("PRG load address $" + hex4(prgLoadAddr)

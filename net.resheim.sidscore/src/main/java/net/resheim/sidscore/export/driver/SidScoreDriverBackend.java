@@ -42,7 +42,7 @@ public final class SidScoreDriverBackend implements SidDriverBackend {
 	@Override
 	public DriverAddresses psidAddresses() {
 		return new DriverAddresses(
-				SIDScoreExporter.LOAD_ADDR,
+				SIDScoreExporter.BASIC_LOAD_ADDR,
 				SIDScoreExporter.LOAD_ADDR,
 				SIDScoreExporter.PLAY_ADDR
 		);
