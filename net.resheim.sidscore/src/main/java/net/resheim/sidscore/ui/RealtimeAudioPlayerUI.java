@@ -126,6 +126,7 @@ public final class RealtimeAudioPlayerUI {
 	private final JButton copyErrorsButton = new JButton("Copy");
 	private final JButton loadButton = new JButton("Load");
 	private final JButton playButton = new JButton("Play");
+	private final JButton continueButton = new JButton("Continue");
 	private final JButton stopButton = new JButton("Stop");
 	private final JComboBox<PlaybackRenderer> rendererCombo = new JComboBox<>(PlaybackRenderer.values());
 	private final JToggleButton autoReloadButton = new JToggleButton("Auto Reload");
@@ -152,8 +153,11 @@ public final class RealtimeAudioPlayerUI {
 	private volatile boolean restartShowDialogs = false;
 	private volatile long playbackStartNanos = -1;
 	private volatile long playbackStopNanos = -1;
+	private volatile long playbackPauseNanos = -1;
+	private volatile boolean playbackPaused = false;
 	private volatile double playbackTicksPerSecond = 0.0;
 	private volatile List<EventSpan>[] highlightEventsByVoice = null;
+	private volatile boolean keepHighlightOnStop = false;
 	private final int[] highlightIndices = new int[4];
 	private final List<Object> playbackHighlightTags = new java.util.ArrayList<>();
 	private final Highlighter.HighlightPainter playbackPainter =
@@ -176,6 +180,7 @@ public final class RealtimeAudioPlayerUI {
 		controlsPanel.add(rendererCombo);
 		controlsPanel.add(loadButton);
 		controlsPanel.add(playButton);
+		controlsPanel.add(continueButton);
 		controlsPanel.add(stopButton);
 		controlsPanel.add(autoReloadButton);
 
@@ -189,6 +194,7 @@ public final class RealtimeAudioPlayerUI {
 
 		styleButton(loadButton);
 		styleButton(playButton);
+		styleButton(continueButton);
 		styleButton(stopButton);
 		styleButton(autoReloadButton);
 		styleButton(exportAsmButton);
@@ -198,8 +204,10 @@ public final class RealtimeAudioPlayerUI {
 		styleComboBox(rendererCombo);
 
 		stopButton.setEnabled(false);
+		continueButton.setEnabled(false);
 
 		playButton.addActionListener(e -> onPlay());
+		continueButton.addActionListener(e -> onContinue());
 		stopButton.addActionListener(e -> onStop(true));
 		autoReloadButton.addActionListener(e -> onAutoReloadToggle());
 		loadButton.addActionListener(e -> onLoad());
@@ -392,16 +400,58 @@ public final class RealtimeAudioPlayerUI {
 		startPlayback(true);
 	}
 
+	private void onContinue() {
+		if (!playbackPaused) {
+			return;
+		}
+		RealtimeAudioPlayer current = player;
+		if (current == null || !isPlaying()) {
+			playbackPaused = false;
+			playbackPauseNanos = -1;
+			keepHighlightOnStop = false;
+			updatePlaybackButtons();
+			return;
+		}
+		current.resume();
+		long now = System.nanoTime();
+		if (playbackPauseNanos > 0 && playbackStartNanos > 0) {
+			playbackStartNanos += (now - playbackPauseNanos);
+		}
+		playbackPauseNanos = -1;
+		playbackPaused = false;
+		keepHighlightOnStop = false;
+		playbackStopNanos = -1;
+		updatePlaybackButtons();
+		updateElapsedClock();
+	}
+
 	private void onStop(boolean clearRestart) {
 		if (clearRestart) {
 			restartPending = false;
 			restartOnlyWhenAutoReload = false;
 		}
+		if (clearRestart && !playbackPaused && isPlaying() && activeRenderer() == PlaybackRenderer.SRAP) {
+			RealtimeAudioPlayer current = player;
+			if (current != null) {
+				current.pause();
+				playbackPaused = true;
+				playbackPauseNanos = System.nanoTime();
+				keepHighlightOnStop = true;
+				if (playbackStartNanos > 0 && playbackStopNanos < 0) {
+					playbackStopNanos = playbackPauseNanos;
+				}
+				updatePlaybackButtons();
+				updateElapsedClock();
+				return;
+			}
+		}
+		playbackPaused = false;
+		playbackPauseNanos = -1;
+		keepHighlightOnStop = clearRestart;
 		viceStopRequested = true;
 		if (playbackStartNanos > 0 && playbackStopNanos < 0) {
 			playbackStopNanos = System.nanoTime();
 		}
-		resetPlaybackHighlighting();
 		Process renderProcess = viceProcess;
 		if (renderProcess != null) {
 			renderProcess.destroy();
@@ -805,9 +855,15 @@ public final class RealtimeAudioPlayerUI {
 		return playThread != null && playThread.isAlive();
 	}
 
+	private PlaybackRenderer activeRenderer() {
+		PlaybackRenderer renderer = (PlaybackRenderer) rendererCombo.getSelectedItem();
+		return renderer != null ? renderer : PlaybackRenderer.SRAP;
+	}
+
 	private void setPlaybackButtons(boolean playing) {
 		playButton.setEnabled(!playing);
 		stopButton.setEnabled(playing);
+		continueButton.setEnabled(playing && playbackPaused && activeRenderer() == PlaybackRenderer.SRAP);
 		rendererCombo.setEnabled(!playing);
 	}
 
@@ -862,6 +918,9 @@ public final class RealtimeAudioPlayerUI {
 	}
 
 	private boolean startPlayback(boolean showDialogs) {
+		keepHighlightOnStop = false;
+		playbackPaused = false;
+		playbackPauseNanos = -1;
 		resetPlaybackHighlighting();
 		SIDScoreIR.TimedScore timed = parseScore(input.getText(), showDialogs, showDialogs);
 		if (timed == null) {
@@ -964,17 +1023,23 @@ public final class RealtimeAudioPlayerUI {
 			if (playThread != ownerThread) {
 				return;
 			}
+			playbackPaused = false;
+			playbackPauseNanos = -1;
+			boolean preserveStoppedHighlight = keepHighlightOnStop && !restartPending;
 			setPlaybackButtons(false);
 			playThread = null;
 			if (playbackStartNanos > 0 && playbackStopNanos < 0) {
 				playbackStopNanos = System.nanoTime();
 			}
-			resetPlaybackHighlighting();
+			if (!preserveStoppedHighlight) {
+				resetPlaybackHighlighting();
+			}
 			updateElapsedClock();
 			if (restartPending && (!restartOnlyWhenAutoReload || autoReloadEnabled)) {
 				boolean show = restartShowDialogs;
 				restartPending = false;
 				restartOnlyWhenAutoReload = false;
+				keepHighlightOnStop = false;
 				startPlayback(show);
 			}
 		});
@@ -1411,10 +1476,21 @@ public final class RealtimeAudioPlayerUI {
 	}
 
 	private void updatePlaybackHighlight() {
-		clearPlaybackHighlights();
-		if (playbackStartNanos <= 0 || !isPlaying() || highlightEventsByVoice == null) {
+		if (highlightEventsByVoice == null || playbackStartNanos <= 0) {
+			clearPlaybackHighlights();
 			return;
 		}
+		if (playbackPaused) {
+			return;
+		}
+		if (!isPlaying()) {
+			if (keepHighlightOnStop) {
+				return;
+			}
+			clearPlaybackHighlights();
+			return;
+		}
+		clearPlaybackHighlights();
 		double elapsedSeconds = (System.nanoTime() - playbackStartNanos) / 1_000_000_000.0;
 		double elapsedTicks = elapsedSeconds * playbackTicksPerSecond;
 		for (int voice = 1; voice <= 3; voice++) {
@@ -1456,6 +1532,9 @@ public final class RealtimeAudioPlayerUI {
 		}
 		highlightEventsByVoice = null;
 		playbackTicksPerSecond = 0.0;
+		keepHighlightOnStop = false;
+		playbackPaused = false;
+		playbackPauseNanos = -1;
 	}
 
 	private List<EventSpan>[] buildHighlightEvents(SIDScoreParser.FileContext tree, SIDScoreIR.TimedScore timed,

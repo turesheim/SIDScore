@@ -74,6 +74,7 @@ public final class RealtimeAudioPlayer {
 			Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), 0, OptionalInt.empty(),
 			OptionalInt.empty(), Optional.empty(), SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
 	private final AtomicBoolean stopRequested = new AtomicBoolean(false);
+	private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
 	private final SidModel sidModel;
 	private final SidWaveforms.TableSet waveTables;
 
@@ -126,12 +127,22 @@ public final class RealtimeAudioPlayer {
 	}
 
 	public void stop() {
+		pauseRequested.set(false);
 		stopRequested.set(true);
+	}
+
+	public void pause() {
+		pauseRequested.set(true);
+	}
+
+	public void resume() {
+		pauseRequested.set(false);
 	}
 
 	private void render(SIDScoreIR.TimedScore score, Path wavOut, boolean playAudio, SampleListener listener)
 			throws LineUnavailableException {
 		stopRequested.set(false);
+		pauseRequested.set(false);
 		AudioFormat fmt = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
 		SourceDataLine line = null;
 		if (playAudio) {
@@ -172,6 +183,7 @@ public final class RealtimeAudioPlayer {
 				oversample = Math.max(oversample, OVERSAMPLE_RING);
 			}
 		}
+		boolean linePaused = false;
 
 		double outLP = 0.0;
 		double srOS = SAMPLE_RATE * oversample;
@@ -182,6 +194,23 @@ public final class RealtimeAudioPlayer {
 			done = true;
 			int samplesWritten = 0;
 			for (int s = 0; s < BUFFER_SAMPLES; s++) {
+				while (pauseRequested.get() && !stopRequested.get()) {
+					if (playAudio && line != null && !linePaused) {
+						line.stop();
+						linePaused = true;
+					}
+					try {
+						Thread.sleep(8);
+					} catch (InterruptedException ie) {
+						Thread.currentThread().interrupt();
+						stopRequested.set(true);
+						break;
+					}
+				}
+				if (linePaused && playAudio && line != null && !stopRequested.get()) {
+					line.start();
+					linePaused = false;
+				}
 				if (stopRequested.get()) {
 					break;
 				}
