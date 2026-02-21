@@ -1,0 +1,76 @@
+; Auto-generated from Mutopia MIDI
+; Source: https://www.mutopiaproject.org/ftp/BeethovenLv/O2/LVB_Sonate_02no1_3/LVB_Sonate_02no1_3.mid
+; Conversion is approximate: dense piano texture is reduced to 3 SID voices.
+; Voice assignment favors top melody, bass foundation, and stable middle motion.
+
+TITLE "Sonata No. 1 (3rd Movement: Allegretto)"
+AUTHOR "L. V. Beethoven"
+RELEASED "Mutopia"
+
+TEMPO 168
+TIME 3/4
+SYSTEM PAL
+
+INSTR piano_hi "../instruments/piano_family.sidscore"
+INSTR piano_mid "../instruments/piano_family.sidscore"
+INSTR piano_low "../instruments/piano_family.sidscore"
+
+VOICE 1 piano_hi:
+  G#4 A#4 G4 R4 G#4 F2 E4 F4 G4 A#4 G#4 O5 C4 C#4 O4 A#4
+  O3 G#4 O5 C4 O4 G#2 G4 G#4 A#4 O5 C#4 C4 D#1. F4 O4 G#4.
+  & G#16. O5 C32 O4 A#4 G#4 R4 O5 G8 F8 O4 G#4. & G#16. O5
+  C32 O4 A#4 G#4 R4 O5 D#4 E4 C#4 O4 C#4 O5 D#4 C4 O4 D#4
+  O5 F#4 D#4 O4 D#4 O5 F4 C#4 O4 F4 A#4. & A#16. O5 C#32 C4
+  O4 A#4 R4 O5 F#8 F8 O4 A#4. & A#16. O5 C#32 C4 O4 A#4 R4
+  O5 C#8 C8 O4 A#4 R4 O5 C#8 C8 O4 A#4 R4 O5 C#8 C8 O4
+  A#8 O5 C8 C#8 C8 O4 A#8 O5 C8 O4 A#8 G#8 G8 G#8 G8 F8
+  E8 F8 G8 F8 G#8 O3 B8 O4 C2 G#4 A#4 G4 O5 E4 F4 G#4
+  O6 C8. & C32 O3 G#32 O6 C#4 O5 A#4. & A#16. O3 A#32 O6 C4
+  O5 G#4. & G#32 A#64 O6 C64 O5 G#32 O4 F32 O5 A#4 G4. & G16.
+  O4 E32 O5 G#4 F2. & F8. & F32 G#32 G4 F4 R4 D#8 C#8 O4
+  F4. & F16. G#32 G4 F4 R2 C2. O3 F4 R2 O4 A8 G8 A8 F8
+  G8 A8 A#8 A8 A#8 G8 A8 A#8 O5 C8 O4 B8 O5 C8 D8 C8
+  O4 A#8 A8 G8 A8 A#8 A8 F8 A4 O5 C4 F4 O4 G4 O5 D4
+  F4 O4 G4 O5 F4 E4 O4 F4 O5 D4 C4 R8 O4 G8 E8 C8
+  F8 D8 C4 R2 E8 D8 E8 C8 D8 E8 F8 E8 F8 D8 E8 F8
+  G8 F#8 G8 E8 F8 G8 A8 F8 A8 O5 C8 F8 A8 O6 C2. O5
+  B2. A#4 R8 O4 G8 A8 A#8 O5 C8 O4 A#8 O5 C8 O4 A8 A#8
+  O5 C8 D8 C8 D8 E8 F8 G8 A8 G8 A8 F8 G8 A8 A#8 A8
+  G8 A8 G8 F8 E8 F8 E8 D8 C8 D8 C2. O4 B2. A#2. A8 G8
+  A8 F8 G8 A8 A#8 A8 A#8 G8 A8 B8 O5 C8 O4 B8 O5 C8
+  D8 C8 O4 A#8 A8 G8 A8 A#8 A8 F8 A4 O5 C4 F4 D4 O4
+  G4 F4 E4 G4 O5 C4 O4 F4 R4
+
+VOICE 2 piano_mid:
+  R1. C1. R1. D#1. & D#4 C#4 C4 O3 A#4 O5 C#4 C4 O3 A#4 O4
+  C2 C#4 C4 R2 C2 C#4 C4 R2. A#4 R2 G#4 R2 O5 C4 R2 O4
+  A#4 R4 F4. & F16. C#32 D#4 C#4 R2 C#2 D#4 C#4 R4 A8 D#8 C#4
+  R4 A8 D#8 C#4 R1. R1. R1 G4 G#4 F4 O3 G#8. & G#32 R32 G4
+  A#4. & A#16. R32 G#4 O4 C2 O3 A#4 O4 C#2 D2. G#2 A#4 G#4 R2
+  O3 G#2 A#4 G#4 R2 E2. R2 O4 C4 R1. R1. R4 A2 R4 G2 R4
+  G2 R4 F4 E4 R2 O3 B4 R2 O4 C2 & C8 R8 C4 O3 B2.
+  A#2. A4 R2 O5 C2. O4 B2. A#4 G8 R1. A#8 O5 C8 D8 E8 D8
+  E8 C8 D8 E8 F8 E8 D8 E8 D8 C8 O4 A#8 O5 C8 O4 A#8
+  A8 G8 A8 G2. F2. E2. R1. R1. R1. R1 R4
+
+VOICE 3 piano_low:
+  C4 C#4 O3 A#4 F4 O4 C4 O3 G#4 F4 G4 F4 E4 F2 O4 D#4
+  F4 C#4 O2 G#4 O4 D#4 C4 O3 G#4 A#4 G#4 G4 G#2 O4 C4 O3
+  A#4 G#4 G4 G#2 C#4 D#2. G#4 R2 D#2. G#4 R4 O5 C4 C#4 O3 G4
+  A#4 O5 C4 O3 G#4 O4 C4 O5 D#4 O3 A4 O4 C4 O5 C#4 O3
+  A#4 O4 C#4 O3 F2. A#4 R2 F2. A#4 R4 F4 A#4 R4 F4 A#4 R4
+  O4 C#8 C8 O3 A#8 O4 C8 C#8 C8 O3 A#8 O4 C8 O3 A#8 G#8
+  G8 G#8 G8 F8 E8 F8 G8 F8 G#8 O2 B8 O3 C4 R4 O4 C4
+  C#4 O3 A#2 O4 C4 O3 G#4 F4 E4 G2 F4 G#2 G4 A#2 B2. O4
+  C2. F4 R2 O3 C2. F4 R2 O2 C2. F4 R2 O3 F4 A4 O4 C4
+  D4 O3 G4 F4 E4 G4 O4 C4 O3 F4 A4 O4 C4 O2 A8 G#8
+  A8 F8 G8 A8 A#8 A8 A#8 G8 A8 B8 O3 C8 O2 B8 O3 C8
+  O2 A8 B8 O3 C#8 D8 O2 A8 B8 G8 O3 C8 O2 F#8 G2 O1
+  G4 O2 C4 O3 C4 R4 C1. & C1 R2 O4 E8 D8 E8 C8 D8
+  E8 F8 E8 F8 D8 E8 F8 G8 F8 R8 E8 F8 G8 A8 G8 A8
+  F8 G8 A8 A#8 A8 A#8 G8 A8 A#8 O5 C8 O4 A#8 O5 C8 O4
+  A8 A#8 O5 C8 D8 C8 O4 A#8 O5 C8 O4 A#8 A8 G8 A8 G8
+  F8 E8 F8 E2. D2. C2. O3 F4 A4 O4 C4 D4 O3 G4 F4 E4
+  G4 O4 C4 O3 F4 A4 O4 C4 O2 A8 G#8 A8 F8 G8 A8 A#8
+  A8 A#8 G8 A8 B8 O3 C8 O2 B8 O3 C8 O2 A#8 A8 G8 F4
+  O3 F4
