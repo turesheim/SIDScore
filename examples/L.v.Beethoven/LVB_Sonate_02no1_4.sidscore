@@ -11,11 +11,9 @@ TEMPO 180
 TIME 4/4
 SYSTEM PAL
 
-INSTR piano_hi "../instruments/piano_family.sidscore"
-INSTR piano_mid "../instruments/piano_family.sidscore"
-INSTR piano_low "../instruments/piano_family.sidscore"
+INSTR piano "../instruments/piano_family.sidscore"
 
-VOICE 1 piano_hi:
+VOICE 1 piano:
   R2 O5 F4 E4 F4 R4 O6 C2. R4 O5 F4 E4 F4 R4 O6 C2.
   R4 O5 D#2. G#4 D#2. G#4 D#4 E4 F4 G4 G#4 B4 O6 C4 R4 O5
   C2. F4 C2. F4 C2 G#4. G8 F8 D#8 D8 C8 O4 B4 R4 O5 G4
@@ -139,7 +137,7 @@ VOICE 1 piano_hi:
   C16. O5 G#16 & G#64 F16 & F64 C16. O4 G#16 & G#64 F16 & F64
   C16. O3 G#16 & G#64 F16 & F64 C16. O2 G#16 & G#64 F4
 
-VOICE 2 piano_mid:
+VOICE 2 piano:
   R2 G#4 G4 G#4 R4 O5 F4 G4 G#4 R4 O4 G#4 G4 G#4 R4 O5
   F4 G4 G#4 R4 O4 C#4 O3 A#4 O4 C2 C#4 O3 A#4 O4 C2 C#4
   O3 A#4 O4 C4 O3 G4 G#4 F4 E4 O4 C4 A#4 G4 G#2 A#4 G4
@@ -179,7 +177,7 @@ VOICE 2 piano_mid:
   R4 O5 C4 C#4 C4 R4 O4 C2. R4 O5 C4 C#4 C4 R4 O4 C2.
   R4 C4 C#4 C4 R4 C4 C#4 C4 R1
 
-VOICE 3 piano_low:
+VOICE 3 piano:
   O3 F16 & F64 G#16. O4 C16 & C64 O3 F16 & F64 G#16. O4 C16
   & C64 O3 F16 & F64 G#16. O4 C16 & C64 O3 F16 & F64 A#16.
   O4 C#16 & C#64 O3 F16 & F64 O4 C16. O3 G#16 & G#64 F16 &

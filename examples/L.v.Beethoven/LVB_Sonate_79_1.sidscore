@@ -11,11 +11,9 @@ TEMPO 248
 TIME 3/4
 SYSTEM PAL
 
-INSTR piano_hi "../instruments/piano_family.sidscore"
-INSTR piano_mid "../instruments/piano_family.sidscore"
-INSTR piano_low "../instruments/piano_family.sidscore"
+INSTR piano "../instruments/piano_family.sidscore"
 
-VOICE 1 piano_hi:
+VOICE 1 piano:
   O5 G4 B4 G4 O6 D2 C8 O5 B8 A8 G8 F#8 G8 B8 G8 F#4
   E4 D8 C8 O4 B8 A8 G#8 A8 O5 C8 O4 A8 F#2 A4 O5 C4
   O4 A4 F#4 G8 D8 C#8 D8 F#8 G8 A8 D8 C#8 D8 G8 A8 B8
@@ -95,7 +93,7 @@ VOICE 1 piano_hi:
   A8 F#8 G4 R8 O3 G8 B8 O4 D8 G8 B8 O5 D8 G8 B8 O6
   D8 G4
 
-VOICE 2 piano_mid:
+VOICE 2 piano:
   G4 B4 G4 O5 D2 O3 B8 R8 B8 R8 B8 R8 B8 R8 O4 C8
   R8 C8 R8 C8 R8 C8 R8 C8 R8 C8 R8 C8 R8 C8 R8 C8
   R8 C8 R8 C8 R8 C8 R8 O3 B2. F#2. G2 A8 B8 O4 C2 C#4
@@ -132,7 +130,7 @@ VOICE 2 piano_mid:
   R4 O4 D4 O3 B4 R4 O4 D4 O3 B4 R4 O4 D4 O3 B4 R4
   O4 C4 O3 A4 R1. R4
 
-VOICE 3 piano_low:
+VOICE 3 piano:
   O3 G8 O4 D8 O3 G8 O4 D8 O3 G8 O4 D8 O3 G8 O4 D8
   O3 G8 O4 D8 O3 G8 O4 D8 O3 G8 O4 D8 O3 G8 O4 D8
   O3 G8 O4 D8 O3 G8 O4 E8 O3 G8 O4 E8 O3 G8 O4 E8

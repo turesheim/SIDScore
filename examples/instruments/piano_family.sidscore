@@ -1,36 +1,18 @@
-; Shared piano-like instruments for Beethoven sonata imports.
+; Shared piano-like instrument
 ; This aims at a practical SID piano approximation: fast transient, quick decay,
-; low sustain, and slightly different color per register.
+; and low sustain
 
-; Shared piano-like instruments for Beethoven sonata imports.
-; This aims at a practical SID piano approximation: fast transient, quick decay,
-; low sustain, and slightly different color per register.
-
-TABLE wave PianoHiWave {
-  WAVE=PULSE @1
-  WAVE=PULSE @1
-  WAVE=TRI+PULSE HOLD
+TABLE filter PianoCutoff {
+  1800 @2         ; open at attack
+  1400 @4
+  1100 @6
+  900  @8
+  750  HOLD       ; settles darker for tail
 }
 
 
-TABLE pw PianoHiPW {
-  $0680 @2
-  $0700 @2
-  $0740 @2
-  $0700 @2
- ; LOOP
-}
-
-
-INSTR piano_hi
-  WAVE=PULSE ADSR=0,9,0,0 PW=$0800
-  WAVESEQ=PianoHiWave PWSEQ=PianoHiPW
-
-INSTR piano_mid
-  WAVE=PULSE ADSR=0,9,0,0 PW=$0800
-  WAVESEQ=PianoHiWave PWSEQ=PianoHiPW
-
-INSTR piano_low
-  WAVE=PULSE ADSR=0,9,0,0 PW=$0800
-  WAVESEQ=PianoHiWave PWSEQ=PianoHiPW
-
+INSTR piano
+  WAVE=PULSE ADSR=1,9,0,0 PW=$0800
+  FILTER=LP CUTOFF=1600 RES=1
+  GATE=RETRIGGER GATEMIN=1
+  FILTERSEQ=PianoCutoff
