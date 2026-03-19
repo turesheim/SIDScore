@@ -1,10 +1,10 @@
-# SIDScore Language Specification  
+# SIDScore Language Specification
 
-Version: **0.1 (draft)**
+Version: **0.2 (draft)**
 
 ## 1. Scope and Goals
 
-This language is a **SID-specific, high-level score format** for Commodore 64 music.  
+This language is a **SID-specific, high-level score format** for Commodore 64 music.
 It is designed to:
 
 - Be readable like traditional sheet music
@@ -21,6 +21,8 @@ A source file should have the `*.sidscore` suffix and will consist of a sequence
 Statement types:
 
 - Metadata statements
+- Subtune import statements
+- Inline tune blocks
 - Wavetable table definitions (optional extension)
 - Instrument definitions
 - Timing state statements
@@ -111,6 +113,43 @@ Example:
 SYSTEM PAL
 ```
 
+### 3.7 IMPORT (Subtune Stitching)
+
+```
+IMPORT "path/to/other.sidscore" AS <number>
+```
+
+- OPTIONAL and repeatable
+- Declares that another `.sidscore` file should be included as a PSID subtune.
+- `<number>` MUST be decimal in the range `2..255`.
+- Subtune `1` is always the current file.
+- For SID bundle export, tune numbers MUST be contiguous from `1..N`.
+- Paths are resolved relative to the current source file.
+
+### 3.8 TUNE (Inline Subtune)
+
+```
+TUNE <number> {
+  [TITLE ...]
+  [AUTHOR ...]
+  [RELEASED ...]
+  [TEMPO ...]
+  [TIME ...]
+  [SYSTEM ...]
+  [SWING ...]
+  VOICE ...
+  ...
+}
+```
+
+- OPTIONAL and repeatable
+- `<number>` MUST be decimal in the range `2..255`.
+- `TUNE` blocks define additional PSID subtunes in the same file.
+- `TUNE` blocks share top-level `INSTR` and `TABLE` definitions.
+- Metadata/timing fields inside a `TUNE` block override top-level defaults for that tune only.
+- A `TUNE` block MUST contain at least one `VOICE`.
+- `IMPORT` is not allowed inside `TUNE` blocks.
+
 ## 4. Wavetable Format
 
 Wavetables define short, per-frame parameter sequences for an instrument.
@@ -149,22 +188,22 @@ LOOP
 
 ### 4.3 Values by type
 
-- `wave`: sets the SID waveform bits for the voice on each step.  
-  Values: `PULSE`, `SAW`, `TRI`, `NOISE` (combinations with `+` allowed).  
-  **Legacy form:** a step may be just the waveform value (e.g., `SAW @2`).  
+- `wave`: sets the SID waveform bits for the voice on each step.
+  Values: `PULSE`, `SAW`, `TRI`, `NOISE` (combinations with `+` allowed).
+  **Legacy form:** a step may be just the waveform value (e.g., `SAW @2`).
   **Control form:** a step may include multiple control fields (see below).
-- `pw`: sets the SID pulse width on each step (useful for PWM animation).  
-  Values: decimal `0–4095` or `$`-prefixed hex `$0000`–`$0FFF` (12-bit SID pulse width).  
+- `pw`: sets the SID pulse width on each step (useful for PWM animation).
+  Values: decimal `0–4095` or `$`-prefixed hex `$0000`–`$0FFF` (12-bit SID pulse width).
   If the active waveform is not `PULSE`, the value MAY be ignored with a warning.
-- `gate`: toggles the gate bit on each step, creating hard retriggers or stutters.  
-  Values: `ON` or `OFF`.  
+- `gate`: toggles the gate bit on each step, creating hard retriggers or stutters.
+  Values: `ON` or `OFF`.
   `OFF` enters release; `ON` restarts the envelope (implementation-defined).
-- `pitch`: applies a semitone offset to the note for each step (vibrato/glide).  
-  Values: signed integers like `-12`, `-1`, `0`, `+1`, `+7`.  
-  Offsets are applied to the note's base pitch before SID quantization.  
+- `pitch`: applies a semitone offset to the note for each step (vibrato/glide).
+  Values: signed integers like `-12`, `-1`, `0`, `+1`, `+7`.
+  Offsets are applied to the note's base pitch before SID quantization.
   For `NOISE` events, offsets are ignored (or MAY map to noise frequency).
-- `filter`: sets the SID filter cutoff per step.  
-  Values: integer `0–2047` (decimal, or `$`-prefixed hex).  
+- `filter`: sets the SID filter cutoff per step.
+  Values: integer `0–2047` (decimal, or `$`-prefixed hex).
   Lower values are darker/more muffled, higher values are brighter.
 
 #### 4.3.1 Wave Table Controls (SidTracker-style)
@@ -252,10 +291,12 @@ INSTR lead WAVE=PULSE ADSR=8,2,10,4 WAVESEQ=LeadWave PWSEQ=LeadPWM PITCHSEQ=Lead
 ### 5.1 Syntax
 
 ```
-INSTR <name> WAVE=<wave> ADSR=a,d,s,r [PW=<int|$hex>] [SYNC=ON|OFF] [RING=ON|OFF]
-            [FILTER=OFF|LP|BP|HP|LP+BP|LP+HP|BP+HP|LP+BP+HP] [CUTOFF=<int>] [RES=<int>]
-            [GATE=RETRIGGER|LEGATO] [GATEMIN=<int>]
-            [WAVESEQ=<name>] [PWSEQ=<name>] [GATESEQ=<name>] [PITCHSEQ=<name>] [FILTERSEQ=<name>]
+INSTR <name> WAVE=<wave> ADSR=a,d,s,r [PW=<int|$hex>]
+	[HIPULSE=<int|$hex>] 	[LOWPULSE=<int|$hex>]
+	[SYNC=ON|OFF] [RING=ON|OFF]
+	[FILTER=OFF|LP|BP|HP|LP+BP|LP+HP|BP+HP|LP+BP+HP] [CUTOFF=<int>] [RES=<int>]
+	[GATE=RETRIGGER|LEGATO] [GATEMIN=<int>] [WAVESEQ=<name>][PWSEQ=<name>]
+	[GATESEQ=<name>] [PITCHSEQ=<name>] [FILTERSEQ=<name>]
 ```
 
 - `<name>` MUST be a valid identifier: `[A-Za-z_][A-Za-z0-9_]*`
@@ -291,8 +332,21 @@ Allowed values:
 - `SAW`
 - `TRI`
 - `NOISE`
-  
+
 Multiple waveforms MAY be combined using `+` (e.g., `WAVE=SAW+PULSE`).
+
+![SAW](docs/saw.png)
+_SAW_
+
+![TRI](docs/tri.png)
+_TRI_
+
+![PULSE](docs/pulse.png)
+_PULSE_
+
+![NOISE](docs/noise.png)
+_NOISE_
+
 
 **What combinations sound like (rule of thumb):**
 
@@ -321,8 +375,29 @@ INSTR lead WAVE=SAW+PULSE ADSR=6,4,10,4 PW=$0800
 
 - Four decimal integers (0–15): Attack, Decay, Sustain, Release
 - MUST map directly to SID ADSR nibbles
-  
-Plain-language: how fast the sound starts, how it falls, how loud it holds, and how it fades when released.
+
+ADSR timing reference for Attack, Decay, and Release nibble values:
+
+| Value | Attack Rate (time/cycle) | Decay/Release Rate (time/cycle) |
+|---|---|---|
+| 0 | 2 ms | 6 ms |
+| 1 | 8 ms | 24 ms |
+| 2 | 16 ms | 48 ms |
+| 3 | 24 ms | 72 ms |
+| 4 | 38 ms | 114 ms |
+| 5 | 56 ms | 168 ms |
+| 6 | 68 ms | 204 ms |
+| 7 | 80 ms | 240 ms |
+| 8 | 100 ms | 300 ms |
+| 9 | 250 ms | 750 ms |
+| 10 | 500 ms | 1.5 s |
+| 11 | 800 ms | 2.4 s |
+| 12 | 1 s | 3 s |
+| 13 | 3 s | 9 s |
+| 14 | 5 s | 15 s |
+| 15 | 8 s | 24 s |
+
+ADSR tells us how fast the sound starts, how it falls, how loud it holds, and how it fades when released.
 
 Example:
 
@@ -361,16 +436,36 @@ Notes:
 #### PW (Pulse Width)
 
 - OPTIONAL
-- Value `0–65535` (decimal) or `$`-prefixed hex (`$0`–`$FFFF`)
+- Value `0–4095` (decimal) or `$`-prefixed hex (`$000`–`$FFF`) (12-bit)
 - Meaningful only for `PULSE`
 - Using PW with other waveforms SHOULD emit a warning
-  
-Plain-language: changes the pulse wave's timbre from thin to hollow.
+
+What the number represents:
+
+- `PW` sets the pulse waveform duty cycle (how much of each period is high vs low).
+- Approximate duty-cycle ratio is `PW / 4096`.
+- Lower values are narrow/thin; higher values are wide/hollow.
+- Typical reference point: `PW=$0800` is about 50% duty (square-like).
+- Example: `PW=$0600` is about 37.5% duty.
 
 Example:
 
 ```
 INSTR lead WAVE=PULSE ADSR=8,2,10,4 PW=$0800
+```
+
+#### HIPULSE / LOWPULSE (SID register bytes)
+
+- OPTIONAL alternatives to `PW`, for direct control of SID pulse-width registers.
+- `LOWPULSE` maps to the low byte register (`$D402/$D409/$D410`, per voice) and accepts `0..255` (`$00..$FF`).
+- `HIPULSE` maps to the high nibble register (`$D403/$D40A/$D411`, per voice) and accepts `0..15` (`$0..$F`).
+- Combined pulse width is `(HIPULSE << 8) | LOWPULSE`.
+- If `PW` and `HIPULSE`/`LOWPULSE` are both present, byte fields override their corresponding parts of `PW`.
+
+Example:
+
+```
+INSTR lead WAVE=PULSE ADSR=8,2,10,4 HIPULSE=$06 LOWPULSE=$00
 ```
 
 #### PWM Sweep (PWMIN / PWMAX / PWSWEEP)
@@ -588,11 +683,11 @@ This will cycle the pulse width through those values for as long as the note sus
 
 - OPTIONAL, default `OFF`
 - When `ON`, this voice's oscillator is hard‑synced to its modulator voice
-- Modulator mapping (SID convention):  
-  - VOICE 1 syncs to VOICE 3  
-  - VOICE 2 syncs to VOICE 1  
+- Modulator mapping (SID convention):
+  - VOICE 1 syncs to VOICE 3
+  - VOICE 2 syncs to VOICE 1
   - VOICE 3 syncs to VOICE 2
-  
+
 Plain-language: each time the modulator voice crosses a phase threshold, this voice restarts its waveform.
 
 Example:
@@ -606,7 +701,7 @@ INSTR syncLead WAVE=SAW SYNC=ON ADSR=6,2,10,4
 - OPTIONAL, default `OFF`
 - When `ON`, this voice's triangle wave is ring‑modulated by the modulator voice
 - Modulator mapping is the same as SYNC
-  
+
 Plain-language: the triangle wave is flipped by the other voice's phase, creating a metallic tone.
 
 Example:
@@ -646,7 +741,7 @@ O<n>     ; set octave
 
 - Valid octave range: implementation-defined (RECOMMENDED 0–7)
 - Values outside range MAY be clamped with warning
-  
+
 Plain-language: `O4` means "middle" pitch range; `>` goes higher, `<` goes lower.
 
 Example:
@@ -685,7 +780,7 @@ C D E F G A B
 - Optional dotted suffix: `.`
 
 If no length is given, the current `L` applies.
-  
+
 Plain-language: `C` is a note, `C8` is a shorter C, `C8.` is a dotted (longer) C.
 
 Example:
@@ -715,7 +810,7 @@ Semantics:
 - Joins two consecutive notes into a **single gate**
 - Gate is not retriggered
 - Durations are summed
-  
+
 **Plain‑language**: it turns two identical notes into one longer note, so the sound does not restart.
 
 Example:
@@ -742,7 +837,7 @@ Semantics:
 - Gate remains held across all following notes
 - Pitch may change freely
 - Rests inside `(leg)` terminate the gate
-  
+
 **Plain‑language**: play a smooth phrase where each new note changes pitch but the sound stays “connected.”
 
 Example:
@@ -769,7 +864,7 @@ T{ E F G }
 - Based on the **current default length `L`**
 - Example:
   - If `L8`, then `T{...}` occupies the time of **two 8th notes**
-  
+
 **Plain‑language**: squeeze three notes into the time where you would normally fit two.
 
 Example:
@@ -801,7 +896,7 @@ SWING OFF
 - Swing applies to **pairs of notes at the current rhythmic level**
 - Intended primarily for 8th notes (`L8`)
 - Affects duration ratio of first/second note in a pair
-  
+
 **Plain‑language**: instead of two evenly spaced notes, the first is longer and the second is shorter (a “long‑short” feel).
 
 Example:
@@ -902,34 +997,34 @@ VOICE 3 drum: X8  R8  X8
 
 ## 16. Design Principle
 
-**What you write must be something the SID can actually do.**  
+**What you write must be something the SID can actually do.**
 No implicit magic, no hidden voices, no invisible retriggers.
 
 ## 17. Glossary
 
 ### 17.1 Quick Musical Glossary
 
-- **Beat**: the steady “pulse” you tap your foot to.  
-- **Tempo (BPM)**: how fast the beat is (beats per minute).  
-- **Note length**: how long a note lasts (e.g., quarter note, eighth note).  
-- **Octave**: the same note name higher or lower in pitch (C4 is middle C).  
-- **Dotted note**: adds half of the note's length (e.g., an 8th dot = 8th + 16th).  
-- **Rest**: silence for a specific length (same lengths as notes).  
-- **Tie (`&`)**: connect two identical notes so they sound as one longer note.  
-- **Legato**: notes flow into each other without re‑starting the sound each time.  
-- **Swing**: pairs of notes are played “long‑short” instead of perfectly even.  
+- **Beat**: the steady “pulse” you tap your foot to.
+- **Tempo (BPM)**: how fast the beat is (beats per minute).
+- **Note length**: how long a note lasts (e.g., quarter note, eighth note).
+- **Octave**: the same note name higher or lower in pitch (C4 is middle C).
+- **Dotted note**: adds half of the note's length (e.g., an 8th dot = 8th + 16th).
+- **Rest**: silence for a specific length (same lengths as notes).
+- **Tie (`&`)**: connect two identical notes so they sound as one longer note.
+- **Legato**: notes flow into each other without re‑starting the sound each time.
+- **Swing**: pairs of notes are played “long‑short” instead of perfectly even.
 - **Tuplet / Triol (`T{ ... }`)**: fit three notes into the time usually used by two.
 
 ### 17.2 Quick SID Glossary
 
-- **SID**: the C64 sound chip. It has 3 hardware voices and simple waveforms.  
-- **Voice**: one independent sound channel on the SID (three total).  
-- **Waveform**: the basic shape of the sound (PULSE, SAW, TRI, NOISE).  
-- **Pulse width (PW)**: the shape of a pulse wave; changes its tone.  
-- **ADSR**: how a sound evolves over time: Attack (rise), Decay (fall), Sustain (hold), Release (fade).  
-- **Gate**: whether the sound is currently "on" (note sounding) or "off".  
-- **Noise**: a random-ish waveform used for drums/percussion.  
-- **Sync**: a voice resets its oscillator when a paired voice crosses a threshold (hard sync).  
-- **Ring mod**: a voice's triangle wave is flipped by another voice's phase, creating metallic timbres.  
-- **PAL/NTSC**: video standards with different clocks; this affects pitch and timing on real hardware.  
-- **Wavetable**: a small per-frame sequence of parameter values used to animate a sound.  
+- **SID**: the C64 sound chip. It has 3 hardware voices and simple waveforms.
+- **Voice**: one independent sound channel on the SID (three total).
+- **Waveform**: the basic shape of the sound (PULSE, SAW, TRI, NOISE).
+- **Pulse width (PW)**: the shape of a pulse wave; changes its tone.
+- **ADSR**: how a sound evolves over time: Attack (rise), Decay (fall), Sustain (hold), Release (fade).
+- **Gate**: whether the sound is currently "on" (note sounding) or "off".
+- **Noise**: a random-ish waveform used for drums/percussion.
+- **Sync**: a voice resets its oscillator when a paired voice crosses a threshold (hard sync).
+- **Ring mod**: a voice's triangle wave is flipped by another voice's phase, creating metallic timbres.
+- **PAL/NTSC**: video standards with different clocks; this affects pitch and timing on real hardware.
+- **Wavetable**: a small per-frame sequence of parameter values used to animate a sound.

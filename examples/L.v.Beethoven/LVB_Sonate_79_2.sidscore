@@ -12,8 +12,7 @@ TIME 9/8
 SYSTEM PAL
 
 INSTR piano "../instruments/piano_family.sidscore"
-INSTR piano "../instruments/piano_family.sidscore"
-INSTR piano "../instruments/piano_family.sidscore"
+
 VOICE 1 piano:
   G4. A#4 O5 C8 D2 & D8 O4 A#8 G4 A#8 A4. G4. A#4 O5 C8
   D2 & D8 O4 A#8 O5 C8 D#8 O4 A8 A#4. O5 D4 O4 A#8 O5

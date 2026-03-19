@@ -98,6 +98,36 @@ public interface SIDScoreParserListener extends ParseTreeListener {
 	 */
 	void exitSystemStmt(SIDScoreParser.SystemStmtContext ctx);
 	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#importStmt}.
+	 * @param ctx the parse tree
+	 */
+	void enterImportStmt(SIDScoreParser.ImportStmtContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#importStmt}.
+	 * @param ctx the parse tree
+	 */
+	void exitImportStmt(SIDScoreParser.ImportStmtContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#songBlock}.
+	 * @param ctx the parse tree
+	 */
+	void enterSongBlock(SIDScoreParser.SongBlockContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#songBlock}.
+	 * @param ctx the parse tree
+	 */
+	void exitSongBlock(SIDScoreParser.SongBlockContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#songStmt}.
+	 * @param ctx the parse tree
+	 */
+	void enterSongStmt(SIDScoreParser.SongStmtContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#songStmt}.
+	 * @param ctx the parse tree
+	 */
+	void exitSongStmt(SIDScoreParser.SongStmtContext ctx);
+	/**
 	 * Enter a parse tree produced by {@link SIDScoreParser#instrStmt}.
 	 * @param ctx the parse tree
 	 */
