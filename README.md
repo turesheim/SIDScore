@@ -29,6 +29,39 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 
 Use `--no-play` with `--wav`, `--asm`, `--prg`, or `--sid` to export without realtime audio.
 
+Bundle multiple tunes/SFX into one multi-tune SID (subtunes):
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.SIDScoreCLI examples/test.sidscore \
+  --stitch examples/sfx/alert.sidscore \
+  --stitch examples/J.S.Bach/bwv794.sidscore \
+  --sid out-bundle.sid --no-play
+```
+
+`--stitch` currently targets SID export only (use with `--no-play`) and packs each input as one PSID subtune.
+
+You can also define subtunes directly in the language:
+
+```sidscore
+IMPORT "../sfx/alert.sidscore" AS 2
+IMPORT "../sfx/click.sidscore" AS 3
+```
+
+When `IMPORT ... AS ...` is present, SID export automatically builds a multi-tune SID.
+
+You can also define multiple tunes inline in one file:
+
+```sidscore
+TUNE 2 {
+  TEMPO 150
+  VOICE 1 lead: C4 E4 G4
+}
+```
+
+Inline `TUNE` blocks share top-level instruments/tables and become PSID subtunes.
+Subtune numbers (from `TUNE`, `IMPORT`, and optional `--stitch`) must be contiguous starting at `1`.
+
 Number notation in `.sidscore`:
 
 - Decimal values are unprefixed (for example `600`).
@@ -53,8 +86,9 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 The GUI player lets you edit and audition scores interactively:
 
 - Editor with auto-reload for fast iteration.
-- Play/Stop controls plus a file loader.
+- New/Save/Load file controls plus Play/Continue/Stop.
 - Playback renderer selector: `SRAP` (built-in realtime synth) or `VICE` (external `vsid` direct playback).
+- Tune selector (`1..N`) for choosing which PSID subtune to play.
 - Examples navigator that loads and plays on activation.
 - Three voice oscilloscope views for quick feedback.
 - `Messages` panel shows `vsid` output during VICE playback.

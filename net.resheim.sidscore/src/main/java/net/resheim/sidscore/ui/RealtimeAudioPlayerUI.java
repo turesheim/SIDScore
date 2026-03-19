@@ -30,15 +30,19 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
 import javax.imageio.ImageIO;
 import javax.sound.sampled.LineUnavailableException;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.DefaultComboBoxModel;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
 import javax.swing.JFileChooser;
@@ -80,6 +84,7 @@ import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
 
 import net.resheim.sidscore.export.SIDScoreExporter;
+import net.resheim.sidscore.export.driver.DriverAddresses;
 import net.resheim.sidscore.ir.RealtimeAudioPlayer;
 import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.ir.ScoreBuildingListener;
@@ -124,11 +129,14 @@ public final class RealtimeAudioPlayerUI {
 	private final JTextArea input = new JTextArea(18, 72);
 	private final JTextArea messageArea = new JTextArea(6, 72);
 	private final JButton copyErrorsButton = new JButton("Copy");
+	private final JButton newButton = new JButton("New");
+	private final JButton saveButton = new JButton("Save");
 	private final JButton loadButton = new JButton("Load");
 	private final JButton playButton = new JButton("Play");
 	private final JButton continueButton = new JButton("Continue");
 	private final JButton stopButton = new JButton("Stop");
 	private final JComboBox<PlaybackRenderer> rendererCombo = new JComboBox<>(PlaybackRenderer.values());
+	private final JComboBox<Integer> songNumberCombo = new JComboBox<>(new Integer[] { 1 });
 	private final JToggleButton autoReloadButton = new JToggleButton("Auto Reload");
 	private final JButton exportAsmButton = new JButton("ASM");
 	private final JButton exportWavButton = new JButton("WAV");
@@ -163,6 +171,7 @@ public final class RealtimeAudioPlayerUI {
 	private final Highlighter.HighlightPainter playbackPainter =
 			new DefaultHighlighter.DefaultHighlightPainter(C64_ACCENT);
 	private SIDScoreParser.FileContext lastParseTree;
+	private SIDScoreIR.ScoreIR lastScoreIR;
 	private File lastDirectory;
 	private Path currentSourcePath;
 	private final Path examplesRoot;
@@ -178,6 +187,10 @@ public final class RealtimeAudioPlayerUI {
 		controlsPanel.setBackground(C64_BG);
 		controlsPanel.add(createSectionLabel("Playback:"));
 		controlsPanel.add(rendererCombo);
+		controlsPanel.add(createSectionLabel("Tune:"));
+		controlsPanel.add(songNumberCombo);
+		controlsPanel.add(newButton);
+		controlsPanel.add(saveButton);
 		controlsPanel.add(loadButton);
 		controlsPanel.add(playButton);
 		controlsPanel.add(continueButton);
@@ -192,6 +205,8 @@ public final class RealtimeAudioPlayerUI {
 		exportPanel.add(exportSidButton);
 		exportPanel.add(exportPrgButton);
 
+		styleButton(newButton);
+		styleButton(saveButton);
 		styleButton(loadButton);
 		styleButton(playButton);
 		styleButton(continueButton);
@@ -202,6 +217,8 @@ public final class RealtimeAudioPlayerUI {
 		styleButton(exportSidButton);
 		styleButton(exportPrgButton);
 		styleComboBox(rendererCombo);
+		styleComboBox(songNumberCombo);
+		resetSongSelection();
 
 		stopButton.setEnabled(false);
 		continueButton.setEnabled(false);
@@ -210,6 +227,8 @@ public final class RealtimeAudioPlayerUI {
 		continueButton.addActionListener(e -> onContinue());
 		stopButton.addActionListener(e -> onStop(true));
 		autoReloadButton.addActionListener(e -> onAutoReloadToggle());
+		newButton.addActionListener(e -> onNew());
+		saveButton.addActionListener(e -> onSave());
 		loadButton.addActionListener(e -> onLoad());
 		exportAsmButton.addActionListener(e -> onExport(ExportFormat.ASM));
 		exportWavButton.addActionListener(e -> onExport(ExportFormat.WAV));
@@ -477,6 +496,57 @@ public final class RealtimeAudioPlayerUI {
 		}
 	}
 
+	private void onNew() {
+		restartPending = false;
+		restartOnlyWhenAutoReload = false;
+		if (isPlaying()) {
+			onStop(false);
+		}
+		currentSourcePath = null;
+		input.setText("");
+		input.setCaretPosition(0);
+		resetSongSelection();
+		setMessage("New file.", MSG_INFO);
+	}
+
+	private void onSave() {
+		Path target = currentSourcePath;
+		if (target == null) {
+			JFileChooser chooser = new JFileChooser(lastDirectory);
+			chooser.setDialogTitle("Save SIDScore");
+			chooser.setFileFilter(new FileNameExtensionFilter("SIDScore files (*.sidscore)", "sidscore"));
+			chooser.setSelectedFile(defaultExportPath(".sidscore").toFile());
+			int result = chooser.showSaveDialog(frame);
+			if (result != JFileChooser.APPROVE_OPTION) {
+				return;
+			}
+			File selected = chooser.getSelectedFile();
+			if (selected == null) {
+				return;
+			}
+			target = ensureExtension(selected.toPath(), ".sidscore");
+		}
+		try {
+			Path parent = target.getParent();
+			if (parent != null) {
+				Files.createDirectories(parent);
+			}
+			Files.writeString(target, input.getText(), StandardCharsets.UTF_8);
+			currentSourcePath = target;
+			File parentFile = target.toFile().getParentFile();
+			if (parentFile != null) {
+				lastDirectory = parentFile;
+			}
+			refreshExampleList();
+			selectExampleInTree(target);
+			setMessage("Saved: " + target.getFileName(), MSG_INFO);
+		} catch (IOException ex) {
+			String msg = "Failed to save: " + target + " (" + ex.getMessage() + ")";
+			setMessage(msg, MSG_ERROR);
+			JOptionPane.showMessageDialog(frame, msg, "Save Error", JOptionPane.ERROR_MESSAGE);
+		}
+	}
+
 	private void onLoad() {
 		JFileChooser chooser = new JFileChooser(lastDirectory);
 		chooser.setFileFilter(new FileNameExtensionFilter("SIDScore files (*.sidscore)", "sidscore"));
@@ -491,6 +561,11 @@ public final class RealtimeAudioPlayerUI {
 			String text = Files.readString(selected.toPath());
 			input.setText(text);
 			input.setCaretPosition(0);
+			resetSongSelection();
+			SIDScoreIR.TimedScore preview = parseScore(text, false, false);
+			if (preview != null && lastScoreIR != null) {
+				updateSongSelection(lastScoreIR);
+			}
 			setMessage("Loaded: " + selected.getName(), MSG_INFO);
 		} catch (IOException ex) {
 			String msg = "Failed to load: " + selected.getName() + " (" + ex.getMessage() + ")";
@@ -504,6 +579,12 @@ public final class RealtimeAudioPlayerUI {
 		if (timed == null) {
 			return;
 		}
+		SIDScoreIR.ScoreIR score = lastScoreIR;
+		if (score == null) {
+			setMessage("Export failed: internal parse state is missing.", MSG_ERROR);
+			return;
+		}
+		updateSongSelection(score);
 		Path outPath = chooseExportPath(format);
 		if (outPath == null) {
 			return;
@@ -511,7 +592,7 @@ public final class RealtimeAudioPlayerUI {
 		setMessage("Exporting " + format.label + "...", MSG_INFO);
 		Thread exportThread = new Thread(() -> {
 			try {
-				exportScore(format, timed, outPath);
+				exportScore(format, score, timed, outPath);
 				SwingUtilities.invokeLater(
 						() -> setMessage("Exported " + format.label + ": " + outPath.getFileName(), MSG_INFO));
 			} catch (Exception ex) {
@@ -526,7 +607,7 @@ public final class RealtimeAudioPlayerUI {
 		exportThread.start();
 	}
 
-	private void exportScore(ExportFormat format, SIDScoreIR.TimedScore timed, Path outPath)
+	private void exportScore(ExportFormat format, SIDScoreIR.ScoreIR scoreIR, SIDScoreIR.TimedScore timed, Path outPath)
 			throws IOException, InterruptedException {
 		SIDScoreExporter exporter = new SIDScoreExporter();
 		switch (format) {
@@ -542,14 +623,40 @@ public final class RealtimeAudioPlayerUI {
 				exporter.assemble(asmPath, outPath);
 			}
 			case SID -> {
-				Path asmPath = withExtension(outPath, ".asm");
-				Path prgPath = withExtension(outPath, ".prg");
-				deleteIfExists(asmPath);
-				exporter.writeAsm(timed, asmPath, false);
-				deleteIfExists(prgPath);
-				exporter.assemble(asmPath, prgPath);
-				deleteIfExists(outPath);
-				exporter.writeSid(prgPath, timed, outPath, SidModel.MOS6581);
+				List<SIDScoreIR.TimedScore> bundleTunes = loadSubtuneBundle(scoreIR, timed, false);
+				if (bundleTunes == null || bundleTunes.isEmpty()) {
+					throw new IOException("Failed to resolve subtunes for SID export");
+				}
+				if (bundleTunes.size() == 1) {
+					Path asmPath = withExtension(outPath, ".asm");
+					Path prgPath = withExtension(outPath, ".prg");
+					deleteIfExists(asmPath);
+					exporter.writeAsm(timed, asmPath, false);
+					deleteIfExists(prgPath);
+					exporter.assemble(asmPath, prgPath);
+					deleteIfExists(outPath);
+					exporter.writeSid(prgPath, timed, outPath, SidModel.MOS6581);
+				} else {
+					Path tempDir = Files.createTempDirectory("sidscore-export-bundle-");
+					try {
+						List<Path> tunePrgs = new ArrayList<>();
+						for (int i = 0; i < bundleTunes.size(); i++) {
+							Path tuneAsm = tempDir.resolve("tune-" + (i + 1) + ".asm");
+							Path tunePrg = tempDir.resolve("tune-" + (i + 1) + ".prg");
+							exporter.writeAsm(bundleTunes.get(i), tuneAsm, false);
+							exporter.assemble(tuneAsm, tunePrg);
+							tunePrgs.add(tunePrg);
+						}
+						deleteIfExists(outPath);
+						exporter.writeSidBundle(tunePrgs, bundleTunes, outPath, SidModel.MOS6581,
+								new DriverAddresses(
+										SIDScoreExporter.BASIC_LOAD_ADDR,
+										SIDScoreExporter.LOAD_ADDR,
+										SIDScoreExporter.PLAY_ADDR));
+					} finally {
+						deleteRecursively(tempDir);
+					}
+				}
 			}
 			case WAV -> {
 				deleteIfExists(outPath);
@@ -625,6 +732,7 @@ public final class RealtimeAudioPlayerUI {
 			String text = Files.readString(entry.path);
 			input.setText(text);
 			input.setCaretPosition(0);
+			resetSongSelection();
 			setMessage("Loaded: " + entry.label, MSG_INFO);
 			if (isPlaying()) {
 				restartPending = true;
@@ -705,6 +813,37 @@ public final class RealtimeAudioPlayerUI {
 	private void collapseAll() {
 		for (int i = exampleTree.getRowCount() - 1; i >= 0; i--) {
 			exampleTree.collapseRow(i);
+		}
+	}
+
+	private void selectExampleInTree(Path filePath) {
+		if (filePath == null || exampleTree.getModel() == null) {
+			return;
+		}
+		Object rootObj = exampleTree.getModel().getRoot();
+		if (!(rootObj instanceof DefaultMutableTreeNode root)) {
+			return;
+		}
+		Path target = filePath.toAbsolutePath().normalize();
+		java.util.Enumeration<?> nodes = root.depthFirstEnumeration();
+		while (nodes.hasMoreElements()) {
+			Object nodeObj = nodes.nextElement();
+			if (!(nodeObj instanceof DefaultMutableTreeNode node)) {
+				continue;
+			}
+			Object user = node.getUserObject();
+			if (user instanceof ExampleEntry entry
+					&& entry.path.toAbsolutePath().normalize().equals(target)) {
+				TreePath treePath = new TreePath(node.getPath());
+				TreePath parent = treePath.getParentPath();
+				while (parent != null) {
+					exampleTree.expandPath(parent);
+					parent = parent.getParentPath();
+				}
+				exampleTree.setSelectionPath(treePath);
+				exampleTree.scrollPathToVisible(treePath);
+				return;
+			}
 		}
 	}
 
@@ -865,6 +1004,7 @@ public final class RealtimeAudioPlayerUI {
 		stopButton.setEnabled(playing);
 		continueButton.setEnabled(playing && playbackPaused && activeRenderer() == PlaybackRenderer.SRAP);
 		rendererCombo.setEnabled(!playing);
+		songNumberCombo.setEnabled(!playing);
 	}
 
 	private void updatePlaybackButtons() {
@@ -922,10 +1062,17 @@ public final class RealtimeAudioPlayerUI {
 		playbackPaused = false;
 		playbackPauseNanos = -1;
 		resetPlaybackHighlighting();
-		SIDScoreIR.TimedScore timed = parseScore(input.getText(), showDialogs, showDialogs);
-		if (timed == null) {
+		SIDScoreIR.TimedScore mainTimed = parseScore(input.getText(), showDialogs, showDialogs);
+		if (mainTimed == null) {
 			return false;
 		}
+		SIDScoreIR.ScoreIR mainScore = lastScoreIR;
+		if (mainScore == null) {
+			setMessage("Playback failed: internal parse state is missing.", MSG_ERROR);
+			return false;
+		}
+		updateSongSelection(mainScore);
+		int selectedSong = selectedSongNumber();
 		for (OscilloscopePanel scope : scopes) {
 			scope.clear();
 		}
@@ -934,14 +1081,60 @@ public final class RealtimeAudioPlayerUI {
 		if (renderer == null) {
 			renderer = PlaybackRenderer.SRAP;
 		}
-		prepareHighlighting(timed, renderer == PlaybackRenderer.VICE ? HighlightTimeline.FRAMES : HighlightTimeline.TICKS);
+
+		SIDScoreIR.TimedScore playbackTimed = mainTimed;
+		if (selectedSong != 1 && renderer == PlaybackRenderer.SRAP) {
+			if (mainScore.songs().containsKey(selectedSong)) {
+				playbackTimed = resolveInlineSong(mainScore, selectedSong, showDialogs);
+				if (playbackTimed == null) {
+					return false;
+				}
+				appendMessageAsync("SRAP: playing inline TUNE " + selectedSong, MSG_INFO);
+			} else {
+				Path selectedPath = mainScore.subtunes().get(selectedSong);
+				if (selectedPath == null) {
+					setMessage("Playback failed: subtune " + selectedSong + " is not defined.", MSG_ERROR);
+					return false;
+				}
+				playbackTimed = parseScorePath(selectedPath, showDialogs, true);
+				if (playbackTimed == null) {
+					return false;
+				}
+				appendMessageAsync("SRAP: playing subtune " + selectedSong + " from " + selectedPath, MSG_INFO);
+			}
+		}
+
+		List<SIDScoreIR.TimedScore> bundleTunes = null;
+		if (renderer == PlaybackRenderer.VICE) {
+			bundleTunes = loadSubtuneBundle(mainScore, mainTimed, showDialogs);
+			if (bundleTunes == null) {
+				return false;
+			}
+			if (selectedSong < 1 || selectedSong > bundleTunes.size()) {
+				setMessage("Playback failed: subtune " + selectedSong + " is out of range 1.." + bundleTunes.size(),
+						MSG_ERROR);
+				return false;
+			}
+			playbackTimed = bundleTunes.get(selectedSong - 1);
+		}
+
+		if (selectedSong == 1) {
+			prepareHighlighting(playbackTimed,
+					renderer == PlaybackRenderer.VICE ? HighlightTimeline.FRAMES : HighlightTimeline.TICKS);
+		} else {
+			resetPlaybackHighlighting();
+		}
 		setPlaybackButtons(true);
 
+		SIDScoreIR.TimedScore timedForThread = playbackTimed;
+		List<SIDScoreIR.TimedScore> bundleForThread = bundleTunes;
+		int songForThread = selectedSong;
 		Thread thread;
 		if (renderer == PlaybackRenderer.VICE) {
-			thread = new Thread(() -> runVicePlayback(timed), "sidscore-vice-player");
+			thread = new Thread(() -> runVicePlayback(timedForThread, bundleForThread, songForThread),
+					"sidscore-vice-player");
 		} else {
-			thread = new Thread(() -> runSrapPlayback(timed), "sidscore-realtime-player");
+			thread = new Thread(() -> runSrapPlayback(timedForThread), "sidscore-realtime-player");
 		}
 		thread.setDaemon(true);
 		playThread = thread;
@@ -980,7 +1173,9 @@ public final class RealtimeAudioPlayerUI {
 		}
 	}
 
-	private void runVicePlayback(SIDScoreIR.TimedScore timed) {
+	private void runVicePlayback(SIDScoreIR.TimedScore selectedTune,
+			List<SIDScoreIR.TimedScore> bundleTunes,
+			int selectedSong) {
 		viceStopRequested = false;
 		playbackStartNanos = -1;
 		playbackStopNanos = -1;
@@ -995,13 +1190,32 @@ public final class RealtimeAudioPlayerUI {
 			Path sidPath = tempDir.resolve("preview.sid");
 
 			SIDScoreExporter exporter = new SIDScoreExporter();
-			exporter.writeAsm(timed, asmPath, false);
-			exporter.assemble(asmPath, prgPath);
-			exporter.writeSid(prgPath, timed, sidPath, SidModel.MOS6581);
-			appendCompiledProgramStatsForVice(timed, exporter, prgPath, sidPath);
+			if (bundleTunes != null && bundleTunes.size() > 1) {
+				List<Path> tunePrgs = new ArrayList<>();
+				for (int i = 0; i < bundleTunes.size(); i++) {
+					Path tuneAsm = tempDir.resolve("preview-" + (i + 1) + ".asm");
+					Path tunePrg = tempDir.resolve("preview-" + (i + 1) + ".prg");
+					exporter.writeAsm(bundleTunes.get(i), tuneAsm, false);
+					exporter.assemble(tuneAsm, tunePrg);
+					tunePrgs.add(tunePrg);
+				}
+				exporter.writeSidBundle(tunePrgs, bundleTunes, sidPath, SidModel.MOS6581,
+						new DriverAddresses(
+								SIDScoreExporter.BASIC_LOAD_ADDR,
+								SIDScoreExporter.LOAD_ADDR,
+								SIDScoreExporter.PLAY_ADDR));
+				appendMessageAsync("VICE: subtune bundle tunes=" + bundleTunes.size() + ", selected=" + selectedSong,
+						MSG_INFO);
+				appendMessageAsync("SID Size: " + Files.size(sidPath) + " bytes", MSG_INFO);
+			} else {
+				exporter.writeAsm(selectedTune, asmPath, false);
+				exporter.assemble(asmPath, prgPath);
+				exporter.writeSid(prgPath, selectedTune, sidPath, SidModel.MOS6581);
+				appendCompiledProgramStatsForVice(selectedTune, exporter, prgPath, sidPath);
+			}
 
 			appendMessageAsync("VICE: direct playback...", MSG_INFO);
-			playWithViceDirect(sidPath, timed);
+			playWithViceDirect(sidPath, selectedTune, selectedSong);
 			if (viceStopRequested) {
 				return;
 			}
@@ -1045,7 +1259,7 @@ public final class RealtimeAudioPlayerUI {
 		});
 	}
 
-	private void playWithViceDirect(Path sidPath, SIDScoreIR.TimedScore timed)
+	private void playWithViceDirect(Path sidPath, SIDScoreIR.TimedScore timed, int tuneNumber)
 			throws IOException, InterruptedException {
 		String viceBinary = resolveViceBinary();
 		long limitCycles = estimateLimitCycles(timed);
@@ -1073,6 +1287,8 @@ public final class RealtimeAudioPlayerUI {
 		cmd.add("-sidmodel");
 		cmd.add("0");
 		cmd.add(timed.system() == SIDScoreIR.VideoSystem.NTSC ? "-ntsc" : "-pal");
+		cmd.add("-tune");
+		cmd.add(Integer.toString(Math.max(1, tuneNumber)));
 		cmd.add("-limitcycles");
 		cmd.add(Long.toString(limitCycles));
 		cmd.add(sidPath.toString());
@@ -1341,7 +1557,212 @@ public final class RealtimeAudioPlayerUI {
 		}
 	}
 
+	private int selectedSongNumber() {
+		Object value = songNumberCombo.getSelectedItem();
+		if (value instanceof Integer i && i >= 1) {
+			return i;
+		}
+		return 1;
+	}
+
+	private void resetSongSelection() {
+		songNumberCombo.setModel(new DefaultComboBoxModel<>(new Integer[] { 1 }));
+		songNumberCombo.setSelectedItem(1);
+	}
+
+	private void updateSongSelection(SIDScoreIR.ScoreIR score) {
+		int current = selectedSongNumber();
+		TreeMap<Integer, String> songs = new TreeMap<>();
+		songs.put(1, "main");
+		for (var entry : score.songs().entrySet()) {
+			if (entry.getKey() >= 2) {
+				songs.put(entry.getKey(), "inline");
+			}
+		}
+		for (var entry : score.subtunes().entrySet()) {
+			if (entry.getKey() >= 2) {
+				songs.put(entry.getKey(), "import");
+			}
+		}
+		if (songs.lastKey() > 255) {
+			setMessageAsync("Warning: subtune numbers above 255 are not supported for SID bundle export.", MSG_WARN);
+		}
+		DefaultComboBoxModel<Integer> model = new DefaultComboBoxModel<>();
+		for (int song : songs.keySet()) {
+			model.addElement(song);
+		}
+		songNumberCombo.setModel(model);
+		if (songs.containsKey(current)) {
+			songNumberCombo.setSelectedItem(current);
+		} else {
+			songNumberCombo.setSelectedItem(1);
+		}
+	}
+
+	private List<SIDScoreIR.TimedScore> loadSubtuneBundle(SIDScoreIR.ScoreIR mainScore,
+			SIDScoreIR.TimedScore mainTimed,
+			boolean showErrors) {
+		TreeMap<Integer, SIDScoreIR.TimedScore> tunes = new TreeMap<>();
+		tunes.put(1, mainTimed);
+		for (var entry : mainScore.songs().entrySet()) {
+			int number = entry.getKey();
+			if (number <= 1) {
+				setMessageAsync("Invalid TUNE number: " + number, MSG_ERROR);
+				return null;
+			}
+			if (tunes.containsKey(number)) {
+				setMessageAsync("Duplicate subtune number: " + number, MSG_ERROR);
+				return null;
+			}
+			SIDScoreIR.TimedScore parsed = resolveInlineSong(mainScore, number, showErrors);
+			if (parsed == null) {
+				return null;
+			}
+			tunes.put(number, parsed);
+		}
+		for (var entry : mainScore.subtunes().entrySet()) {
+			int number = entry.getKey();
+			if (number <= 1) {
+				setMessageAsync("Invalid IMPORT AS number: " + number, MSG_ERROR);
+				return null;
+			}
+			if (tunes.containsKey(number)) {
+				setMessageAsync("Duplicate subtune number: " + number, MSG_ERROR);
+				return null;
+			}
+			SIDScoreIR.TimedScore parsed = parseScorePath(entry.getValue(), showErrors, true);
+			if (parsed == null) {
+				return null;
+			}
+			tunes.put(number, parsed);
+		}
+		int expected = 1;
+		for (int number : tunes.keySet()) {
+			if (number != expected) {
+				setMessageAsync("Subtune numbers must be contiguous starting at 1 (missing " + expected + ")",
+						MSG_ERROR);
+				return null;
+			}
+			expected++;
+		}
+		return new ArrayList<>(tunes.values());
+	}
+
+	private SIDScoreIR.TimedScore resolveInlineSong(SIDScoreIR.ScoreIR baseScore, int songNumber, boolean showErrors) {
+		SIDScoreIR.SongIR song = baseScore.songs().get(songNumber);
+		if (song == null) {
+			setMessageAsync("TUNE " + songNumber + " is not defined.", MSG_ERROR);
+			return null;
+		}
+		try {
+			SIDScoreIR.ScoreIR inlineScore = buildInlineSongScore(baseScore, song);
+			SIDScoreIR.Resolver.Result resolved = new SIDScoreIR.Resolver().resolve(inlineScore);
+			List<SIDScoreIR.Diagnostics.Message> warnings = resolved.diagnostics().messages().stream()
+					.filter(m -> m.severity() == SIDScoreIR.Diagnostics.Severity.WARNING)
+					.toList();
+			if (!warnings.isEmpty()) {
+				StringBuilder sb = new StringBuilder("Warnings (TUNE ").append(songNumber).append("):\n");
+				for (var w : warnings) {
+					sb.append("- ").append(w.text()).append('\n');
+				}
+				appendMessageAsync(sb.toString().trim(), MSG_WARN);
+			}
+			return resolved.timedScore();
+		} catch (RuntimeException ex) {
+			setMessageAsync(ex.getMessage(), MSG_ERROR);
+			if (showErrors) {
+				JOptionPane.showMessageDialog(frame, ex.getMessage(), "Validation Error", JOptionPane.ERROR_MESSAGE);
+			}
+			return null;
+		}
+	}
+
+	private static SIDScoreIR.ScoreIR buildInlineSongScore(SIDScoreIR.ScoreIR base, SIDScoreIR.SongIR song) {
+		int tempo = song.tempoBpm().isPresent() ? song.tempoBpm().getAsInt() : base.tempoBpm();
+		return new SIDScoreIR.ScoreIR(
+				song.title().isPresent() ? song.title() : base.title(),
+				song.author().isPresent() ? song.author() : base.author(),
+				song.released().isPresent() ? song.released() : base.released(),
+				tempo,
+				song.timeSig().isPresent() ? song.timeSig() : base.timeSig(),
+				song.system().isPresent() ? song.system() : base.system(),
+				song.defaultSwing().isPresent() ? song.defaultSwing().get() : base.defaultSwing(),
+				base.tables(),
+				base.instruments(),
+				song.voices(),
+				Map.of(),
+				Map.of());
+	}
+
+	private SIDScoreIR.TimedScore parseScorePath(Path sourcePath, boolean showErrors, boolean showWarnings) {
+		try {
+			String text = Files.readString(sourcePath);
+			SIDScoreLexer lexer = new SIDScoreLexer(CharStreams.fromString(text));
+			CommonTokenStream tokens = new CommonTokenStream(lexer);
+			SIDScoreParser parser = new SIDScoreParser(tokens);
+			parser.removeErrorListeners();
+			parser.addErrorListener(new ThrowingErrorListener());
+
+			ParseTree tree = parser.file();
+			ScoreBuildingListener builder = new ScoreBuildingListener(sourcePath);
+			ParseTreeWalker.DEFAULT.walk(builder, tree);
+
+			SIDScoreIR.ScoreIR scoreIR = builder.buildScoreIR();
+			SIDScoreIR.Resolver.Result result = new SIDScoreIR.Resolver().resolve(scoreIR);
+			if (result.diagnostics().hasErrors()) {
+				StringBuilder sb = new StringBuilder("Resolve errors in ").append(sourcePath).append(":\n");
+				for (var m : result.diagnostics().messages()) {
+					if (m.severity() == SIDScoreIR.Diagnostics.Severity.ERROR) {
+						sb.append("- ").append(m.text()).append('\n');
+					}
+				}
+				setMessageAsync(sb.toString(), MSG_ERROR);
+				if (showErrors) {
+					JOptionPane.showMessageDialog(frame, sb.toString(), "Validation Error", JOptionPane.ERROR_MESSAGE);
+				}
+				return null;
+			}
+			List<SIDScoreIR.Diagnostics.Message> warnings = result.diagnostics().messages().stream()
+					.filter(m -> m.severity() == SIDScoreIR.Diagnostics.Severity.WARNING)
+					.toList();
+			if (showWarnings && !warnings.isEmpty()) {
+				StringBuilder sb = new StringBuilder("Warnings (").append(sourcePath.getFileName()).append("):\n");
+				for (var w : warnings) {
+					sb.append("- ").append(w.text()).append('\n');
+				}
+				appendMessageAsync(sb.toString().trim(), MSG_WARN);
+			}
+			return result.timedScore();
+		} catch (IOException ex) {
+			String msg = "Failed to read subtune: " + sourcePath + " (" + ex.getMessage() + ")";
+			setMessageAsync(msg, MSG_ERROR);
+			if (showErrors) {
+				JOptionPane.showMessageDialog(frame, msg, "Load Error", JOptionPane.ERROR_MESSAGE);
+			}
+			return null;
+		} catch (ScoreBuildingListener.ValidationException ex) {
+			setMessageAsync(ex.getMessage(), MSG_ERROR);
+			if (showErrors) {
+				JOptionPane.showMessageDialog(frame, ex.getMessage(), "Validation Error", JOptionPane.ERROR_MESSAGE);
+			}
+			return null;
+		} catch (IllegalStateException ex) {
+			setMessageAsync(ex.getMessage(), MSG_ERROR);
+			if (showErrors) {
+				JOptionPane.showMessageDialog(frame, ex.getMessage(), "Validation Error", JOptionPane.ERROR_MESSAGE);
+			}
+			return null;
+		} catch (RuntimeException ex) {
+			setMessageAsync(ex.getMessage(), MSG_ERROR);
+			if (showErrors) {
+				JOptionPane.showMessageDialog(frame, ex.getMessage(), "Parse Error", JOptionPane.ERROR_MESSAGE);
+			}
+			return null;
+		}
+	}
+
 	private SIDScoreIR.TimedScore parseScore(String src, boolean showErrors, boolean showWarnings) {
+		lastScoreIR = null;
 		try {
 			SIDScoreLexer lexer = new SIDScoreLexer(CharStreams.fromString(src));
 			CommonTokenStream tokens = new CommonTokenStream(lexer);
@@ -1357,6 +1778,7 @@ public final class RealtimeAudioPlayerUI {
 			ParseTreeWalker.DEFAULT.walk(builder, tree);
 
 			SIDScoreIR.ScoreIR scoreIR = builder.buildScoreIR();
+			lastScoreIR = scoreIR;
 			SIDScoreIR.Resolver.Result result = new SIDScoreIR.Resolver().resolve(scoreIR);
 			if (result.diagnostics().hasErrors()) {
 				StringBuilder sb = new StringBuilder("Resolve errors:\n");

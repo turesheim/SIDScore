@@ -19,6 +19,8 @@ stmt
   | tempoStmt
   | timeStmt
   | systemStmt
+  | importStmt
+  | songBlock
   | tableStmt
   | instrStmt
   | swingStmt
@@ -53,6 +55,25 @@ systemStmt
   : SYSTEM (PAL | NTSC)
   ;
 
+importStmt
+  : IMPORT STRING AS INT
+  ;
+
+songBlock
+  : TUNE INT LBRACE songStmt* RBRACE
+  ;
+
+songStmt
+  : titleStmt
+  | authorStmt
+  | releasedStmt
+  | tempoStmt
+  | timeStmt
+  | systemStmt
+  | swingStmt
+  | voiceBlock
+  ;
+
 // --------------------
 // Instruments
 // --------------------
@@ -64,6 +85,8 @@ instrParam
   : WAVE EQ waveList
   | ADSR EQ INT COMMA INT COMMA INT COMMA INT
   | PW   EQ (HEX | INT)
+  | HIPULSE EQ (HEX | INT)
+  | LOWPULSE EQ (HEX | INT)
   | FILTER EQ filterSpec
   | CUTOFF EQ (HEX | INT)
   | RES EQ INT

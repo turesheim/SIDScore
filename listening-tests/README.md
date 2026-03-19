@@ -25,6 +25,7 @@ Regenerate:
 
 - Run `./generate.sh` from this folder to rebuild all 6581/8580 SID/WAV artifacts.
 - The script builds the Java module and uses the same CLI options as the manual commands.
+- The script forces Java 21 via `/usr/libexec/java_home -v 21` (fails fast if JDK 21 is missing).
 
 If you want RTAP to match hardware in future runs, pass:
 - `--sid-model <6581|8580> --sid-waveforms waveforms`

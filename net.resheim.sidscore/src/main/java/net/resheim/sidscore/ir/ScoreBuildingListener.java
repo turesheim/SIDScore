@@ -78,7 +78,10 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 	private final Map<String, SIDScoreIR.TableIR> tables = new LinkedHashMap<>();
 	private final Map<String, SIDScoreIR.InstrumentIR> instruments = new LinkedHashMap<>();
 	private final Map<Integer, SIDScoreIR.VoiceIR> voices = new LinkedHashMap<>();
+	private final Map<Integer, Path> subtunes = new LinkedHashMap<>();
+	private final Map<Integer, SIDScoreIR.SongIR> songs = new LinkedHashMap<>();
 
+	private SongBuildState currentSong = null;
 	private VoiceBuildState currentVoice = null;
 
 	public ScoreBuildingListener() {
@@ -103,27 +106,34 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 			throw new IllegalStateException("TEMPO is required (spec v0.1)");
 
 		// Post-validate: X legality based on instrument waveform
-		for (var e : voices.entrySet()) {
-			int vIdx = e.getKey();
-			SIDScoreIR.VoiceIR v = e.getValue();
-			SIDScoreIR.InstrumentIR instr = instruments.get(v.instrumentName());
-			if (instr == null) {
-				// This is a semantic error; location is VOICE header, but we didn't store it
-				// here.
-				// Fail fast anyway.
-				throw new IllegalStateException(
-						"VOICE " + vIdx + " references undefined instrument: " + v.instrumentName());
-			}
-			boolean isNoise = instr.hasWave(SIDScoreIR.Wave.NOISE);
-			if (!isNoise && containsHit(v.items())) {
-				throw new IllegalStateException(
-						"VOICE " + vIdx + " uses X but instrument is not NOISE: " + instr.name());
-			}
+		validateVoiceMap(voices, null);
+		for (var entry : songs.entrySet()) {
+			validateVoiceMap(entry.getValue().voices(), entry.getKey());
 		}
 
 		return new SIDScoreIR.ScoreIR(title, author, released, tempoBpm, timeSig, system, defaultSwing,
 				Collections.unmodifiableMap(tables), Collections.unmodifiableMap(instruments),
-				Collections.unmodifiableMap(voices));
+				Collections.unmodifiableMap(voices), Collections.unmodifiableMap(subtunes),
+				Collections.unmodifiableMap(songs));
+	}
+
+	private void validateVoiceMap(Map<Integer, SIDScoreIR.VoiceIR> voiceMap, Integer songNumber) {
+		for (var e : voiceMap.entrySet()) {
+			int vIdx = e.getKey();
+			SIDScoreIR.VoiceIR v = e.getValue();
+			SIDScoreIR.InstrumentIR instr = instruments.get(v.instrumentName());
+			if (instr == null) {
+				String prefix = songNumber != null ? ("TUNE " + songNumber + " ") : "";
+				throw new IllegalStateException(prefix + "VOICE " + vIdx + " references undefined instrument: "
+						+ v.instrumentName());
+			}
+			boolean isNoise = instr.hasWave(SIDScoreIR.Wave.NOISE);
+			if (!isNoise && containsHit(v.items())) {
+				String prefix = songNumber != null ? ("TUNE " + songNumber + " ") : "";
+				throw new IllegalStateException(prefix + "VOICE " + vIdx
+						+ " uses X but instrument is not NOISE: " + instr.name());
+			}
+		}
 	}
 
 	private static boolean containsHit(List<SIDScoreIR.VoiceItemIR> items) {
@@ -228,28 +238,45 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 	public void exitTitleStmt(SIDScoreParser.TitleStmtContext ctx) {
 		if (importMode)
 			return;
-		title = Optional.of(unquote(ctx.STRING().getText()));
+		if (currentSong != null) {
+			currentSong.title = Optional.of(unquote(ctx.STRING().getText()));
+		} else {
+			title = Optional.of(unquote(ctx.STRING().getText()));
+		}
 	}
 
 	@Override
 	public void exitAuthorStmt(SIDScoreParser.AuthorStmtContext ctx) {
 		if (importMode)
 			return;
-		author = Optional.of(unquote(ctx.STRING().getText()));
+		if (currentSong != null) {
+			currentSong.author = Optional.of(unquote(ctx.STRING().getText()));
+		} else {
+			author = Optional.of(unquote(ctx.STRING().getText()));
+		}
 	}
 
 	@Override
 	public void exitReleasedStmt(SIDScoreParser.ReleasedStmtContext ctx) {
 		if (importMode)
 			return;
-		released = Optional.of(unquote(ctx.STRING().getText()));
+		if (currentSong != null) {
+			currentSong.released = Optional.of(unquote(ctx.STRING().getText()));
+		} else {
+			released = Optional.of(unquote(ctx.STRING().getText()));
+		}
 	}
 
 	@Override
 	public void exitTempoStmt(SIDScoreParser.TempoStmtContext ctx) {
 		if (importMode)
 			return;
-		tempoBpm = Integer.parseInt(ctx.INT().getText());
+		int value = Integer.parseInt(ctx.INT().getText());
+		if (currentSong != null) {
+			currentSong.tempoBpm = OptionalInt.of(value);
+		} else {
+			tempoBpm = value;
+		}
 	}
 
 	@Override
@@ -258,22 +285,105 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 			return;
 		int num = Integer.parseInt(ctx.INT(0).getText());
 		int den = Integer.parseInt(ctx.INT(1).getText());
-		timeSig = Optional.of(new SIDScoreIR.TimeSigIR(num, den));
+		SIDScoreIR.TimeSigIR value = new SIDScoreIR.TimeSigIR(num, den);
+		if (currentSong != null) {
+			currentSong.timeSig = Optional.of(value);
+		} else {
+			timeSig = Optional.of(value);
+		}
 	}
 
 	@Override
 	public void exitSystemStmt(SIDScoreParser.SystemStmtContext ctx) {
 		if (importMode)
 			return;
+		SIDScoreIR.VideoSystem value = ctx.PAL() != null ? SIDScoreIR.VideoSystem.PAL : SIDScoreIR.VideoSystem.NTSC;
+		if (currentSong != null) {
+			if (currentSong.system.isPresent()) {
+				throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+						"SYSTEM already specified in TUNE " + currentSong.number);
+			}
+			currentSong.system = Optional.of(value);
+			return;
+		}
 		if (system.isPresent()) {
 			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
 					"SYSTEM already specified");
 		}
-		if (ctx.PAL() != null) {
-			system = Optional.of(SIDScoreIR.VideoSystem.PAL);
-		} else if (ctx.NTSC() != null) {
-			system = Optional.of(SIDScoreIR.VideoSystem.NTSC);
+		system = Optional.of(value);
+	}
+
+	@Override
+	public void exitImportStmt(SIDScoreParser.ImportStmtContext ctx) {
+		if (importMode) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"IMPORT is not allowed in imported instrument files");
 		}
+		if (currentSong != null) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"IMPORT is not allowed inside TUNE blocks");
+		}
+		String rawPath = unquote(ctx.STRING().getText());
+		int songNumber = Integer.parseInt(ctx.INT().getText());
+		if (songNumber < 2 || songNumber > 255) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"IMPORT AS number must be in range 2..255");
+		}
+		Path resolved = baseDir().resolve(rawPath).normalize().toAbsolutePath();
+		if (!Files.exists(resolved)) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"Imported score file not found: " + resolved);
+		}
+		Path previous = subtunes.putIfAbsent(songNumber, resolved);
+		if (previous != null) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"Duplicate IMPORT AS " + songNumber + " for files " + previous + " and " + resolved);
+		}
+	}
+
+	@Override
+	public void enterSongBlock(SIDScoreParser.SongBlockContext ctx) {
+		if (importMode) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"TUNE is not allowed in imported instrument files");
+		}
+		if (currentSong != null) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"Nested TUNE blocks are not allowed");
+		}
+		int number = Integer.parseInt(ctx.INT().getText());
+		if (number < 2 || number > 255) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"TUNE number must be in range 2..255");
+		}
+		if (songs.containsKey(number)) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"Duplicate TUNE number: " + number);
+		}
+		currentSong = new SongBuildState(number);
+	}
+
+	@Override
+	public void exitSongBlock(SIDScoreParser.SongBlockContext ctx) {
+		if (currentSong == null) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"Internal error: TUNE state missing");
+		}
+		if (currentSong.voices.isEmpty()) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"TUNE " + currentSong.number + " must contain at least one VOICE");
+		}
+		SIDScoreIR.SongIR song = new SIDScoreIR.SongIR(
+				currentSong.title,
+				currentSong.author,
+				currentSong.released,
+				currentSong.tempoBpm,
+				currentSong.timeSig,
+				currentSong.system,
+				currentSong.defaultSwing,
+				Collections.unmodifiableMap(new LinkedHashMap<>(currentSong.voices)));
+		songs.put(currentSong.number, song);
+		currentSong = null;
 	}
 
 	@Override
@@ -486,10 +596,15 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		if (importMode)
 			return;
 		SIDScoreIR.SwingSetting s = parseSwingSetting(ctx);
-		if (currentVoice == null)
-			defaultSwing = s;
-		else
+		if (currentVoice != null) {
 			currentVoice.emit(new SIDScoreIR.SetSwingIR(s));
+			return;
+		}
+		if (currentSong != null) {
+			currentSong.defaultSwing = Optional.of(s);
+		} else {
+			defaultSwing = s;
+		}
 	}
 
 	@Override
@@ -504,6 +619,8 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		int waveMask = 0;
 		SIDScoreIR.AdsrIR adsr = null;
 		OptionalInt pw = OptionalInt.empty();
+		int hiPulse = -1;
+		int lowPulse = -1;
 		OptionalInt pwMin = OptionalInt.empty();
 		OptionalInt pwMax = OptionalInt.empty();
 		int pwSweep = 0;
@@ -543,6 +660,30 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 							"PW out of range 0..4095 ($0000..$0FFF)");
 				}
 				pw = OptionalInt.of(v);
+			} else if (p.HIPULSE() != null) {
+				int v;
+				if (p.HEX() != null) {
+					v = parseHexValue(p.HEX().getText(), p.getStart(), "HIPULSE");
+				} else {
+					v = Integer.parseInt(p.INT(0).getText());
+				}
+				if (v < 0 || v > 0x0F) {
+					throw new ValidationException(posLine(p.getStart()), posCol(p.getStart()),
+							"HIPULSE out of range 0..15 ($0..$F)");
+				}
+				hiPulse = v;
+			} else if (p.LOWPULSE() != null) {
+				int v;
+				if (p.HEX() != null) {
+					v = parseHexValue(p.HEX().getText(), p.getStart(), "LOWPULSE");
+				} else {
+					v = Integer.parseInt(p.INT(0).getText());
+				}
+				if (v < 0 || v > 0xFF) {
+					throw new ValidationException(posLine(p.getStart()), posCol(p.getStart()),
+							"LOWPULSE out of range 0..255 ($00..$FF)");
+				}
+				lowPulse = v;
 			} else if (p.FILTER() != null) {
 				SIDScoreParser.FilterSpecContext spec = p.filterSpec();
 				if (spec.OFF() != null) {
@@ -641,6 +782,16 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
 					"GATEMIN must be >= 0");
 		}
+		if (hiPulse >= 0 || lowPulse >= 0) {
+			int mergedPw = pw.isPresent() ? (pw.getAsInt() & 0x0FFF) : 0x0800;
+			if (lowPulse >= 0) {
+				mergedPw = (mergedPw & 0x0F00) | (lowPulse & 0xFF);
+			}
+			if (hiPulse >= 0) {
+				mergedPw = (mergedPw & 0x00FF) | ((hiPulse & 0x0F) << 8);
+			}
+			pw = OptionalInt.of(mergedPw & 0x0FFF);
+		}
 
 		var instr = new SIDScoreIR.InstrumentIR(name, waveMask, adsr, pw, pwMin, pwMax, pwSweep, waveSeq, pwSeq,
 				gateSeq, pitchSeq, filterModeMask, filterCutoff, filterRes, filterSeq, gateMode, gateMin, sync, ring);
@@ -672,9 +823,11 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		v.assertScopesClosed(ctx.getStop());
 
 		var voiceIR = new SIDScoreIR.VoiceIR(v.voiceIndex, v.instrumentName, List.copyOf(v.rootItems));
-		if (voices.putIfAbsent(v.voiceIndex, voiceIR) != null) {
+		Map<Integer, SIDScoreIR.VoiceIR> target = currentSong != null ? currentSong.voices : voices;
+		if (target.putIfAbsent(v.voiceIndex, voiceIR) != null) {
+			String where = currentSong != null ? (" in TUNE " + currentSong.number) : "";
 			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
-					"Duplicate VOICE " + v.voiceIndex);
+					"Duplicate VOICE " + v.voiceIndex + where);
 		}
 	}
 
@@ -841,6 +994,22 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 	// ---------------------------
 	// Internal voice build state
 	// ---------------------------
+	private static final class SongBuildState {
+		final int number;
+		Optional<String> title = Optional.empty();
+		Optional<String> author = Optional.empty();
+		Optional<String> released = Optional.empty();
+		OptionalInt tempoBpm = OptionalInt.empty();
+		Optional<SIDScoreIR.TimeSigIR> timeSig = Optional.empty();
+		Optional<SIDScoreIR.VideoSystem> system = Optional.empty();
+		Optional<SIDScoreIR.SwingSetting> defaultSwing = Optional.empty();
+		final Map<Integer, SIDScoreIR.VoiceIR> voices = new LinkedHashMap<>();
+
+		SongBuildState(int number) {
+			this.number = number;
+		}
+	}
+
 	private static final class VoiceBuildState {
 		final int voiceIndex;
 		final String instrumentName;

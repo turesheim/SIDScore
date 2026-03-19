@@ -27,6 +27,10 @@ import net.resheim.sidscore.sid.SidModel;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeMap;
 import java.util.stream.Collectors;
 
 /**
@@ -40,11 +44,12 @@ import java.util.stream.Collectors;
  * Usage:
  *   java SIDScoreCLI demo.sidscore
  */ 
-public final class SIDScoreCLI {
+  public final class SIDScoreCLI {
+  private static final record ParsedScore(SIDScoreIR.ScoreIR scoreIR, SIDScoreIR.Resolver.Result resolved) {}
 
   private static final String DEFAULT_DRIVER = "sidscore";
-  private static final String USAGE = "Usage: java SIDScoreCLI <file.sidscore> [--wav <out.wav>] [--asm <out.asm>] "
-      + "[--prg <out.prg>] [--sid <out.sid>] [--driver <id>] [--list-drivers] "
+  private static final String USAGE = "Usage: java SIDScoreCLI <file.sidscore> [--stitch <more.sidscore>]... "
+      + "[--wav <out.wav>] [--asm <out.asm>] [--prg <out.prg>] [--sid <out.sid>] [--driver <id>] [--list-drivers] "
       + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--no-play]";
 
   public static void main(String[] args) throws Exception {
@@ -59,6 +64,7 @@ public final class SIDScoreCLI {
       System.exit(2);
     }
 
+    Path sourcePath = Path.of(args[0]);
     Path wavOut = null;
     Path asmOut = null;
     Path prgOut = null;
@@ -67,8 +73,16 @@ public final class SIDScoreCLI {
     SidModel sidModel = SidModel.MOS6581;
     String driverId = DEFAULT_DRIVER;
     boolean noPlay = false;
+    List<Path> stitchInputs = new ArrayList<>();
     for (int i = 1; i < args.length; i++) {
       switch (args[i]) {
+        case "--stitch" -> {
+          if (i + 1 >= args.length) {
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          stitchInputs.add(Path.of(args[++i]));
+        }
         case "--wav" -> {
           if (i + 1 >= args.length) {
             System.err.println(USAGE);
@@ -136,52 +150,97 @@ public final class SIDScoreCLI {
       }
     }
 
+    if (!stitchInputs.isEmpty()) {
+      if (sidOut == null) {
+        System.err.println("--stitch requires --sid <out.sid>");
+        System.exit(2);
+      }
+      if (!noPlay) {
+        System.err.println("--stitch requires --no-play");
+        System.exit(2);
+      }
+      if (asmOut != null || prgOut != null || wavOut != null) {
+        System.err.println("--stitch is only supported for SID export");
+        System.exit(2);
+      }
+    }
+
     if (noPlay && wavOut == null && asmOut == null && prgOut == null && sidOut == null) {
       System.err.println("--no-play requires an output option (e.g. --wav, --asm, --prg, --sid)");
       System.exit(2);
     }
 
-    String src = Files.readString(Path.of(args[0]));
-
-    // --- ANTLR parse ---
-	SIDScoreLexer lexer = new SIDScoreLexer(CharStreams.fromString(src));
-    CommonTokenStream tokens = new CommonTokenStream(lexer);
-	SIDScoreParser parser = new SIDScoreParser(tokens);
-
-    // Basic error handling (fail fast)
-    parser.removeErrorListeners();
-    parser.addErrorListener(new ThrowingErrorListener());
-
-    ParseTree tree = parser.file();
-
-    // --- Build ScoreIR ---
-    ScoreBuildingListener builder = new ScoreBuildingListener(Path.of(args[0]));
-    ParseTreeWalker.DEFAULT.walk(builder, tree);
-
-    SIDScoreIR.ScoreIR scoreIR = builder.buildScoreIR();
-
-    // --- Resolve to TimedScore ---
-    SIDScoreIR.Resolver.Result result = new SIDScoreIR.Resolver().resolve(scoreIR);
-
-    // --- Print diagnostics (warnings) ---
-    var diags = result.diagnostics().messages();
-    var warnings = diags.stream()
-        .filter(m -> m.severity() == SIDScoreIR.Diagnostics.Severity.WARNING)
-        .collect(Collectors.toList());
-    if (!warnings.isEmpty()) {
-      System.out.println("Warnings:");
-      for (var w : warnings) System.out.println("  - " + w.text());
-      System.out.println();
-    }
-
-    // --- Print summary ---
-    SIDScoreIR.TimedScore timed = result.timedScore();
+    ParsedScore parsed = parseResolved(sourcePath);
+    printWarnings(parsed.resolved(), sourcePath.toString());
+    SIDScoreIR.ScoreIR scoreIR = parsed.scoreIR();
+    SIDScoreIR.TimedScore timed = parsed.resolved().timedScore();
     SidDriverBackend driver = driverRegistry.find(driverId).orElse(null);
     if (driver == null) {
       System.err.println("Unknown driver backend: " + driverId);
       printDrivers(driverRegistry);
       System.exit(2);
       return;
+    }
+    List<String> sidBundleSources = new ArrayList<>();
+    List<SIDScoreIR.TimedScore> sidBundleTunes = new ArrayList<>();
+    if (sidOut != null && (!scoreIR.subtunes().isEmpty() || !scoreIR.songs().isEmpty() || !stitchInputs.isEmpty())) {
+      Map<Integer, SIDScoreIR.TimedScore> inlineSongs = new TreeMap<>();
+      for (var entry : scoreIR.songs().entrySet()) {
+        int number = entry.getKey();
+        if (number <= 1) {
+          throw new IllegalStateException("TUNE number must be >= 2, got " + number);
+        }
+        SIDScoreIR.ScoreIR inlineScoreIR = buildInlineSongScore(scoreIR, entry.getValue());
+        SIDScoreIR.Resolver.Result inlineResult = new SIDScoreIR.Resolver().resolve(inlineScoreIR);
+        printWarnings(inlineResult, sourcePath + " [TUNE " + number + "]");
+        inlineSongs.put(number, inlineResult.timedScore());
+      }
+
+      Map<Integer, Path> externalSubtunes = new TreeMap<>();
+      for (var entry : scoreIR.subtunes().entrySet()) {
+        int number = entry.getKey();
+        if (number <= 1) {
+          throw new IllegalStateException("IMPORT AS number must be >= 2, got " + number);
+        }
+        if (inlineSongs.containsKey(number)) {
+          throw new IllegalStateException("Duplicate subtune number " + number
+              + " in both TUNE and IMPORT definitions");
+        }
+        externalSubtunes.put(number, entry.getValue().toAbsolutePath().normalize());
+      }
+      int nextImplicitSong = maxSongNumber(inlineSongs, externalSubtunes) + 1;
+      for (Path stitchPath : stitchInputs) {
+        while (inlineSongs.containsKey(nextImplicitSong) || externalSubtunes.containsKey(nextImplicitSong)) {
+          nextImplicitSong++;
+        }
+        externalSubtunes.put(nextImplicitSong, stitchPath.toAbsolutePath().normalize());
+        nextImplicitSong++;
+      }
+      validateContiguousSongs(inlineSongs, externalSubtunes);
+
+      if (!inlineSongs.isEmpty() || !externalSubtunes.isEmpty()) {
+        sidBundleSources.add(sourcePath.toString());
+        sidBundleTunes.add(timed);
+        int maxSong = Math.max(
+            inlineSongs.isEmpty() ? 1 : inlineSongs.keySet().stream().max(Integer::compareTo).orElse(1),
+            externalSubtunes.isEmpty() ? 1 : externalSubtunes.keySet().stream().max(Integer::compareTo).orElse(1));
+        for (int song = 2; song <= maxSong; song++) {
+          SIDScoreIR.TimedScore inlineTimed = inlineSongs.get(song);
+          if (inlineTimed != null) {
+            sidBundleSources.add(sourcePath + " [TUNE " + song + "]");
+            sidBundleTunes.add(inlineTimed);
+            continue;
+          }
+          Path tunePath = externalSubtunes.get(song);
+          if (tunePath == null) {
+            throw new IllegalStateException("Subtune numbers must be contiguous starting at 1 (missing tune " + song + ")");
+          }
+          ParsedScore extra = parseResolved(tunePath);
+          printWarnings(extra.resolved(), tunePath.toString());
+          sidBundleSources.add(tunePath.toString());
+          sidBundleTunes.add(extra.resolved().timedScore());
+        }
+      }
     }
 
     if (asmOut != null || prgOut != null || sidOut != null) {
@@ -192,7 +251,7 @@ public final class SIDScoreCLI {
       Path asmForSid = null;
       Path compiledProgram = null;
 
-      if (sidOut != null) {
+      if (sidOut != null && sidBundleTunes.isEmpty()) {
         asmForSid = asmOut != null ? asmOut : withExtension(sidOut, ".asm");
       }
       if (prgOut != null) {
@@ -236,24 +295,48 @@ public final class SIDScoreCLI {
         if (!driver.supportsSidExport()) {
           throw new IllegalStateException("Driver backend does not support SID export: " + driver.id());
         }
-        Path prgForSid = (prgForPrg != null && asmForSid != null && asmForSid.equals(asmForPrg))
-            ? prgForPrg
-            : withExtension(sidOut, ".prg");
-        if (asmForSid == null) {
-          asmForSid = withExtension(sidOut, ".asm");
-          deleteIfExists(asmForSid);
-          driver.writeAsm(timed, asmForSid, false);
-          System.out.println("ASM (SID): " + asmForSid);
+        if (sidBundleTunes.isEmpty()) {
+          Path prgForSid = (prgForPrg != null && asmForSid != null && asmForSid.equals(asmForPrg))
+              ? prgForPrg
+              : withExtension(sidOut, ".prg");
+          if (asmForSid == null) {
+            asmForSid = withExtension(sidOut, ".asm");
+            deleteIfExists(asmForSid);
+            driver.writeAsm(timed, asmForSid, false);
+            System.out.println("ASM (SID): " + asmForSid);
+          }
+          if (prgForPrg == null || !prgForSid.equals(prgForPrg)) {
+            deleteIfExists(prgForSid);
+            exporter.assemble(asmForSid, prgForSid);
+            System.out.println("PRG (SID): " + prgForSid);
+          }
+          compiledProgram = prgForSid;
+          deleteIfExists(sidOut);
+          exporter.writeSid(prgForSid, timed, sidOut, sidModel, driver.psidAddresses());
+          System.out.println("SID: " + sidOut);
+        } else {
+          Path bundleDir = Files.createTempDirectory("sidscore-bundle-");
+          List<Path> tunePrgs = new ArrayList<>();
+          try {
+            for (int i = 0; i < sidBundleTunes.size(); i++) {
+              SIDScoreIR.TimedScore tune = sidBundleTunes.get(i);
+              Path tuneAsm = bundleDir.resolve("tune-" + (i + 1) + ".asm");
+              Path tunePrg = bundleDir.resolve("tune-" + (i + 1) + ".prg");
+              driver.writeAsm(tune, tuneAsm, false);
+              exporter.assemble(tuneAsm, tunePrg);
+              tunePrgs.add(tunePrg);
+              System.out.println("SID Tune " + (i + 1) + ": " + sidBundleSources.get(i));
+            }
+            deleteIfExists(sidOut);
+            exporter.writeSidBundle(tunePrgs, sidBundleTunes, sidOut, sidModel, driver.psidAddresses());
+            System.out.println("SID (bundle): " + sidOut + " tunes=" + sidBundleTunes.size());
+            if (Files.exists(sidOut)) {
+              System.out.println("SID Size: " + Files.size(sidOut) + " bytes");
+            }
+          } finally {
+            deleteRecursively(bundleDir);
+          }
         }
-        if (prgForPrg == null || !prgForSid.equals(prgForPrg)) {
-          deleteIfExists(prgForSid);
-          exporter.assemble(asmForSid, prgForSid);
-          System.out.println("PRG (SID): " + prgForSid);
-        }
-        compiledProgram = prgForSid;
-        deleteIfExists(sidOut);
-        exporter.writeSid(prgForSid, timed, sidOut, sidModel, driver.psidAddresses());
-        System.out.println("SID: " + sidOut);
       }
       if (compiledProgram != null && Files.exists(compiledProgram)) {
         printProgramStats(driver, exporter, timed, compiledProgram, sidOut);
@@ -292,6 +375,91 @@ public final class SIDScoreCLI {
       int events = tv.events().size();
       int ticks = tv.events().stream().mapToInt(SIDScoreIR.TimedEvent::durationTicks).sum();
       System.out.println("VOICE " + v + ": events=" + events + " ticks=" + ticks);
+    }
+  }
+
+  private static ParsedScore parseResolved(Path sourcePath) throws Exception {
+    String src = Files.readString(sourcePath);
+
+    SIDScoreLexer lexer = new SIDScoreLexer(CharStreams.fromString(src));
+    CommonTokenStream tokens = new CommonTokenStream(lexer);
+    SIDScoreParser parser = new SIDScoreParser(tokens);
+
+    parser.removeErrorListeners();
+    parser.addErrorListener(new ThrowingErrorListener());
+
+    ParseTree tree = parser.file();
+    ScoreBuildingListener builder = new ScoreBuildingListener(sourcePath);
+    ParseTreeWalker.DEFAULT.walk(builder, tree);
+
+    SIDScoreIR.ScoreIR scoreIR = builder.buildScoreIR();
+    SIDScoreIR.Resolver.Result resolved = new SIDScoreIR.Resolver().resolve(scoreIR);
+    return new ParsedScore(scoreIR, resolved);
+  }
+
+  private static void printWarnings(SIDScoreIR.Resolver.Result result, String sourceLabel) {
+    var warnings = result.diagnostics().messages().stream()
+        .filter(m -> m.severity() == SIDScoreIR.Diagnostics.Severity.WARNING)
+        .collect(Collectors.toList());
+    if (warnings.isEmpty()) {
+      return;
+    }
+    System.out.println("Warnings (" + sourceLabel + "):");
+    for (var w : warnings) {
+      System.out.println("  - " + w.text());
+    }
+    System.out.println();
+  }
+
+  private static int maxSongNumber(Map<Integer, SIDScoreIR.TimedScore> inlineSongs, Map<Integer, Path> externalSongs) {
+    int inlineMax = inlineSongs.isEmpty() ? 1 : inlineSongs.keySet().stream().max(Integer::compareTo).orElse(1);
+    int externalMax = externalSongs.isEmpty() ? 1 : externalSongs.keySet().stream().max(Integer::compareTo).orElse(1);
+    return Math.max(inlineMax, externalMax);
+  }
+
+  private static void validateContiguousSongs(Map<Integer, SIDScoreIR.TimedScore> inlineSongs,
+                                              Map<Integer, Path> externalSongs) {
+    if (inlineSongs.isEmpty() && externalSongs.isEmpty()) {
+      return;
+    }
+    int expected = 1;
+    int max = maxSongNumber(inlineSongs, externalSongs);
+    while (expected <= max) {
+      if (expected != 1 && !inlineSongs.containsKey(expected) && !externalSongs.containsKey(expected)) {
+        throw new IllegalStateException("Subtune numbers must be contiguous starting at 1 (missing tune " + expected + ")");
+      }
+      expected += 1;
+    }
+  }
+
+  private static SIDScoreIR.ScoreIR buildInlineSongScore(SIDScoreIR.ScoreIR base, SIDScoreIR.SongIR song) {
+    int tempo = song.tempoBpm().isPresent() ? song.tempoBpm().getAsInt() : base.tempoBpm();
+    return new SIDScoreIR.ScoreIR(
+        song.title().isPresent() ? song.title() : base.title(),
+        song.author().isPresent() ? song.author() : base.author(),
+        song.released().isPresent() ? song.released() : base.released(),
+        tempo,
+        song.timeSig().isPresent() ? song.timeSig() : base.timeSig(),
+        song.system().isPresent() ? song.system() : base.system(),
+        song.defaultSwing().isPresent() ? song.defaultSwing().get() : base.defaultSwing(),
+        base.tables(),
+        base.instruments(),
+        song.voices(),
+        Map.of(),
+        Map.of());
+  }
+
+  private static void deleteRecursively(Path path) throws Exception {
+    if (path == null || !Files.exists(path)) {
+      return;
+    }
+    try (var stream = Files.walk(path)) {
+      var paths = stream
+          .sorted((a, b) -> Integer.compare(b.getNameCount(), a.getNameCount()))
+          .toList();
+      for (Path p : paths) {
+        Files.deleteIfExists(p);
+      }
     }
   }
 
