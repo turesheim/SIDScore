@@ -335,16 +335,16 @@ Allowed values:
 
 Multiple waveforms MAY be combined using `+` (e.g., `WAVE=SAW+PULSE`).
 
-![SAW](docs/saw.png)
+![SAW](saw.png)
 _SAW_
 
-![TRI](docs/tri.png)
+![TRI](tri.png)
 _TRI_
 
-![PULSE](docs/pulse.png)
+![PULSE](pulse.png)
 _PULSE_
 
-![NOISE](docs/noise.png)
+![NOISE](noise.png)
 _NOISE_
 
 

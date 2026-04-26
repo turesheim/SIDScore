@@ -1,0 +1,296 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "SIDScore",
+  "scopeName": "source.sidscore",
+  "fileTypes": [
+    "sidscore"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#tableDeclaration"
+    },
+    {
+      "include": "#instrumentDeclaration"
+    },
+    {
+      "include": "#voiceDeclaration"
+    },
+    {
+      "include": "#tuneDeclaration"
+    },
+    {
+      "include": "#parameterKeys"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#musicTokens"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#statementKeywords"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.semicolon.sidscore",
+          "match": ";.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.sidscore",
+          "match": "\"[^\"\\r\\n]*\""
+        }
+      ]
+    },
+    "tableDeclaration": {
+      "patterns": [
+        {
+          "name": "meta.table.sidscore",
+          "match": "\\b(TABLE)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s+([A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\{)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.table.sidscore"
+            },
+            "2": {
+              "name": "support.type.table.sidscore"
+            },
+            "3": {
+              "name": "entity.name.type.table.sidscore"
+            }
+          }
+        }
+      ]
+    },
+    "instrumentDeclaration": {
+      "patterns": [
+        {
+          "name": "meta.instrument.sidscore",
+          "match": "\\b(INSTR)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.instrument.sidscore"
+            },
+            "2": {
+              "name": "entity.name.type.instrument.sidscore"
+            }
+          }
+        }
+      ]
+    },
+    "voiceDeclaration": {
+      "patterns": [
+        {
+          "name": "meta.voice.sidscore",
+          "match": "\\b(VOICE)\\s+(\\d+)\\s+([A-Za-z_][A-Za-z0-9_]*)(\\s*)(:)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.voice.sidscore"
+            },
+            "2": {
+              "name": "constant.numeric.decimal.sidscore"
+            },
+            "3": {
+              "name": "variable.other.instrument.sidscore"
+            },
+            "5": {
+              "name": "punctuation.separator.key-value.sidscore"
+            }
+          }
+        }
+      ]
+    },
+    "tuneDeclaration": {
+      "patterns": [
+        {
+          "name": "meta.tune.sidscore",
+          "match": "\\b(TUNE)\\s+(\\d+)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.tune.sidscore"
+            },
+            "2": {
+              "name": "constant.numeric.decimal.sidscore"
+            }
+          }
+        },
+        {
+          "name": "meta.import.sidscore",
+          "match": "\\b(IMPORT)\\b|\\b(AS)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.sidscore"
+            },
+            "2": {
+              "name": "keyword.control.import.sidscore"
+            }
+          }
+        }
+      ]
+    },
+    "parameterKeys": {
+      "patterns": [
+        {
+          "name": "variable.parameter.sidscore",
+          "match": "\\b(WAVE|ADSR|PW|HIPULSE|LOWPULSE|FILTER|CUTOFF|RES|GATE|GATEMIN|WAVESEQ|PWMIN|PWMAX|PWSWEEP|PWSEQ|FILTERSEQ|GATESEQ|PITCHSEQ|SYNC|RING|NOTE)(?=\\s*=)"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.waveform.sidscore",
+          "match": "\\b(PULSE|SAW|TRI|NOISE)\\b"
+        },
+        {
+          "name": "constant.language.system.sidscore",
+          "match": "\\b(PAL|NTSC)\\b"
+        },
+        {
+          "name": "constant.language.boolean.sidscore",
+          "match": "\\b(ON|OFF)\\b"
+        },
+        {
+          "name": "constant.language.filter.sidscore",
+          "match": "\\b(LP|BP|HP)\\b"
+        },
+        {
+          "name": "constant.language.mode.sidscore",
+          "match": "\\b(RETRIGGER|LEGATO|RESET)\\b"
+        }
+      ]
+    },
+    "musicTokens": {
+      "patterns": [
+        {
+          "name": "keyword.other.octave.sidscore",
+          "match": "\\bO\\d+\\b"
+        },
+        {
+          "name": "keyword.other.length.sidscore",
+          "match": "\\bL\\d+\\b"
+        },
+        {
+          "name": "keyword.control.legato.sidscore",
+          "match": "\\(leg\\)|\\(end\\)"
+        },
+        {
+          "name": "meta.tuplet.sidscore",
+          "match": "\\b(T)(\\{)",
+          "captures": {
+            "1": {
+              "name": "keyword.control.tuplet.sidscore"
+            },
+            "2": {
+              "name": "punctuation.section.block.begin.sidscore"
+            }
+          }
+        },
+        {
+          "name": "meta.repeat.end.sidscore",
+          "match": "(\\))(x)(\\d+)",
+          "captures": {
+            "1": {
+              "name": "punctuation.section.group.end.sidscore"
+            },
+            "2": {
+              "name": "keyword.control.repeat.sidscore"
+            },
+            "3": {
+              "name": "constant.numeric.decimal.sidscore"
+            }
+          }
+        },
+        {
+          "name": "constant.language.note.sidscore",
+          "match": "\\b[A-G](?:#|b)?\\d*(?:\\.)?(?=$|[\\s&<>(){}:,@])"
+        },
+        {
+          "name": "constant.language.rest.sidscore",
+          "match": "\\bR\\d*(?:\\.)?(?=$|[\\s&<>(){}:,@])"
+        },
+        {
+          "name": "constant.language.hit.sidscore",
+          "match": "\\bX\\d*(?:\\.)?(?=$|[\\s&<>(){}:,@])"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.hex.sidscore",
+          "match": "\\$[0-9A-Fa-f]+\\b"
+        },
+        {
+          "name": "constant.numeric.decimal.sidscore",
+          "match": "(?<![A-Za-z_])[+-]?\\d+\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "punctuation.section.block.begin.sidscore",
+          "match": "\\{"
+        },
+        {
+          "name": "punctuation.section.block.end.sidscore",
+          "match": "\\}"
+        },
+        {
+          "name": "punctuation.section.group.begin.sidscore",
+          "match": "\\("
+        },
+        {
+          "name": "punctuation.section.group.end.sidscore",
+          "match": "\\)"
+        },
+        {
+          "name": "punctuation.separator.key-value.sidscore",
+          "match": ":"
+        },
+        {
+          "name": "keyword.operator.assignment.sidscore",
+          "match": "="
+        },
+        {
+          "name": "keyword.operator.sidscore",
+          "match": "[+\\-&<>]"
+        },
+        {
+          "name": "punctuation.separator.sequence.sidscore",
+          "match": "[,@]"
+        },
+        {
+          "name": "punctuation.separator.slash.sidscore",
+          "match": "/"
+        }
+      ]
+    },
+    "statementKeywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.statement.sidscore",
+          "match": "\\b(TITLE|AUTHOR|RELEASED|TEMPO|TIME|SYSTEM|SWING|LOOP|HOLD|TABLE|INSTR|VOICE|IMPORT|AS|TUNE)\\b"
+        }
+      ]
+    }
+  }
+}
