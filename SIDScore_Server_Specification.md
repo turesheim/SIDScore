@@ -1,6 +1,6 @@
 # SIDScore Player Server Specification
 
-Version: **0.1.0 (draft)**
+Version: **0.3.0 (draft)**
 
 ## 1. Purpose
 
@@ -126,6 +126,7 @@ they map directly to Monaco/Theia editor positions.
 0x22 HIGHLIGHT_STATE    server -> client
 0x23 VOICE_STATE        server -> client
 0x24 SCOPE_BUCKETS      server -> client
+0x25 SCOPE_SAMPLES      server -> client
 
 0x7f ERROR              both directions
 ```
@@ -150,6 +151,7 @@ bit 0  wants SCORE_MAP
 bit 1  wants HIGHLIGHT_STATE
 bit 2  wants VOICE_STATE
 bit 3  wants SCOPE_BUCKETS
+bit 4  wants SCOPE_SAMPLES
 ```
 
 ### HELLO_ACK Payload
@@ -464,10 +466,18 @@ bit 9 gate controlled by table
 `envelopeLevel` and `outputLevel` are normalized `0.0..1.0` values intended for
 visualization, not sample-accurate synthesis.
 
-## 13. Scope Buckets
+## 13. Scope Data
 
-Scope buckets provide compact oscilloscope data. They are preferred over raw
-sample arrays.
+The server supports two scope data formats:
+
+- `SCOPE_BUCKETS`: compact min/max envelopes for low-bandwidth visualizers.
+- `SCOPE_SAMPLES`: ordered per-voice samples from SRAP for line scopes that need
+  to match the Java realtime player more closely.
+
+Clients SHOULD request only one scope format unless they explicitly need both.
+`SCOPE_SAMPLES` preserves sample order and is the preferred format for a
+RealtimeAudioPlayerUI-style oscilloscope. `SCOPE_BUCKETS` is still useful for
+filled envelope displays or constrained transports.
 
 ### SCOPE_BUCKETS Payload
 
@@ -490,6 +500,30 @@ Samples are signed normalized PCM values scaled to `i16`.
 
 The server SHOULD choose bucket sizes based on the SRAP audio block size and the
 client capability. A typical first implementation can use 64 buckets per block.
+
+### SCOPE_SAMPLES Payload
+
+```text
+u64 scoreId
+u64 blockIndex
+f32 sampleRate
+u16 sampleCount
+u16 reserved
+
+repeat 3 voices:
+  u8 voiceIndex
+  u8 reserved
+  repeat sampleCount:
+    i16 sample
+```
+
+Samples are signed normalized PCM values scaled to `i16`, in playback order.
+Version 1 servers emit one `SCOPE_SAMPLES` frame per SRAP audio block when the
+client advertises the `SCOPE_SAMPLES` capability.
+
+This frame is larger than `SCOPE_BUCKETS` but still modest on localhost. With
+512 samples per block, 3 voices, and `i16` samples, the payload is roughly 3 KiB
+per block before the frame header.
 
 ## 14. Error Frames
 

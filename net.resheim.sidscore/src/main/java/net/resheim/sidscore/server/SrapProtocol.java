@@ -37,6 +37,7 @@ public final class SrapProtocol {
 	public static final int HIGHLIGHT_STATE = 0x22;
 	public static final int VOICE_STATE = 0x23;
 	public static final int SCOPE_BUCKETS = 0x24;
+	public static final int SCOPE_SAMPLES = 0x25;
 
 	public static final int ERROR = 0x7f;
 
@@ -44,7 +45,9 @@ public final class SrapProtocol {
 	public static final int CAP_HIGHLIGHT_STATE = 1 << 1;
 	public static final int CAP_VOICE_STATE = 1 << 2;
 	public static final int CAP_SCOPE_BUCKETS = 1 << 3;
-	public static final int CAP_ALL = CAP_SCORE_MAP | CAP_HIGHLIGHT_STATE | CAP_VOICE_STATE | CAP_SCOPE_BUCKETS;
+	public static final int CAP_SCOPE_SAMPLES = 1 << 4;
+	public static final int CAP_ALL = CAP_SCORE_MAP | CAP_HIGHLIGHT_STATE | CAP_VOICE_STATE | CAP_SCOPE_BUCKETS
+			| CAP_SCOPE_SAMPLES;
 
 	public static final int STATE_IDLE = 0;
 	public static final int STATE_LOADING = 1;

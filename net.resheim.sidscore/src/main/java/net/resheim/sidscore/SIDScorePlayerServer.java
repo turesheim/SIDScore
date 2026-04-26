@@ -322,6 +322,9 @@ public final class SIDScorePlayerServer {
 		if ((clientCapabilities & SrapProtocol.CAP_SCOPE_BUCKETS) != 0) {
 			enqueue(SrapProtocol.SCOPE_BUCKETS, encodeScopeBuckets(scoreId, block), false);
 		}
+		if ((clientCapabilities & SrapProtocol.CAP_SCOPE_SAMPLES) != 0) {
+			enqueue(SrapProtocol.SCOPE_SAMPLES, encodeScopeSamples(scoreId, block), false);
+		}
 		if ((clientCapabilities & SrapProtocol.CAP_HIGHLIGHT_STATE) != 0) {
 			ScoreMapExporter.ScoreMap map = currentScoreMap;
 			if (map != null && map.scoreId() == scoreId) {
@@ -452,6 +455,23 @@ public final class SIDScorePlayerServer {
 						max = s;
 				}
 				out.i16(floatToI16(min)).i16(floatToI16(max));
+			}
+		}
+		return out.toByteArray();
+	}
+
+	private byte[] encodeScopeSamples(long scoreId, RealtimeAudioPlayer.PlaybackBlock block) {
+		SrapProtocol.PayloadWriter out = SrapProtocol.payload()
+				.u64(scoreId)
+				.u64(block.blockIndex())
+				.f32(block.sampleRate())
+				.u16(block.length())
+				.u16(0);
+		for (int voice = 0; voice < 3; voice++) {
+			out.u8(voice + 1).u8(0);
+			float[] samples = block.samples()[voice];
+			for (int i = 0; i < block.length(); i++) {
+				out.i16(floatToI16(samples[i]));
 			}
 		}
 		return out.toByteArray();
