@@ -41,7 +41,9 @@ jobs:
 
       - name: Publish package
         if: github.event_name != 'pull_request'
-        run: mvn -B -f net.resheim.sidscore/pom.xml deploy
+        run: >
+          mvn -B -f net.resheim.sidscore/pom.xml deploy
+          -DaltDeploymentRepository=github::https://maven.pkg.github.com/${{ github.repository }}
         env:
           GITHUB_ACTOR: ${{ github.actor }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
