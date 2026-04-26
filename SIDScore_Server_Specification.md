@@ -46,6 +46,11 @@ Commodore Commander reads this line, opens a TCP connection to `127.0.0.1:<port>
 and then uses the binary protocol described below. Stdout is only for bootstrap
 and diagnostics.
 
+The server is intended to stay running in the background. A client may send
+multiple `PLAY` or `PLAY_SOURCE` commands over the same connection. Each new
+play command stops the current score, assigns a new `scoreId`, emits a new
+`SCORE_MAP`, and starts playback from the beginning.
+
 The server exits when stdin closes, the parent process terminates it, or a fatal
 startup error occurs.
 
@@ -96,6 +101,7 @@ u64, i64     64-bit unsigned/signed integer
 f32          IEEE 754 32-bit float
 bool8        u8, 0=false, non-zero=true
 str          u16 byteLength followed by UTF-8 bytes
+bytes[n]     exactly n uninterpreted bytes
 ```
 
 Strings are UTF-8 and are not null-terminated.
@@ -113,6 +119,7 @@ they map directly to Monaco/Theia editor positions.
 0x11 PAUSE              client -> server
 0x12 CONTINUE           client -> server
 0x13 STOP               client -> server
+0x14 PLAY_SOURCE        client -> server
 
 0x20 PLAYBACK_STATE     server -> client
 0x21 SCORE_MAP          server -> client
@@ -177,6 +184,40 @@ starts playback and emits `PLAYBACK_STATE` with state `playing`.
 
 If another score is already playing, `PLAY` stops the current score and starts
 the new one from the beginning.
+
+### PLAY_SOURCE Payload
+
+```text
+u32 requestId
+str sourceUri
+str sourcePath
+u8  sidModel          0=default, 1=6581, 2=8580
+u8  reserved[3]
+u32 sourceByteLength
+bytes[sourceByteLength] sourceUtf8
+```
+
+`PLAY_SOURCE` loads SIDScore source text sent directly over the protocol. It is
+the preferred command for IDE playback of modified editor buffers because it does
+not require the file on disk to be saved first.
+
+`sourceUri` is the IDE-facing document URI used in `SCORE_MAP`.
+
+`sourcePath` is optional but strongly recommended. It is used as the local path
+hint for import resolution and diagnostics. If it is empty, imports resolve
+relative to the server process working directory and the source map uses a
+memory URI when `sourceUri` is also empty.
+
+`sourceUtf8` MUST be UTF-8 SIDScore source bytes. The maximum frame payload size
+still applies, so version 1 source payloads must fit within the 4 MiB frame
+limit.
+
+On successful `PLAY_SOURCE`, the server follows the same state sequence as
+`PLAY`: parse/resolve, emit `PLAYBACK_STATE` `loading`, emit `SCORE_MAP` if
+requested, start playback, and emit `PLAYBACK_STATE` `playing`.
+
+If another score is already playing, `PLAY_SOURCE` stops the current score and
+starts the sent source from the beginning.
 
 ### PAUSE Payload
 
@@ -551,4 +592,3 @@ Protocol version 1 is intentionally small. Future versions may add:
 
 New optional fields should usually be added through new frame types or flags,
 not by changing existing payload layouts within the same protocol version.
-

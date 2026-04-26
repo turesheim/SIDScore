@@ -30,6 +30,7 @@ public final class SrapProtocol {
 	public static final int PAUSE = 0x11;
 	public static final int CONTINUE = 0x12;
 	public static final int STOP = 0x13;
+	public static final int PLAY_SOURCE = 0x14;
 
 	public static final int PLAYBACK_STATE = 0x20;
 	public static final int SCORE_MAP = 0x21;
@@ -258,6 +259,15 @@ public final class SrapProtocol {
 			byte[] bytes = new byte[len];
 			data.get(bytes);
 			return new String(bytes, StandardCharsets.UTF_8);
+		}
+
+		public byte[] bytes(int len) {
+			if (len < 0 || len > data.remaining()) {
+				throw new IllegalArgumentException("Invalid SRAP byte array length: " + len);
+			}
+			byte[] bytes = new byte[len];
+			data.get(bytes);
+			return bytes;
 		}
 	}
 }

@@ -15,6 +15,7 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
@@ -151,6 +152,7 @@ public final class SIDScorePlayerServer {
 	private void handleCommand(SrapProtocol.Frame frame) {
 		switch (frame.type()) {
 		case SrapProtocol.PLAY -> handlePlay(frame.payload());
+		case SrapProtocol.PLAY_SOURCE -> handlePlaySource(frame.payload());
 		case SrapProtocol.PAUSE -> handlePause(frame.payload());
 		case SrapProtocol.CONTINUE -> handleContinue(frame.payload());
 		case SrapProtocol.STOP -> handleStop(frame.payload());
@@ -177,6 +179,37 @@ public final class SIDScorePlayerServer {
 			sourceUri = sourcePath.toUri().toString();
 		}
 
+		String sourceText;
+		try {
+			sourceText = Files.readString(sourcePath);
+		} catch (IOException e) {
+			enqueueError(requestId, SrapProtocol.ERR_FILE_NOT_FOUND, "Failed to read file: " + sourcePath, true);
+			return;
+		}
+		startPlayback(requestId, sourceUri, sourcePath, sourceText, sidModelRaw);
+	}
+
+	private void handlePlaySource(byte[] payload) {
+		SrapProtocol.PayloadReader in = SrapProtocol.reader(payload);
+		long requestId = in.u32();
+		String sourceUri = in.str();
+		String sourcePathRaw = in.str();
+		int sidModelRaw = in.u8();
+		in.u8();
+		in.u8();
+		in.u8();
+		int sourceLength = (int) in.u32();
+		String sourceText = new String(in.bytes(sourceLength), StandardCharsets.UTF_8);
+		Path sourcePath = sourcePathFromHint(sourcePathRaw);
+		if (sourceUri == null || sourceUri.isBlank()) {
+			sourceUri = sourcePathRaw == null || sourcePathRaw.isBlank()
+					? "memory://sidscore/current.sidscore"
+					: sourcePath.toUri().toString();
+		}
+		startPlayback(requestId, sourceUri, sourcePath, sourceText, sidModelRaw);
+	}
+
+	private void startPlayback(long requestId, String sourceUri, Path sourcePath, String sourceText, int sidModelRaw) {
 		stopCurrent(0, false);
 		long scoreId = scoreIds.getAndIncrement();
 		currentScoreId = scoreId;
@@ -187,7 +220,7 @@ public final class SIDScorePlayerServer {
 
 		ParsedScore parsed;
 		try {
-			parsed = parse(sourcePath);
+			parsed = parse(sourcePath, sourceText);
 		} catch (ScoreBuildingListener.ValidationException e) {
 			sendPlaybackState(requestId, SrapProtocol.STATE_ERROR, SrapProtocol.REASON_PARSE_ERROR, scoreId, 0, 0, true);
 			enqueueError(requestId, SrapProtocol.ERR_PARSE_ERROR, e.getMessage(), true);
@@ -219,6 +252,13 @@ public final class SIDScorePlayerServer {
 				"sidscore-srap-player");
 		currentPlayerThread = thread;
 		thread.start();
+	}
+
+	private static Path sourcePathFromHint(String sourcePathRaw) {
+		if (sourcePathRaw == null || sourcePathRaw.isBlank()) {
+			return Path.of("").toAbsolutePath().normalize();
+		}
+		return Path.of(sourcePathRaw).toAbsolutePath().normalize();
 	}
 
 	private void handlePause(byte[] payload) {
@@ -318,9 +358,8 @@ public final class SIDScorePlayerServer {
 		}
 	}
 
-	private ParsedScore parse(Path sourcePath) throws Exception {
-		String src = Files.readString(sourcePath);
-		SIDScoreLexer lexer = new SIDScoreLexer(CharStreams.fromString(src));
+	private ParsedScore parse(Path sourcePath, String sourceText) throws Exception {
+		SIDScoreLexer lexer = new SIDScoreLexer(CharStreams.fromString(sourceText != null ? sourceText : ""));
 		CommonTokenStream tokens = new CommonTokenStream(lexer);
 		SIDScoreParser parser = new SIDScoreParser(tokens);
 		parser.removeErrorListeners();
