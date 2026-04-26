@@ -1,13 +1,15 @@
 # SIDScore Player Server Specification
 
+Version: **0.1.0 (draft)**
+
 ## 1. Purpose
 
-The SIDScore Player Server is a local Java process that plays `.sidscore`
-files through SRAP and streams compact binary playback data to an IDE client,
-primarily Theia.
+The SIDScore Player Server is a server that plays `.sidscore` files through SRAP
+and streams compact binary playback data to an IDE client, primarily the 
+Commodore Commander.
 
 The server keeps SIDScore parsing, timing, playback, and source mapping in the
-Java implementation. The IDE renders controls, voice visualizers, waveform
+Java implementation. The IDE renderscontrols, voice visualizers, waveform 
 scopes, and editor highlights.
 
 This specification covers:
@@ -19,19 +21,19 @@ This specification covers:
 - Score source maps for editor highlighting
 - Live highlight state
 
-The protocol does not expose MIDI as a public concept. Pitch is reported as
+The protocol does not expose MIDI as a public concept. Pitch is reported as 
 SIDScore note display data and SID frequency register values.
 
 ## 2. Process Model
 
-The Theia backend starts the server as a child process:
+The Commodore Commander backend starts the server as a child process:
 
 ```sh
 java -jar sidscore-cli.jar --player-server --port 0
 ```
 
-The server binds to `127.0.0.1` only. Port `0` means the operating system
-chooses a free port.
+The server binds to `127.0.0.1` only. Port `0` means the operating system chooses a
+free port.
 
 After the server socket is ready, the process writes one UTF-8 JSON line to
 stdout:
@@ -40,9 +42,9 @@ stdout:
 {"event":"ready","protocol":"srap-server","version":1,"port":51234}
 ```
 
-Theia reads this line, opens a TCP connection to `127.0.0.1:<port>`, and then
-uses the binary protocol described below. Stdout is only for bootstrap and
-diagnostics.
+Commodore Commander reads this line, opens a TCP connection to `127.0.0.1:<port>`,
+and then uses the binary protocol described below. Stdout is only for bootstrap
+and diagnostics.
 
 The server exits when stdin closes, the parent process terminates it, or a fatal
 startup error occurs.
@@ -516,9 +518,9 @@ frames should be written through a bounded queue. If the client falls behind,
 the server MAY drop `VOICE_STATE` and `SCOPE_BUCKETS` frames, but MUST preserve
 `PLAYBACK_STATE`, `SCORE_MAP`, `HIGHLIGHT_STATE`, and `ERROR` ordering.
 
-## 17. Theia Integration
+## 17. Commodore Commander Integration
 
-Theia backend responsibilities:
+Commodore Commander backend responsibilities:
 
 - Spawn the Java player server.
 - Read the startup JSON line from stdout.
@@ -528,7 +530,7 @@ Theia backend responsibilities:
 - Decode binary frames.
 - Forward editor highlight events and visualization data to the frontend.
 
-Theia frontend responsibilities:
+Commodore Commander frontend responsibilities:
 
 - Render playback controls.
 - Highlight editor ranges using `SCORE_MAP` and `HIGHLIGHT_STATE`.
