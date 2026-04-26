@@ -16,6 +16,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import net.resheim.sidscore.export.driver.DriverAddresses;
@@ -34,6 +35,9 @@ public final class SIDScoreExporter {
 	private static final double SID_CLOCK_NTSC = 1022727.0;
 	private static final double SID_CLOCK_PAL = 985248.0;
 	private static final int RASTER_LINE = 0;
+	private static final int BUNDLE_MIN_INIT_ADDR = 0x3000;
+	private static final int BUNDLE_INIT_GUARD_BYTES = 0x0100;
+	private static final int BUNDLE_MAX_RAM_END = 0xA000;
 
 	public static final record ProgramStats(int voiceEventBytes, int tableBytes, int noteFreqTableBytes) {
 		public int scoreBytes() {
@@ -650,6 +654,16 @@ public final class SIDScoreExporter {
 	}
 
 	public void writeSid(Path prg, SIDScoreIR.TimedScore score, Path outSid, SidModel model, DriverAddresses addresses) throws IOException {
+		writeSid(prg, score, outSid, model, addresses, 1, 1);
+	}
+
+	public void writeSid(Path prg,
+			SIDScoreIR.TimedScore score,
+			Path outSid,
+			SidModel model,
+			DriverAddresses addresses,
+			int songs,
+			int startSong) throws IOException {
 		byte[] prgBytes = Files.readAllBytes(prg);
 		if (prgBytes.length < 2) {
 			throw new IOException("PRG too small: " + prg);
@@ -662,6 +676,12 @@ public final class SIDScoreExporter {
 			throw new IOException("PRG load address $" + hex4(prgLoadAddr)
 					+ " does not match backend load address $" + hex4(effective.loadAddress()));
 		}
+		if (songs < 1 || songs > 0xFFFF) {
+			throw new IOException("PSID tunes out of range (1..65535): " + songs);
+		}
+		if (startSong < 1 || startSong > songs) {
+			throw new IOException("PSID start tune out of range (1.." + songs + "): " + startSong);
+		}
 		int initAddr = effective.initAddress();
 		int playAddr = effective.playAddress();
 
@@ -672,8 +692,8 @@ public final class SIDScoreExporter {
 		write16be(header, 0x08, 0);
 		write16be(header, 0x0A, initAddr);
 		write16be(header, 0x0C, playAddr);
-		write16be(header, 0x0E, 1);      // songs
-		write16be(header, 0x10, 1);      // start song
+		write16be(header, 0x0E, songs);
+		write16be(header, 0x10, startSong);
 		write32be(header, 0x12, 0);      // speed: 0 = VBI
 
 		String title = score.title().orElse("SIDScore");
@@ -695,6 +715,82 @@ public final class SIDScoreExporter {
 		System.arraycopy(header, 0, out, 0, header.length);
 		System.arraycopy(data, 0, out, header.length, data.length);
 		Files.write(outSid, out);
+	}
+
+	public void writeSidBundle(List<Path> tunePrgs,
+			List<SIDScoreIR.TimedScore> tunes,
+			Path outSid,
+			SidModel model,
+			DriverAddresses addresses) throws IOException, InterruptedException {
+		if (tunePrgs == null || tunePrgs.isEmpty()) {
+			throw new IOException("SID bundle requires at least one PRG input");
+		}
+		if (tunes == null || tunes.isEmpty()) {
+			throw new IOException("SID bundle requires score metadata");
+		}
+		if (tunePrgs.size() != tunes.size()) {
+			throw new IOException("SID bundle PRG count (" + tunePrgs.size()
+					+ ") does not match score count (" + tunes.size() + ")");
+		}
+		if (tunePrgs.size() == 1) {
+			writeSid(tunePrgs.get(0), tunes.get(0), outSid, model, addresses);
+			return;
+		}
+		if (tunePrgs.size() > 255) {
+			throw new IOException("SID bundle currently supports at most 255 tunes");
+		}
+
+		DriverAddresses effective = addresses != null ? addresses : new DriverAddresses(BASIC_LOAD_ADDR, LOAD_ADDR, PLAY_ADDR);
+		List<byte[]> payloads = new ArrayList<>(tunePrgs.size());
+		int maxImageBytes = 0;
+		for (Path prgPath : tunePrgs) {
+			byte[] prgBytes = Files.readAllBytes(prgPath);
+			if (prgBytes.length < 2) {
+				throw new IOException("PRG too small: " + prgPath);
+			}
+			int load = (prgBytes[0] & 0xFF) | ((prgBytes[1] & 0xFF) << 8);
+			if (load != effective.loadAddress()) {
+				throw new IOException("PRG load address $" + hex4(load) + " in " + prgPath
+						+ " does not match backend load address $" + hex4(effective.loadAddress()));
+			}
+			byte[] image = Arrays.copyOfRange(prgBytes, 2, prgBytes.length);
+			payloads.add(image);
+			if (image.length > maxImageBytes) {
+				maxImageBytes = image.length;
+			}
+		}
+
+		int copyEndExclusive = effective.loadAddress() + maxImageBytes;
+		if (copyEndExclusive > 0x10000) {
+			throw new IOException("Bundle payload exceeds C64 address space");
+		}
+
+		int bundleInit = alignPage(Math.max(BUNDLE_MIN_INIT_ADDR, copyEndExclusive + BUNDLE_INIT_GUARD_BYTES));
+		if (bundleInit >= BUNDLE_MAX_RAM_END) {
+			throw new IOException("Bundle init address $" + hex4(bundleInit)
+					+ " is outside safe RAM (<$A000). Reduce tune size/count.");
+		}
+
+		Path tmpAsm = Files.createTempFile("sidscore-bundle-", ".asm");
+		Path tmpPrg = Files.createTempFile("sidscore-bundle-", ".prg");
+		try {
+			String asm = buildSidBundleAsm(payloads, effective, bundleInit);
+			Files.writeString(tmpAsm, asm, StandardCharsets.US_ASCII);
+			assemble(tmpAsm, tmpPrg);
+			int bundleEnd = prgEndExclusive(tmpPrg);
+			if (bundleEnd > BUNDLE_MAX_RAM_END) {
+				throw new IOException("Bundle image ends at $" + hex4(bundleEnd - 1)
+						+ " (>= $A000). Reduce tune size/count.");
+			}
+			DriverAddresses bundleAddresses = new DriverAddresses(
+					effective.loadAddress(),
+					bundleInit,
+					effective.playAddress());
+			writeSid(tmpPrg, tunes.get(0), outSid, model, bundleAddresses, tunes.size(), 1);
+		} finally {
+			deleteIfExists(tmpAsm);
+			deleteIfExists(tmpPrg);
+		}
 	}
 
 	private void appendVoiceUpdate(StringBuilder sb, String label, int voiceIndex) {
@@ -1787,6 +1883,153 @@ public final class SIDScoreExporter {
 		};
 	}
 
+	private String buildSidBundleAsm(List<byte[]> payloads, DriverAddresses addresses, int bundleInitAddress)
+			throws IOException {
+		int loadAddress = addresses.loadAddress();
+		int targetInitAddress = addresses.initAddress();
+		if (bundleInitAddress <= loadAddress) {
+			throw new IOException("Bundle init address $" + hex4(bundleInitAddress)
+					+ " must be above load address $" + hex4(loadAddress));
+		}
+		StringBuilder sb = new StringBuilder();
+		sb.append("// Generated by SIDScore\n");
+		sb.append("// Multi-tune bundle wrapper\n\n");
+		sb.append(".const BUNDLE_SRC = $fb\n");
+		sb.append(".const BUNDLE_DST = $fd\n\n");
+		sb.append("*=$").append(hex4(loadAddress)).append(" \"BUNDLE_IMAGE\"\n");
+		sb.append("  .fill $").append(hex4(bundleInitAddress - loadAddress)).append(", $00\n\n");
+		sb.append("*=$").append(hex4(bundleInitAddress)).append(" \"BUNDLE_INIT\"\n");
+		sb.append("bundle_init:\n");
+		sb.append("  tay\n");
+		sb.append("  cpy #$").append(hex2(payloads.size())).append("\n");
+		sb.append("  bcc bundle_song_ok\n");
+		sb.append("  ldy #$00\n");
+		sb.append("bundle_song_ok:\n");
+		sb.append("  lda bundle_src_lo,y\n");
+		sb.append("  sta BUNDLE_SRC\n");
+		sb.append("  lda bundle_src_hi,y\n");
+		sb.append("  sta BUNDLE_SRC+1\n");
+		sb.append("  lda #$").append(hex2(loadAddress & 0xFF)).append("\n");
+		sb.append("  sta BUNDLE_DST\n");
+		sb.append("  lda #$").append(hex2((loadAddress >> 8) & 0xFF)).append("\n");
+		sb.append("  sta BUNDLE_DST+1\n");
+		sb.append("  lda bundle_len_lo,y\n");
+		sb.append("  sta bundle_copy_len\n");
+		sb.append("  lda bundle_len_hi,y\n");
+		sb.append("  sta bundle_copy_len+1\n");
+		sb.append("bundle_copy_loop:\n");
+		sb.append("  lda bundle_copy_len\n");
+		sb.append("  ora bundle_copy_len+1\n");
+		sb.append("  beq bundle_copy_done\n");
+		sb.append("  ldy #$00\n");
+		sb.append("  lda (BUNDLE_SRC),y\n");
+		sb.append("  sta (BUNDLE_DST),y\n");
+		sb.append("  inc BUNDLE_SRC\n");
+		sb.append("  bne bundle_src_ok\n");
+		sb.append("  inc BUNDLE_SRC+1\n");
+		sb.append("bundle_src_ok:\n");
+		sb.append("  inc BUNDLE_DST\n");
+		sb.append("  bne bundle_dst_ok\n");
+		sb.append("  inc BUNDLE_DST+1\n");
+		sb.append("bundle_dst_ok:\n");
+		sb.append("  lda bundle_copy_len\n");
+		sb.append("  bne bundle_len_dec_lo\n");
+		sb.append("  dec bundle_copy_len+1\n");
+		sb.append("  lda #$ff\n");
+		sb.append("  sta bundle_copy_len\n");
+		sb.append("  jmp bundle_copy_loop\n");
+		sb.append("bundle_len_dec_lo:\n");
+		sb.append("  dec bundle_copy_len\n");
+		sb.append("  jmp bundle_copy_loop\n");
+		sb.append("bundle_copy_done:\n");
+		sb.append("  jmp $").append(hex4(targetInitAddress)).append("\n\n");
+		sb.append("bundle_copy_len:\n");
+		sb.append("  .word 0\n\n");
+		sb.append("bundle_src_lo:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < payloads.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			sb.append("<bundle_song_").append(i + 1).append("_data");
+		}
+		sb.append("\n");
+		sb.append("bundle_src_hi:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < payloads.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			sb.append(">bundle_song_").append(i + 1).append("_data");
+		}
+		sb.append("\n");
+		sb.append("bundle_len_lo:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < payloads.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			int length = payloads.get(i).length;
+			if (length < 1 || length > 0xFFFF) {
+				throw new IOException("Tune payload length out of range: " + length + " bytes");
+			}
+			sb.append("$").append(hex2(length & 0xFF));
+		}
+		sb.append("\n");
+		sb.append("bundle_len_hi:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < payloads.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			int length = payloads.get(i).length;
+			sb.append("$").append(hex2((length >> 8) & 0xFF));
+		}
+		sb.append("\n\n");
+		for (int i = 0; i < payloads.size(); i++) {
+			sb.append("bundle_song_").append(i + 1).append("_data:\n");
+			appendAsmByteData(sb, payloads.get(i));
+			sb.append("\n");
+		}
+		return sb.toString();
+	}
+
+	private static void appendAsmByteData(StringBuilder sb, byte[] data) {
+		if (data.length == 0) {
+			sb.append("  .byte $00\n");
+			return;
+		}
+		for (int i = 0; i < data.length; i++) {
+			if ((i % 16) == 0) {
+				sb.append("  .byte ");
+			} else {
+				sb.append(", ");
+			}
+			sb.append("$").append(hex2(data[i] & 0xFF));
+			if ((i % 16) == 15 || i == data.length - 1) {
+				sb.append("\n");
+			}
+		}
+	}
+
+	private static int alignPage(int value) {
+		return (value + 0xFF) & 0xFF00;
+	}
+
+	private static int prgEndExclusive(Path prgPath) throws IOException {
+		byte[] bytes = Files.readAllBytes(prgPath);
+		if (bytes.length < 2) {
+			throw new IOException("PRG too small: " + prgPath);
+		}
+		int load = (bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8);
+		return load + (bytes.length - 2);
+	}
+
+	private static void deleteIfExists(Path path) throws IOException {
+		if (path != null && Files.exists(path)) {
+			Files.delete(path);
+		}
+	}
 
 	private static String hex2(int v) {
 		return String.format("%02X", v & 0xff);

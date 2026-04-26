@@ -11,7 +11,7 @@ TABLE gate Stutter {
   LOOP
 }
 
-INSTR gateLead WAVE=PULSE ADSR=8,2,10,4 PW=0800 GATESEQ=Stutter
+INSTR gateLead WAVE=PULSE ADSR=8,2,10,4 PW=$0800 GATESEQ=Stutter
 
 VOICE 1 gateLead:
   O4 L1

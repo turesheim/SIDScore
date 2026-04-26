@@ -11,6 +11,7 @@
  */
 package net.resheim.sidscore.ir;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -200,9 +201,20 @@ public final class SIDScoreIR {
 	public static final record VoiceIR(int index, String instrumentName, List<VoiceItemIR> items) {
 	}
 
+	public static final record SongIR(Optional<String> title,
+			Optional<String> author,
+			Optional<String> released,
+			OptionalInt tempoBpm,
+			Optional<TimeSigIR> timeSig,
+			Optional<VideoSystem> system,
+			Optional<SwingSetting> defaultSwing,
+			Map<Integer, VoiceIR> voices) {
+	}
+
 	public static final record ScoreIR(Optional<String> title, Optional<String> author, Optional<String> released,
 			int tempoBpm, Optional<TimeSigIR> timeSig, Optional<VideoSystem> system, SwingSetting defaultSwing,
-			Map<String, TableIR> tables, Map<String, InstrumentIR> instruments, Map<Integer, VoiceIR> voices) {
+			Map<String, TableIR> tables, Map<String, InstrumentIR> instruments, Map<Integer, VoiceIR> voices,
+			Map<Integer, Path> subtunes, Map<Integer, SongIR> songs) {
 	}
 
 	public sealed interface VoiceItemIR
@@ -271,7 +283,7 @@ public final class SIDScoreIR {
 
 	public static final record TimedScore(Optional<String> title, Optional<String> author, Optional<String> released,
 			int tempoBpm, int ticksPerWhole, SwingSetting defaultSwing, VideoSystem system,
-			Map<String, TableIR> tables, Map<Integer, TimedVoice> voices) {
+			Map<String, TableIR> tables, Map<Integer, TimedVoice> voices, Map<Integer, Path> subtunes) {
 	}
 
 	// -------------------------
@@ -397,7 +409,7 @@ public final class SIDScoreIR {
 			diag.throwIfErrors();
 			VideoSystem system = score.system().orElse(VideoSystem.PAL);
 			TimedScore ts = new TimedScore(score.title(), score.author(), score.released(), score.tempoBpm(),
-					DEFAULT_TICKS_PER_WHOLE, score.defaultSwing(), system, tables, timedVoices);
+					DEFAULT_TICKS_PER_WHOLE, score.defaultSwing(), system, tables, timedVoices, score.subtunes());
 			return new Result(ts, diag);
 		}
 

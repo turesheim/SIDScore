@@ -29,6 +29,39 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 
 Use `--no-play` with `--wav`, `--asm`, `--prg`, or `--sid` to export without realtime audio.
 
+Bundle multiple tunes/SFX into one multi-tune SID (subtunes):
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.SIDScoreCLI examples/test.sidscore \
+  --stitch examples/sfx/alert.sidscore \
+  --stitch examples/J.S.Bach/bwv794.sidscore \
+  --sid out-bundle.sid --no-play
+```
+
+`--stitch` currently targets SID export only (use with `--no-play`) and packs each input as one PSID subtune.
+
+You can also define subtunes directly in the language:
+
+```sidscore
+IMPORT "../sfx/alert.sidscore" AS 2
+IMPORT "../sfx/click.sidscore" AS 3
+```
+
+When `IMPORT ... AS ...` is present, SID export automatically builds a multi-tune SID.
+
+You can also define multiple tunes inline in one file:
+
+```sidscore
+TUNE 2 {
+  TEMPO 150
+  VOICE 1 lead: C4 E4 G4
+}
+```
+
+Inline `TUNE` blocks share top-level instruments/tables and become PSID subtunes.
+Subtune numbers (from `TUNE`, `IMPORT`, and optional `--stitch`) must be contiguous starting at `1`.
+
 Number notation in `.sidscore`:
 
 - Decimal values are unprefixed (for example `600`).
@@ -53,15 +86,16 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 The GUI player lets you edit and audition scores interactively:
 
 - Editor with auto-reload for fast iteration.
-- Play/Stop controls plus a file loader.
+- New/Save/Load file controls plus Play/Continue/Stop.
 - Playback renderer selector: `SRAP` (built-in realtime synth) or `VICE` (external `vsid` direct playback).
+- Tune selector (`1..N`) for choosing which PSID subtune to play.
 - Examples navigator that loads and plays on activation.
 - Three voice oscilloscope views for quick feedback.
 - `Messages` panel shows `vsid` output during VICE playback.
 - Score note highlighting is accurate when auditioning using SRAP, but only approximate when using the VICE renderer. It is tuned to be fairly correct with the built-in `sidscore` driver.
 - For other driver backends, note highlighting should be considered unsupported and must be disabled (timing semantics are driver-specific).
 
-![](docs/SRAP.png)
+![](SRAP.png)
 
 Start the realtime player after building the module:
 
@@ -75,6 +109,25 @@ Run it from the repo root so the examples browser and banner image resolve corre
 If `VICE` playback is selected, SIDScore uses `vsid` from `PATH` (or `SIDSCORE_VICE_BIN` if set) for direct audio playback.
 Optional: set `SIDSCORE_VICE_DATA_DIR` to the VICE data directory if your installation needs explicit sysfile lookup.
 By default, VICE logs are shown in full in `Messages`. To re-enable compact/suppressed log mode, start UI with `--compact-vice-log` (or set `SIDSCORE_VICE_COMPACT_LOG=1` / `-Dsidscore.vice.compactLog=true`). Use `--full-vice-log` to force full logs.
+
+## Eclipse Generic Editor
+
+SIDScore includes a TextMate grammar at `syntaxes/sidscore.tmLanguage.json` for Eclipse TM4E / Generic Editor use.
+The grammar file by itself is not enough: Eclipse must also be told to open `.sidscore` files with the Generic Editor and to use that grammar for the file association or content type your installation uses.
+
+Typical setup procedure:
+
+1. Install TM4E support in Eclipse if it is not already present.
+2. In Eclipse, associate `*.sidscore` with the `Generic Editor` via `Open With` or the file-association preferences.
+3. In the TM4E/TextMate preferences, register `syntaxes/sidscore.tmLanguage.json` as a grammar with scope name `source.sidscore`.
+4. Bind that grammar to the file association or content type used for `.sidscore` files in your Eclipse/TM4E installation.
+5. Reopen the file in the `Generic Editor`.
+
+The exact preference page names vary between Eclipse/TM4E versions, but if highlighting does not appear, the problem is usually one of these:
+
+- `.sidscore` is opening in a different editor.
+- The grammar was added, but not bound to the file association or content type Eclipse is using.
+- The file needs to be reopened after the grammar registration changes.
 
 ## Technical Details
 
