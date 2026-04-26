@@ -50,9 +50,16 @@ import java.util.stream.Collectors;
   private static final String DEFAULT_DRIVER = "sidscore";
   private static final String USAGE = "Usage: java SIDScoreCLI <file.sidscore> [--stitch <more.sidscore>]... "
       + "[--wav <out.wav>] [--asm <out.asm>] [--prg <out.prg>] [--sid <out.sid>] [--driver <id>] [--list-drivers] "
-      + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--no-play]";
+      + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--no-play]\n"
+      + "       java SIDScoreCLI --player-server [--port <port>]";
 
   public static void main(String[] args) throws Exception {
+    if (args.length > 0 && "--player-server".equals(args[0])) {
+      String[] serverArgs = java.util.Arrays.copyOfRange(args, 1, args.length);
+      SIDScorePlayerServer.main(serverArgs);
+      return;
+    }
+
     SidDriverRegistry driverRegistry = SidDriverRegistry.load();
 
     if (args.length == 1 && "--list-drivers".equals(args[0])) {

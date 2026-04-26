@@ -95,12 +95,25 @@ public final class RealtimeAudioPlayer {
 		void onSamples(float[] voice1, float[] voice2, float[] voice3, int length, float sampleRate);
 	}
 
+	public interface PlaybackListener {
+		void onBlock(PlaybackBlock block);
+	}
+
+	public static final record PlaybackBlock(long blockIndex, long frameIndex, float sampleRate,
+			VoiceSnapshot[] voices, float[][] samples, int length) {
+	}
+
+	public static final record VoiceSnapshot(int voiceIndex, int noteKind, int noteLetter, int accidental,
+			int octave, int waveMask, int flags, int freqReg, int pulseWidth, int pitchOffsetSemitones,
+			float envelopeLevel, float outputLevel) {
+	}
+
 	public void play(SIDScoreIR.TimedScore score) throws LineUnavailableException {
 		play(score, null, null);
 	}
 
 	public void play(SIDScoreIR.TimedScore score, Path wavOut) throws LineUnavailableException {
-		render(score, wavOut, true, null);
+		render(score, wavOut, true, null, null);
 	}
 
 	public void play(SIDScoreIR.TimedScore score, SampleListener listener) throws LineUnavailableException {
@@ -108,7 +121,11 @@ public final class RealtimeAudioPlayer {
 	}
 
 	public void play(SIDScoreIR.TimedScore score, Path wavOut, SampleListener listener) throws LineUnavailableException {
-		render(score, wavOut, true, listener);
+		render(score, wavOut, true, listener, null);
+	}
+
+	public void playWithTelemetry(SIDScoreIR.TimedScore score, PlaybackListener listener) throws LineUnavailableException {
+		render(score, null, true, null, listener);
 	}
 
 	public void renderToWav(SIDScoreIR.TimedScore score, Path wavOut) {
@@ -120,7 +137,7 @@ public final class RealtimeAudioPlayer {
 			throw new IllegalArgumentException("wavOut is required");
 		}
 		try {
-			render(score, wavOut, false, listener);
+			render(score, wavOut, false, listener, null);
 		} catch (LineUnavailableException e) {
 			e.printStackTrace();
 		}
@@ -139,7 +156,8 @@ public final class RealtimeAudioPlayer {
 		pauseRequested.set(false);
 	}
 
-	private void render(SIDScoreIR.TimedScore score, Path wavOut, boolean playAudio, SampleListener listener)
+	private void render(SIDScoreIR.TimedScore score, Path wavOut, boolean playAudio, SampleListener listener,
+			PlaybackListener playbackListener)
 			throws LineUnavailableException {
 		stopRequested.set(false);
 		pauseRequested.set(false);
@@ -169,8 +187,11 @@ public final class RealtimeAudioPlayer {
 
 		byte[] buf = new byte[BUFFER_SAMPLES * 2];
 		ByteArrayOutputStream wavBuffer = wavOut != null ? new ByteArrayOutputStream() : null;
-		float[][] voiceBuf = listener != null ? new float[3][BUFFER_SAMPLES] : null;
-		double[] voiceMix = listener != null ? new double[3] : null;
+		boolean wantsVoiceSamples = listener != null || playbackListener != null;
+		float[][] voiceBuf = wantsVoiceSamples ? new float[3][BUFFER_SAMPLES] : null;
+		double[] voiceMix = wantsVoiceSamples ? new double[3] : null;
+		long blockIndex = 0;
+		long renderedSamples = 0;
 
 		boolean[] msb = new boolean[3];
 		boolean[] rise = new boolean[3];
@@ -277,6 +298,16 @@ public final class RealtimeAudioPlayer {
 			if (listener != null && samplesWritten > 0) {
 				listener.onSamples(voiceBuf[0], voiceBuf[1], voiceBuf[2], samplesWritten, SAMPLE_RATE);
 			}
+			if (playbackListener != null && samplesWritten > 0) {
+				VoiceSnapshot[] snapshots = new VoiceSnapshot[3];
+				for (int i = 0; i < 3; i++) {
+					snapshots[i] = vr[i].snapshot(i + 1);
+				}
+				long frameIndex = (long) Math.floor(renderedSamples * frameRate / SAMPLE_RATE);
+				playbackListener.onBlock(new PlaybackBlock(blockIndex++, frameIndex, SAMPLE_RATE, snapshots, voiceBuf,
+						samplesWritten));
+			}
+			renderedSamples += samplesWritten;
 		} while (!done && !stopRequested.get());
 
 		if (playAudio && line != null) {
@@ -348,6 +379,9 @@ public final class RealtimeAudioPlayer {
 		private int baseMidi = -1;
 		private int noteBaseMidi = -1;
 		private int pitchOffset = 0;
+		private int currentFreqReg = 0;
+		private double lastEnvelopeLevel = 0.0;
+		private double lastOutputLevel = 0.0;
 
 		VoiceRuntime(SIDScoreIR.InstrumentIR instr, List<FrameEventCompiler.FrameEvent> events,
 				double sidClockHz, double frameRate, java.util.Map<String, SIDScoreIR.TableIR> tables,
@@ -426,9 +460,55 @@ public final class RealtimeAudioPlayer {
 			double o = osc.output(activeWaveMask, ring, modMsb);
 
 			double raw = e * o;
+			double out = MIX_GAIN * raw;
+			lastEnvelopeLevel = e;
+			lastOutputLevel = Math.abs(out);
 
 			// simple per-voice gain
-			return MIX_GAIN * raw;
+			return out;
+		}
+
+		VoiceSnapshot snapshot(int voiceIndex) {
+			int noteKind = 0;
+			int noteLetter = 255;
+			int accidental = 0;
+			int octave = 0;
+			if (noise) {
+				noteKind = 2;
+			} else if (baseMidi >= 0 && active) {
+				noteKind = 1;
+				int effectiveMidi = clampMidi(noteBaseMidi >= 0 ? noteBaseMidi + pitchOffset : baseMidi);
+				NoteParts note = noteParts(effectiveMidi);
+				noteLetter = note.letter;
+				accidental = note.accidental;
+				octave = note.octave;
+			}
+
+			int flags = 0;
+			if (active)
+				flags |= 1;
+			if (gateOn)
+				flags |= 1 << 1;
+			if (sync)
+				flags |= 1 << 2;
+			if (ring)
+				flags |= 1 << 3;
+			if (filterRoute)
+				flags |= 1 << 4;
+			if (done)
+				flags |= 1 << 5;
+			if (pwTable != null && !pwTable.steps().isEmpty())
+				flags |= 1 << 6;
+			if (waveTable != null && !waveTable.steps().isEmpty())
+				flags |= 1 << 7;
+			if (pitchTable != null && !pitchTable.steps().isEmpty())
+				flags |= 1 << 8;
+			if (gateTable != null && !gateTable.steps().isEmpty())
+				flags |= 1 << 9;
+
+			return new VoiceSnapshot(voiceIndex, noteKind, noteLetter, accidental, octave, activeWaveMask, flags,
+					currentFreqReg & 0xFFFF, pw & 0x0FFF, pitchOffset, (float) clamp01(lastEnvelopeLevel),
+					(float) clamp01(lastOutputLevel / Math.max(0.0001, MIX_GAIN)));
 		}
 
 		private void start(FrameEventCompiler.FrameEvent e, float sr) {
@@ -455,6 +535,7 @@ public final class RealtimeAudioPlayer {
 			baseMidi = noise ? -1 : (e.baseNote() & 0x7f);
 			noteBaseMidi = baseMidi;
 			pitchOffset = 0;
+			currentFreqReg = e.freq() & 0xFFFF;
 
 			active = gateBit || e.freq() != 0;
 
@@ -797,7 +878,8 @@ public final class RealtimeAudioPlayer {
 				midi = 0;
 			if (midi > 127)
 				midi = 127;
-			double hz = midiToHz(midi, sidClockHz);
+			currentFreqReg = freqRegFromMidi(midi, sidClockHz);
+			double hz = freqRegToHz(currentFreqReg, sidClockHz);
 			osc.setFreq(hz, sr);
 		}
 
@@ -855,6 +937,12 @@ public final class RealtimeAudioPlayer {
 			return quantizeToSidHz(hz, sidClockHz);
 		}
 
+		private static int freqRegFromMidi(int midi, double sidClockHz) {
+			double hz = 440.0 * Math.pow(2.0, (midi - 69) / 12.0);
+			int reg = (int) Math.round(hz * 16777216.0 / sidClockHz);
+			return Math.max(1, Math.min(0xFFFF, reg));
+		}
+
 		private static double freqRegToHz(int reg, double sidClockHz) {
 			if (reg <= 0)
 				return 0.0;
@@ -872,6 +960,46 @@ public final class RealtimeAudioPlayer {
 			if ((waveBits & 0x80) != 0)
 				mask |= SIDScoreIR.Wave.NOISE.mask;
 			return mask;
+		}
+
+		private static double clamp01(double value) {
+			if (value < 0.0)
+				return 0.0;
+			if (value > 1.0)
+				return 1.0;
+			return value;
+		}
+
+		private static NoteParts noteParts(int midi) {
+			int semitone = Math.floorMod(midi, 12);
+			int octave = midi / 12 - 1;
+			return switch (semitone) {
+			case 0 -> new NoteParts(0, 0, octave);
+			case 1 -> new NoteParts(0, 1, octave);
+			case 2 -> new NoteParts(1, 0, octave);
+			case 3 -> new NoteParts(1, 1, octave);
+			case 4 -> new NoteParts(2, 0, octave);
+			case 5 -> new NoteParts(3, 0, octave);
+			case 6 -> new NoteParts(3, 1, octave);
+			case 7 -> new NoteParts(4, 0, octave);
+			case 8 -> new NoteParts(4, 1, octave);
+			case 9 -> new NoteParts(5, 0, octave);
+			case 10 -> new NoteParts(5, 1, octave);
+			case 11 -> new NoteParts(6, 0, octave);
+			default -> new NoteParts(255, 0, 0);
+			};
+		}
+
+		private static final class NoteParts {
+			final int letter;
+			final int accidental;
+			final int octave;
+
+			NoteParts(int letter, int accidental, int octave) {
+				this.letter = letter;
+				this.accidental = accidental;
+				this.octave = octave;
+			}
 		}
 
 	}
