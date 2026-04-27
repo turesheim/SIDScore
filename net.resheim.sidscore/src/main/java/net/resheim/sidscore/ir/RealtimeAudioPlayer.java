@@ -63,6 +63,7 @@ public final class RealtimeAudioPlayer {
 
 	private static final float SAMPLE_RATE = 44100f;
 	private static final int BUFFER_SAMPLES = 512;
+	private static final int AUDIO_LINE_BUFFER_SAMPLES = BUFFER_SAMPLES * 8;
 	private static final double SID_CLOCK_NTSC = 1022727.0;
 	private static final double SID_CLOCK_PAL = 985248.0;
 	private static final double RASTER_RATE_PAL = 50.124542;
@@ -181,9 +182,8 @@ public final class RealtimeAudioPlayer {
 			}
 			if (playAudio) {
 				line = AudioSystem.getSourceDataLine(fmt);
-				line.open(fmt, BUFFER_SAMPLES * 2);
+				line.open(fmt, AUDIO_LINE_BUFFER_SAMPLES * fmt.getFrameSize());
 				activeLine = line;
-				line.start();
 			}
 
 			double sidClockHz = score.system() == SIDScoreIR.VideoSystem.NTSC ? SID_CLOCK_NTSC : SID_CLOCK_PAL;
@@ -236,6 +236,7 @@ public final class RealtimeAudioPlayer {
 				}
 			}
 			boolean linePaused = false;
+			boolean lineStarted = false;
 
 			double outLP = 0.0;
 			double srOS = SAMPLE_RATE * oversample;
@@ -247,7 +248,7 @@ public final class RealtimeAudioPlayer {
 				int samplesWritten = 0;
 				for (int s = 0; s < BUFFER_SAMPLES; s++) {
 					while (pauseRequested.get() && !stopRequested.get()) {
-						if (playAudio && line != null && !linePaused) {
+						if (playAudio && line != null && lineStarted && !linePaused) {
 							line.stop();
 							linePaused = true;
 						}
@@ -261,6 +262,7 @@ public final class RealtimeAudioPlayer {
 					}
 					if (linePaused && playAudio && line != null && !stopRequested.get()) {
 						line.start();
+						lineStarted = true;
 						linePaused = false;
 					}
 					if (stopRequested.get()) {
@@ -334,8 +336,14 @@ public final class RealtimeAudioPlayer {
 					}
 					samplesWritten++;
 				}
-				if (playAudio && line != null && samplesWritten > 0) {
+				if (playAudio && line != null && samplesWritten > 0 && !stopRequested.get()) {
 					line.write(buf, 0, samplesWritten * 2);
+					if (!lineStarted && !stopRequested.get()) {
+						line.start();
+						lineStarted = true;
+					} else if (lineStarted && !line.isRunning() && !pauseRequested.get() && !stopRequested.get()) {
+						line.start();
+					}
 				}
 				if (wavBuffer != null) {
 					wavBuffer.write(buf, 0, samplesWritten * 2);
