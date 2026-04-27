@@ -322,7 +322,7 @@ public final class SIDScorePlayerServer {
 	}
 
 	private void handlePlaybackBlock(long scoreId, RealtimeAudioPlayer.PlaybackBlock block) {
-		if (!running || currentScoreId != scoreId) {
+		if (!running || currentScoreId != scoreId || stopRequestedByClient) {
 			return;
 		}
 		lastVoiceBlockIndex = block.blockIndex();
@@ -368,6 +368,7 @@ public final class SIDScorePlayerServer {
 		resetHighlightIds();
 		if (emitState) {
 			sendSilentVoiceState(currentScoreId, true);
+			sendSilentScopeState(currentScoreId, true);
 			sendHighlightState(currentScoreId, 0, -1, -1, -1, true);
 			sendPlaybackState(requestId, SrapProtocol.STATE_STOPPED, SrapProtocol.REASON_CLIENT_REQUEST, currentScoreId,
 					0, 0, true);
@@ -449,6 +450,15 @@ public final class SIDScorePlayerServer {
 		enqueue(SrapProtocol.VOICE_STATE, encodeSilentVoiceState(scoreId), critical);
 	}
 
+	private void sendSilentScopeState(long scoreId, boolean critical) {
+		if ((clientCapabilities & SrapProtocol.CAP_SCOPE_BUCKETS) != 0) {
+			enqueue(SrapProtocol.SCOPE_BUCKETS, encodeSilentScopeBuckets(scoreId), critical);
+		}
+		if ((clientCapabilities & SrapProtocol.CAP_SCOPE_SAMPLES) != 0) {
+			enqueue(SrapProtocol.SCOPE_SAMPLES, encodeSilentScopeSamples(scoreId), critical);
+		}
+	}
+
 	private byte[] encodeSilentVoiceState(long scoreId) {
 		SrapProtocol.PayloadWriter out = SrapProtocol.payload()
 				.u64(scoreId)
@@ -471,6 +481,39 @@ public final class SIDScorePlayerServer {
 					.u8(0)
 					.f32(0.0f)
 					.f32(0.0f);
+		}
+		return out.toByteArray();
+	}
+
+	private byte[] encodeSilentScopeBuckets(long scoreId) {
+		SrapProtocol.PayloadWriter out = SrapProtocol.payload()
+				.u64(scoreId)
+				.u64(lastVoiceBlockIndex + 1)
+				.f32(lastVoiceSampleRate)
+				.u16(DEFAULT_SCOPE_BUCKETS)
+				.u16(1);
+		for (int voice = 1; voice <= 3; voice++) {
+			out.u8(voice).u8(0);
+			for (int b = 0; b < DEFAULT_SCOPE_BUCKETS; b++) {
+				out.i16(0).i16(0);
+			}
+		}
+		return out.toByteArray();
+	}
+
+	private byte[] encodeSilentScopeSamples(long scoreId) {
+		int length = 512;
+		SrapProtocol.PayloadWriter out = SrapProtocol.payload()
+				.u64(scoreId)
+				.u64(lastVoiceBlockIndex + 1)
+				.f32(lastVoiceSampleRate)
+				.u16(length)
+				.u16(0);
+		for (int voice = 1; voice <= 3; voice++) {
+			out.u8(voice).u8(0);
+			for (int i = 0; i < length; i++) {
+				out.i16(0);
+			}
 		}
 		return out.toByteArray();
 	}

@@ -341,6 +341,10 @@ public final class RealtimeAudioPlayer {
 			renderedSamples += samplesWritten;
 		} while (!done && !stopRequested.get());
 
+		if (stopRequested.get()) {
+			emitSilentTelemetry(listener, playbackListener, blockIndex++, renderedSamples, frameRate);
+		}
+
 		if (playAudio && line != null) {
 			if (stopRequested.get()) {
 				line.stop();
@@ -355,6 +359,31 @@ public final class RealtimeAudioPlayer {
 		if (wavBuffer != null) {
 			writeWav(wavBuffer.toByteArray(), fmt, wavOut);
 		}
+	}
+
+	private static void emitSilentTelemetry(SampleListener listener, PlaybackListener playbackListener,
+			long blockIndex, long renderedSamples, double frameRate) {
+		if (listener == null && playbackListener == null) {
+			return;
+		}
+		float[][] silence = new float[3][BUFFER_SAMPLES];
+		if (listener != null) {
+			listener.onSamples(silence[0], silence[1], silence[2], BUFFER_SAMPLES, SAMPLE_RATE);
+		}
+		if (playbackListener != null) {
+			VoiceSnapshot[] snapshots = new VoiceSnapshot[] {
+					silentSnapshot(1),
+					silentSnapshot(2),
+					silentSnapshot(3)
+			};
+			long frameIndex = (long) Math.floor(renderedSamples * frameRate / SAMPLE_RATE);
+			playbackListener.onBlock(new PlaybackBlock(blockIndex, frameIndex, SAMPLE_RATE, snapshots, silence,
+					BUFFER_SAMPLES));
+		}
+	}
+
+	private static VoiceSnapshot silentSnapshot(int voiceIndex) {
+		return new VoiceSnapshot(voiceIndex, 0, 255, 0, 0, 0, 1 << 5, 0, 0x0800, 0, 0.0f, 0.0f);
 	}
 
 	// -------- Voice runtime --------

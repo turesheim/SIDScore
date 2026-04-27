@@ -452,10 +452,13 @@ public final class RealtimeAudioPlayerUI {
 		}
 		playbackPaused = false;
 		playbackPauseNanos = -1;
-		keepHighlightOnStop = clearRestart;
+		keepHighlightOnStop = false;
 		viceStopRequested = true;
 		if (playbackStartNanos > 0 && playbackStopNanos < 0) {
 			playbackStopNanos = System.nanoTime();
+		}
+		if (clearRestart) {
+			clearStoppedPlaybackVisuals();
 		}
 		Process renderProcess = viceProcess;
 		if (renderProcess != null) {
@@ -469,6 +472,14 @@ public final class RealtimeAudioPlayerUI {
 			current.stop();
 		}
 		updatePlaybackButtons();
+	}
+
+	private void clearStoppedPlaybackVisuals() {
+		resetPlaybackHighlighting();
+		for (OscilloscopePanel scope : scopes) {
+			scope.clear();
+			scope.repaint();
+		}
 	}
 
 	private void onAutoReloadToggle() {
