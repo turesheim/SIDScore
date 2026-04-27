@@ -1,6 +1,6 @@
 # SIDScore Player Server Specification
 
-Version: **0.3.0 (draft)**
+Version: **0.4.0 (draft)**
 
 ## 1. Purpose
 
