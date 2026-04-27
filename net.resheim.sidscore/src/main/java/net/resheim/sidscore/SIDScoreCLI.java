@@ -28,6 +28,7 @@ import net.resheim.sidscore.sid.SidModel;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -441,6 +442,13 @@ import java.util.stream.Collectors;
 
   private static SIDScoreIR.ScoreIR buildInlineSongScore(SIDScoreIR.ScoreIR base, SIDScoreIR.SongIR song) {
     int tempo = song.tempoBpm().isPresent() ? song.tempoBpm().getAsInt() : base.tempoBpm();
+    Map<String, SIDScoreIR.EffectIR> effects = new LinkedHashMap<>();
+    if (!song.effects().isEmpty()) {
+      effects.putAll(song.effects());
+    } else {
+      effects.putAll(base.effects());
+      effects.putAll(song.effects());
+    }
     return new SIDScoreIR.ScoreIR(
         song.title().isPresent() ? song.title() : base.title(),
         song.author().isPresent() ? song.author() : base.author(),
@@ -451,6 +459,7 @@ import java.util.stream.Collectors;
         song.defaultSwing().isPresent() ? song.defaultSwing().get() : base.defaultSwing(),
         base.tables(),
         base.instruments(),
+        java.util.Collections.unmodifiableMap(effects),
         song.voices(),
         Map.of(),
         Map.of());

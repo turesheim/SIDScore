@@ -92,6 +92,12 @@ public final class SIDScoreExporter {
 
 		sb.append("init:\n");
 		sb.append("  sei\n");
+		sb.append("  lda #$00\n");
+		sb.append("  ldx #$18\n");
+		sb.append("sidscore_clear_sid:\n");
+		sb.append("  sta $d400,x\n");
+		sb.append("  dex\n");
+		sb.append("  bpl sidscore_clear_sid\n");
 		sb.append("  lda #$0f\n");
 		sb.append("  sta SID_VOL\n");
 		sb.append("  lda #$00\n");

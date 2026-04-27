@@ -55,6 +55,9 @@ public final class SIDScorePlayerServer {
 	private volatile RealtimeAudioPlayer currentPlayer = null;
 	private volatile Thread currentPlayerThread = null;
 	private volatile boolean stopRequestedByClient = false;
+	private volatile long lastVoiceBlockIndex = -1;
+	private volatile long lastVoiceFrameIndex = 0;
+	private volatile float lastVoiceSampleRate = 44100.0f;
 	private final int[] lastHighlightIds = { Integer.MIN_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE };
 
 	public SIDScorePlayerServer(int requestedPort) {
@@ -214,9 +217,13 @@ public final class SIDScorePlayerServer {
 		long scoreId = scoreIds.getAndIncrement();
 		currentScoreId = scoreId;
 		stopRequestedByClient = false;
+		lastVoiceBlockIndex = -1;
+		lastVoiceFrameIndex = 0;
+		lastVoiceSampleRate = 44100.0f;
 		resetHighlightIds();
 		sendPlaybackState(requestId, SrapProtocol.STATE_LOADING, SrapProtocol.REASON_CLIENT_REQUEST, scoreId, 0, 0,
 				true);
+		sendSilentVoiceState(scoreId, true);
 
 		ParsedScore parsed;
 		try {
@@ -241,6 +248,7 @@ public final class SIDScorePlayerServer {
 		if ((clientCapabilities & SrapProtocol.CAP_SCORE_MAP) != 0) {
 			enqueue(SrapProtocol.SCORE_MAP, encodeScoreMap(scoreMap), true);
 		}
+		sendSilentVoiceState(scoreId, true);
 
 		SidModel sidModel = switch (sidModelRaw) {
 		case 2 -> SidModel.MOS8580;
@@ -297,6 +305,7 @@ public final class SIDScorePlayerServer {
 					true);
 			player.playWithTelemetry(timed, block -> handlePlaybackBlock(scoreId, block));
 			if (!stopRequestedByClient && running && currentScoreId == scoreId) {
+				sendSilentVoiceState(scoreId, true);
 				sendHighlightState(scoreId, 0, -1, -1, -1, true);
 				sendPlaybackState(0, SrapProtocol.STATE_ENDED, SrapProtocol.REASON_END_OF_SCORE, scoreId, 0, 0, true);
 			}
@@ -316,6 +325,9 @@ public final class SIDScorePlayerServer {
 		if (!running || currentScoreId != scoreId) {
 			return;
 		}
+		lastVoiceBlockIndex = block.blockIndex();
+		lastVoiceFrameIndex = block.frameIndex();
+		lastVoiceSampleRate = block.sampleRate();
 		if ((clientCapabilities & SrapProtocol.CAP_VOICE_STATE) != 0) {
 			enqueue(SrapProtocol.VOICE_STATE, encodeVoiceState(scoreId, block), false);
 		}
@@ -355,6 +367,7 @@ public final class SIDScorePlayerServer {
 		currentPlayerThread = null;
 		resetHighlightIds();
 		if (emitState) {
+			sendSilentVoiceState(currentScoreId, true);
 			sendHighlightState(currentScoreId, 0, -1, -1, -1, true);
 			sendPlaybackState(requestId, SrapProtocol.STATE_STOPPED, SrapProtocol.REASON_CLIENT_REQUEST, currentScoreId,
 					0, 0, true);
@@ -425,6 +438,39 @@ public final class SIDScorePlayerServer {
 					.u8(0)
 					.f32(v.envelopeLevel())
 					.f32(v.outputLevel());
+		}
+		return out.toByteArray();
+	}
+
+	private void sendSilentVoiceState(long scoreId, boolean critical) {
+		if ((clientCapabilities & SrapProtocol.CAP_VOICE_STATE) == 0) {
+			return;
+		}
+		enqueue(SrapProtocol.VOICE_STATE, encodeSilentVoiceState(scoreId), critical);
+	}
+
+	private byte[] encodeSilentVoiceState(long scoreId) {
+		SrapProtocol.PayloadWriter out = SrapProtocol.payload()
+				.u64(scoreId)
+				.u64(lastVoiceBlockIndex + 1)
+				.u64(lastVoiceFrameIndex)
+				.f32(lastVoiceSampleRate);
+		for (int voice = 1; voice <= 3; voice++) {
+			out.u8(voice)
+					.u8(0)
+					.u8(255)
+					.i8(0)
+					.i8(0)
+					.u8(0)
+					.u16(1 << 5)
+					.u16(0)
+					.u16(0x0800)
+					.i8(0)
+					.u8(0)
+					.u8(0)
+					.u8(0)
+					.f32(0.0f)
+					.f32(0.0f);
 		}
 		return out.toByteArray();
 	}

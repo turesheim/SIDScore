@@ -32,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -448,21 +449,6 @@ public final class RealtimeAudioPlayerUI {
 		if (clearRestart) {
 			restartPending = false;
 			restartOnlyWhenAutoReload = false;
-		}
-		if (clearRestart && !playbackPaused && isPlaying() && activeRenderer() == PlaybackRenderer.SRAP) {
-			RealtimeAudioPlayer current = player;
-			if (current != null) {
-				current.pause();
-				playbackPaused = true;
-				playbackPauseNanos = System.nanoTime();
-				keepHighlightOnStop = true;
-				if (playbackStartNanos > 0 && playbackStopNanos < 0) {
-					playbackStopNanos = playbackPauseNanos;
-				}
-				updatePlaybackButtons();
-				updateElapsedClock();
-				return;
-			}
 		}
 		playbackPaused = false;
 		playbackPauseNanos = -1;
@@ -1679,6 +1665,13 @@ public final class RealtimeAudioPlayerUI {
 
 	private static SIDScoreIR.ScoreIR buildInlineSongScore(SIDScoreIR.ScoreIR base, SIDScoreIR.SongIR song) {
 		int tempo = song.tempoBpm().isPresent() ? song.tempoBpm().getAsInt() : base.tempoBpm();
+		Map<String, SIDScoreIR.EffectIR> effects = new LinkedHashMap<>();
+		if (!song.effects().isEmpty()) {
+			effects.putAll(song.effects());
+		} else {
+			effects.putAll(base.effects());
+			effects.putAll(song.effects());
+		}
 		return new SIDScoreIR.ScoreIR(
 				song.title().isPresent() ? song.title() : base.title(),
 				song.author().isPresent() ? song.author() : base.author(),
@@ -1689,6 +1682,7 @@ public final class RealtimeAudioPlayerUI {
 				song.defaultSwing().isPresent() ? song.defaultSwing().get() : base.defaultSwing(),
 				base.tables(),
 				base.instruments(),
+				java.util.Collections.unmodifiableMap(effects),
 				song.voices(),
 				Map.of(),
 				Map.of());

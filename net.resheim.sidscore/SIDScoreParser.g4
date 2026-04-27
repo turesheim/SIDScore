@@ -22,6 +22,7 @@ stmt
   | importStmt
   | songBlock
   | tableStmt
+  | effectStmt
   | instrStmt
   | swingStmt
   | voiceBlock
@@ -71,7 +72,116 @@ songStmt
   | timeStmt
   | systemStmt
   | swingStmt
+  | effectStmt
   | voiceBlock
+  ;
+
+// --------------------
+// Effects
+// --------------------
+effectStmt
+  : EFFECT ID LBRACE effectBodyStmt* RBRACE
+  ;
+
+effectBodyStmt
+  : effectVoiceStmt
+  | effectLengthStmt
+  | effectPriorityStmt
+  | effectRetriggerStmt
+  | effectStep
+  ;
+
+effectVoiceStmt
+  : VOICE effectVoice
+  ;
+
+effectVoice
+  : INT
+  | ANY
+  ;
+
+effectLengthStmt
+  : EFFECT_LENGTH INT TICKS
+  ;
+
+effectPriorityStmt
+  : PRIORITY INT
+  ;
+
+effectRetriggerStmt
+  : RETRIGGER effectRetriggerMode
+  ;
+
+effectRetriggerMode
+  : RESTART
+  | IGNORE
+  | STEAL
+  ;
+
+effectStep
+  : effectAssignment effectTick?
+  | effectSweep
+  | effectGroup
+  ;
+
+effectTick
+  : AT INT
+  ;
+
+effectGroup
+  : (ATK | FRAME) INT LBRACE effectAssignment* RBRACE
+  ;
+
+effectAssignment
+  : WAVE EQ waveList
+  | GATE EQ onOff
+  | SYNC EQ onOff
+  | RING EQ onOff
+  | RESET
+  | PITCH EQ NOTE
+  | FREQ EQ numericValue
+  | PW EQ numericValue
+  | HIPULSE EQ numericValue
+  | LOWPULSE EQ numericValue
+  | ADSR EQ INT COMMA INT COMMA INT COMMA INT
+  | ATTACK EQ INT
+  | DECAY EQ INT
+  | SUSTAIN EQ INT
+  | RELEASE EQ INT
+  | FILTER EQ filterSpec
+  | FILTERROUTE EQ numericValue
+  | CUTOFF EQ numericValue
+  | RES EQ INT
+  | VOLUME EQ INT
+  ;
+
+effectSweep
+  : effectSweepParam effectSweepValue TO effectSweepValue AT INT effectSweepCurve?
+  ;
+
+effectSweepParam
+  : PITCH
+  | FREQ
+  | PW
+  | CUTOFF
+  | VOLUME
+  ;
+
+effectSweepValue
+  : NOTE
+  | numericValue
+  ;
+
+effectSweepCurve
+  : LINEAR
+  | EXP
+  | LOG
+  | STEP
+  ;
+
+numericValue
+  : HEX
+  | INT
   ;
 
 // --------------------

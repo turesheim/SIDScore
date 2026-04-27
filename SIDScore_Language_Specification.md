@@ -1,22 +1,24 @@
 # SIDScore Language Specification
 
-Version: **0.2 (draft)**
+Version: **0.3 (draft)**
 
 ## 1. Scope and Goals
 
-This language is a **SID-specific, high-level score format** for Commodore 64 music.
-It is designed to:
+This language is a **SID-specific, high-level score format** for Commodore 64
+music. It is designed to:
 
 - Be readable like traditional sheet music
 - Map **directly and predictably** to SID hardware constraints
 - Be easy to **translate from MML**
 - Compile or interpret into a **simple SID player** (3 voices, IRQ-driven)
 
-This specification defines **syntax and musical semantics**, not the player implementation.
+This specification defines **syntax and musical semantics**, not the player
+implementation.
 
 ## 2. File Structure
 
-A source file should have the `*.sidscore` suffix and will consist of a sequence of **statements**, in arbitrary order unless otherwise noted.
+A source file should have the `*.sidscore` suffix and will consist of a sequence of
+**statements**, in arbitrary order unless otherwise noted.
 
 Statement types:
 
@@ -25,6 +27,7 @@ Statement types:
 - Inline tune blocks
 - Wavetable table definitions (optional extension)
 - Instrument definitions
+- Effect definitions
 - Timing state statements
 - Voice blocks
 
@@ -138,6 +141,7 @@ TUNE <number> {
   [SYSTEM ...]
   [SWING ...]
   VOICE ...
+  EFFECT ...
   ...
 }
 ```
@@ -145,9 +149,10 @@ TUNE <number> {
 - OPTIONAL and repeatable
 - `<number>` MUST be decimal in the range `2..255`.
 - `TUNE` blocks define additional PSID subtunes in the same file.
-- `TUNE` blocks share top-level `INSTR` and `TABLE` definitions.
+- `TUNE` blocks share top-level `INSTR`, `TABLE`, and `EFFECT` definitions.
 - Metadata/timing fields inside a `TUNE` block override top-level defaults for that tune only.
-- A `TUNE` block MUST contain at least one `VOICE`.
+- A `TUNE` block MUST contain at least one `VOICE` or one inline `EFFECT`.
+- Inline `EFFECT` timelines in a `TUNE` start at that tune's frame 0 and play concurrently with `VOICE` timelines.
 - `IMPORT` is not allowed inside `TUNE` blocks.
 
 ## 4. Wavetable Format
@@ -710,11 +715,14 @@ Example:
 INSTR ringLead WAVE=TRI RING=ON ADSR=4,3,10,4
 ```
 
+
 ## 6. Voice Model (SID Mapping)
 
 - There are up to **three voices** (VOICE 1–3)
 - Each defined voice maps **1:1** to a SID voice
 - Omitted voices are silent
+- Effects may target a fixed voice or `VOICE ANY`
+- A `VOICE` body and an `EFFECT` targeting the same SID voice share one physical SID register timeline.
 
 ```
 VOICE <1|2|3> <instrument> :
@@ -723,7 +731,8 @@ VOICE <1|2|3> <instrument> :
 Rules:
 - Voice index MUST be 1, 2, or 3
 - `<instrument>` MUST reference a defined INSTR
-- Instrument changes inside a voice body are **not allowed** in v0.1
+- Instrument changes inside a voice body are **not allowed in v0.1**
+- `EFFECT` definitions do not define persistent voices; they define short-lived SID parameter timelines
 
 ## 7. Voice Body Syntax
 
@@ -958,7 +967,239 @@ VOICE 3 drum: X8  R8  X8
   - SHOULD emit a warning
   - Pitch MAY be ignored or mapped to noise frequency (implementation-defined)
 
-## 13. Timing Model (Compiler / Player Contract)
+## 13. Effect Definitions
+
+Effects define short, frame-based SID parameter timelines intended for sound effects.
+They are not musical phrases and do not use voice body note syntax.
+
+An `EFFECT` may be declared at top level or inside a `TUNE` block.
+
+### 13.1 Syntax
+
+Example:
+
+```
+EFFECT  {
+  VOICE <1|2|3|ANY>
+  LENGTH  TICKS
+  [PRIORITY ]
+  [RETRIGGER RESTART|IGNORE|STEAL]
+  <effect-step>
+  ...
+}
+```
+
+- <name> MUST be a valid identifier: `[A-Za-z_][A-Za-z0-9_]*`
+- Effect names MUST be unique within the file.
+- VOICE declares the preferred SID voice.
+- VOICE ANY means the runtime may assign any available SID voice.
+- LENGTH is measured in player frames/ticks.
+- PRIORITY is OPTIONAL, valid range 0–255, default 0.
+- RETRIGGER is OPTIONAL, default RESTART.
+
+### 13.2 Effect Steps
+
+Effect steps are evaluated in timeline order.
+
+```
+<assignment>
+<assignment> @N
+<sweep>
+AT N {
+  <assignment>
+  ...
+}
+FRAME N {
+  <assignment>
+  ...
+}
+```
+
+- N MUST be an integer >= 0.
+- @N on an assignment means the assignment occurs at tick N.
+- AT N groups several assignments at the same tick.
+- FRAME N is an alias for AT N.
+- Assignments without @N, AT, or FRAME occur at tick 0.
+- If multiple assignments write the same parameter at the same tick, the last assignment wins.
+
+Example:
+
+```
+EFFECT Blip {
+  VOICE ANY
+  LENGTH 6 TICKS
+
+  WAVE=TRI
+  ADSR=0,0,15,0
+  GATE=ON
+  PITCH=C6
+
+  PITCH=G6 @2
+  GATE=OFF @4
+}
+```
+
+### 13.3 Assignments
+
+Allowed assignment parameters:
+
+```
+WAVE=<wave>
+GATE=ON|OFF
+SYNC=ON|OFF
+RING=ON|OFF
+RESET
+
+PITCH=<note>
+FREQ=<int|$hex>
+PW=<int|$hex>
+HIPULSE=<int|$hex>
+LOWPULSE=<int|$hex>
+
+ADSR=a,d,s,r
+ATTACK=<int>
+DECAY=<int>
+SUSTAIN=<int>
+RELEASE=<int>
+
+FILTER=OFF|LP|BP|HP|LP+BP|LP+HP|BP+HP|LP+BP+HP
+FILTERROUTE=<int|$hex>
+CUTOFF=<int|$hex>
+RES=<int>
+VOLUME=<int>
+```
+
+Rules:
+
+- WAVE uses the same values as instruments: PULSE, SAW, TRI, NOISE, or combinations with +.
+- PITCH and FREQ are mutually exclusive at the same tick for the same voice.
+- PITCH uses the same note spelling as normal voice bodies.
+- FREQ writes a raw SID frequency value.
+- PW, HIPULSE, and LOWPULSE follow the same rules as instrument pulse-width parameters.
+- ADSR writes all four envelope nibbles.
+- ATTACK, DECAY, SUSTAIN, and RELEASE override individual ADSR nibbles.
+- FILTER sets the global SID filter mode bits.
+- FILTERROUTE writes the raw SID `$D417` low nibble. Bits 0, 1, and 2 route voices 1, 2, and 3 through
+  the filter; bit 3 routes the external input. Values are `0..15` or `$0..$F`.
+- CUTOFF and RES affect the global SID filter cutoff and resonance.
+- VOLUME affects the global SID volume register.
+- RESET forces oscillator reset at that tick.
+
+Example:
+
+```
+EFFECT NoiseZap {
+  VOICE 3
+  LENGTH 8 TICKS
+
+  WAVE=NOISE
+  ADSR=0,4,8,2
+  GATE=ON
+  FREQ=$4000
+
+  FREQ=$3000 @1
+  FREQ=$2000 @2
+  GATE=OFF @6
+}
+```
+
+### 13.4 Sweeps
+
+Sweeps interpolate a parameter over time.
+
+```
+<parameter> <from> TO <to> @<duration> [LINEAR|EXP|LOG|STEP]
+```
+
+Allowed sweep parameters:
+
+- PITCH
+- FREQ
+- PW
+- CUTOFF
+- VOLUME
+
+Rules:
+
+- Duration is measured in player frames/ticks.
+- If no curve is specified, LINEAR is implied.
+- STEP means discrete integer stepping.
+- PITCH sweeps are semitone-based unless the implementation supports finer pitch resolution.
+- FREQ, PW, CUTOFF, and VOLUME sweeps operate on numeric values.
+- Sweep output is clamped to the valid range of the target parameter.
+
+Example:
+
+```
+EFFECT Laser {
+  VOICE ANY
+  LENGTH 24 TICKS
+  PRIORITY 80
+
+  WAVE=PULSE
+  ADSR=0,2,8,3
+  GATE=ON
+  PITCH=C7
+  PW=$0800
+
+  PITCH C7 TO C3 @24 EXP
+  PW $0800 TO $0100 @24 LINEAR
+
+  GATE=OFF @22
+}
+```
+
+### 13.5 Effect Semantics
+
+- An EFFECT is a timeline of SID parameter changes.
+- Effects start at frame/tick 0 of the resolved tune that contains them.
+- Effects do not consume musical time and are not ordered before or after `VOICE` bodies.
+- Multiple effects in the same resolved tune are scheduled concurrently. If they target different SID voices,
+  they can sound at the same time. If more than one effect targets the same SID voice at the same frame,
+  normal runtime voice-allocation and retrigger/priority rules decide which effect owns that voice.
+- An effect and a `VOICE` body on the same SID voice are not mixed as separate oscillators. They share the
+  same physical voice timeline; while the effect owns that voice, its SID parameter timeline is the audible
+  state for that voice.
+- Effects do not use L, O, notes, rests, ties, legato, tuplets, or swing.
+- Effects are compiled independently from VOICE body syntax.
+- If an effect ends without GATE=OFF, the compiler SHOULD warn.
+- At LENGTH, the effect is considered complete even if the final gate state is ON. When an effect completes,
+  its owned SID state is released and reset before the voice returns to the underlying VOICE timeline or to silence.
+- Starting or restarting a tune always begins from a silent SID state. Previous gate, waveform, frequency, pulse,
+  sync/ring, and filter-route state MUST NOT carry over from an earlier play of the same tune or another tune.
+
+### 13.6 Retrigger Semantics
+
+```
+RETRIGGER RESTART
+RETRIGGER IGNORE
+RETRIGGER STEAL
+```
+- RESTART: triggering the same effect again restarts it from tick 0.
+- IGNORE: triggering is ignored while the same effect is already active.
+- STEAL: triggering may replace another active lower-priority effect.
+
+Voice allocation and preemption are runtime concerns, but the source language provides enough information for deterministic implementations.
+
+### 13.7 SID Register-Trace Conversion Limits
+
+`EFFECT` timelines can represent many frame-by-frame SID register traces by writing raw `FREQ`, `PW`, `ADSR`,
+`WAVE`, `GATE`, `FILTER`, `FILTERROUTE`, `CUTOFF`, `RES`, and `VOLUME` values. This is sufficient for audible SRAP-style
+replay of many converted SID subtunes and sound effects, but it is not a compact music notation.
+
+Known limits for register-accurate conversion:
+
+- Normal `VOICE` notation is insufficient for SID player code that changes frequency, waveform, pulse width,
+  filter cutoff, or gate state every video frame.
+- Long raw traces may require very large `EFFECT` blocks because effect timelines do not currently have loops,
+  repeated segments, or reusable frame tables.
+- For register-trace conversions, use `FILTERROUTE` whenever the source SID writes the `$D417` low bits
+  independently of filter mode. Normal `VOICE` instrument filtering remains compact notation and still implies
+  routing from the instrument voice.
+- Export backends MUST explicitly support `EFFECT` timelines. A backend that only exports `VOICE` event data
+  will not faithfully export converted effect-only subtunes.
+
+## 14. Timing Model (Compiler / Player Contract)
 
 - Musical durations are expressed in note values
 - Compiler MUST convert durations into an internal tick unit
@@ -966,17 +1207,24 @@ VOICE 3 drum: X8  R8  X8
 - Swing and dotted notes MUST be resolved at compile time
 - Player MAY operate at fixed frame rate (PAL 50 Hz / NTSC 60 Hz)
 
-## 14. Errors and Diagnostics
+## 15. Errors and Diagnostics
 
 ### Compile Errors (MUST fail)
 
 - Undefined instrument reference
 - Undefined wavetable reference (if wavetables are supported)
+- Undefined effect reference
+- Duplicate effect name
 - Missing instrument import file
 - Imported file does not define the requested instrument name
 - Import cycles
 - Invalid voice index
-- Unbalanced scopes: `(leg)/(end)`, `T{}`, `( )xN`
+- Invalid effect voice
+- Invalid effect length
+- Invalid effect parameter
+- Invalid sweep parameter
+- Invalid sweep range
+- Unbalanced scopes: `(leg)/(end)`, `T{}`, `( )xN`, `{ }`
 - Illegal tie usage
 - Illegal token for voice type
 - Invalid triol structure
@@ -986,14 +1234,9 @@ VOICE 3 drum: X8  R8  X8
 - Pulse width on non-PULSE waveform
 - Notes in NOISE voice
 - Out-of-range octave or parameters
+- Effect ends without `GATE=OFF`
+- Effect writes global filter or volume while a tune also uses filter or volume automation
 
-## 15. Non-Goals (v0.1)
-
-- Polyphony within a voice
-- Automatic voice stealing
-- Filters and modulation lanes beyond the wavetable sequences described here
-- Instrument changes mid-voice
-- Microtonal tuning
 
 ## 16. Design Principle
 
@@ -1028,3 +1271,5 @@ No implicit magic, no hidden voices, no invisible retriggers.
 - **Ring mod**: a voice's triangle wave is flipped by another voice's phase, creating metallic timbres.
 - **PAL/NTSC**: video standards with different clocks; this affects pitch and timing on real hardware.
 - **Wavetable**: a small per-frame sequence of parameter values used to animate a sound.
+- **Effect**: a short timeline of SID parameter changes, typically used for sound effects.
+- **Sweep**: a gradual change from one parameter value to another over a fixed number of ticks.

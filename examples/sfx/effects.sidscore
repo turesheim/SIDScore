@@ -1,0 +1,68 @@
+TITLE "Effect Syntax Test"
+AUTHOR "SIDScore"
+TEMPO 120
+TIME 4/4
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=0,4,8,2 PW=$0800
+
+EFFECT Blip {
+  VOICE ANY
+  LENGTH 6 TICKS
+
+  WAVE=TRI
+  ADSR=0,0,15,0
+  GATE=ON
+  PITCH=C6
+
+  PITCH=G6 @2
+  GATE=OFF @4
+}
+
+EFFECT Laser {
+  VOICE 1
+  LENGTH 24 TICKS
+  PRIORITY 80
+  RETRIGGER STEAL
+
+  WAVE=PULSE
+  ADSR=0,2,8,3
+  GATE=ON
+  PITCH=C7
+  PW=$0800
+
+  PITCH C7 TO C3 @24 EXP
+  PW $0800 TO $0100 @24 LINEAR
+
+  AT 22 {
+    GATE=OFF
+  }
+}
+
+VOICE 1 lead: O4 L8 C D E F
+
+TUNE 2 {
+  TEMPO 140
+
+  EFFECT NoiseZap {
+    VOICE 3
+    LENGTH 8 TICKS
+
+    WAVE=NOISE
+    ADSR=0,4,8,2
+    GATE=ON
+    FREQ=$4000
+
+    FRAME 1 {
+      FREQ=$3000
+      FILTER=LP+BP
+      CUTOFF=$0200
+      RES=8
+      VOLUME=12
+    }
+    FREQ=$2000 @2
+    GATE=OFF @6
+  }
+
+  VOICE 1 lead: O5 C8 R8
+}

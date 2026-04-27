@@ -96,6 +96,9 @@ public final class FrameEventCompiler {
 			}
 		}
 
+		if (lastGateOn) {
+			out.add(new FrameEvent(RETRIG_GAP_FRAMES, 0, 0, 0));
+		}
 		out.add(new FrameEvent(0, 0, 0, 0));
 		return out;
 	}

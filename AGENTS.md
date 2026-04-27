@@ -33,6 +33,8 @@
 - Do not edit generated parser files directly; update `.g4` sources and rerun `build-parser.sh`.
 - `net.resheim.sidscore/bin` is the build output; avoid manual edits.
 - Match existing Java formatting and keep changes minimal and localized.
+- For every `.sid` file added under `examples/games/`, generate or update the adjacent `.sidscore` file with the same basename.
+- When changes affect SID conversion, playback, or export semantics, regenerate all generated `examples/games/*.sidscore` files from their source `.sid` files and revalidate them.
 
 ## Tests
 

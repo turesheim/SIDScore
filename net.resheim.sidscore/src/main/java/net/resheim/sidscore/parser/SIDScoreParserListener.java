@@ -128,6 +128,176 @@ public interface SIDScoreParserListener extends ParseTreeListener {
 	 */
 	void exitSongStmt(SIDScoreParser.SongStmtContext ctx);
 	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectStmt}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectStmt(SIDScoreParser.EffectStmtContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectStmt}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectStmt(SIDScoreParser.EffectStmtContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectBodyStmt}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectBodyStmt(SIDScoreParser.EffectBodyStmtContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectBodyStmt}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectBodyStmt(SIDScoreParser.EffectBodyStmtContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectVoiceStmt}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectVoiceStmt(SIDScoreParser.EffectVoiceStmtContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectVoiceStmt}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectVoiceStmt(SIDScoreParser.EffectVoiceStmtContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectVoice}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectVoice(SIDScoreParser.EffectVoiceContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectVoice}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectVoice(SIDScoreParser.EffectVoiceContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectLengthStmt}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectLengthStmt(SIDScoreParser.EffectLengthStmtContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectLengthStmt}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectLengthStmt(SIDScoreParser.EffectLengthStmtContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectPriorityStmt}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectPriorityStmt(SIDScoreParser.EffectPriorityStmtContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectPriorityStmt}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectPriorityStmt(SIDScoreParser.EffectPriorityStmtContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectRetriggerStmt}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectRetriggerStmt(SIDScoreParser.EffectRetriggerStmtContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectRetriggerStmt}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectRetriggerStmt(SIDScoreParser.EffectRetriggerStmtContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectRetriggerMode}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectRetriggerMode(SIDScoreParser.EffectRetriggerModeContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectRetriggerMode}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectRetriggerMode(SIDScoreParser.EffectRetriggerModeContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectStep}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectStep(SIDScoreParser.EffectStepContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectStep}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectStep(SIDScoreParser.EffectStepContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectTick}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectTick(SIDScoreParser.EffectTickContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectTick}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectTick(SIDScoreParser.EffectTickContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectGroup}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectGroup(SIDScoreParser.EffectGroupContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectGroup}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectGroup(SIDScoreParser.EffectGroupContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectAssignment}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectAssignment(SIDScoreParser.EffectAssignmentContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectAssignment}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectAssignment(SIDScoreParser.EffectAssignmentContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectSweep}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectSweep(SIDScoreParser.EffectSweepContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectSweep}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectSweep(SIDScoreParser.EffectSweepContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectSweepParam}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectSweepParam(SIDScoreParser.EffectSweepParamContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectSweepParam}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectSweepParam(SIDScoreParser.EffectSweepParamContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectSweepValue}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectSweepValue(SIDScoreParser.EffectSweepValueContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectSweepValue}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectSweepValue(SIDScoreParser.EffectSweepValueContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#effectSweepCurve}.
+	 * @param ctx the parse tree
+	 */
+	void enterEffectSweepCurve(SIDScoreParser.EffectSweepCurveContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#effectSweepCurve}.
+	 * @param ctx the parse tree
+	 */
+	void exitEffectSweepCurve(SIDScoreParser.EffectSweepCurveContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#numericValue}.
+	 * @param ctx the parse tree
+	 */
+	void enterNumericValue(SIDScoreParser.NumericValueContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#numericValue}.
+	 * @param ctx the parse tree
+	 */
+	void exitNumericValue(SIDScoreParser.NumericValueContext ctx);
+	/**
 	 * Enter a parse tree produced by {@link SIDScoreParser#instrStmt}.
 	 * @param ctx the parse tree
 	 */
