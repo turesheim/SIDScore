@@ -2,9 +2,10 @@
 """Deterministically convert PSID/RSID files to SIDScore.
 
 The converter uses the local ``tools/siddump.py`` register trace as the source
-of truth. Melodic SID voices are emitted as SIDScore music notation on a fixed
-frame grid. NOISE-backed voices and short subtunes are emitted as EFFECT
-timelines with raw SID register values.
+of truth. Simple melodic SID voices are emitted as SIDScore music notation on a
+fixed frame grid. NOISE-backed voices, short subtunes, and voices with
+frame-level SID instrument automation are emitted as EFFECT timelines with raw
+SID register values.
 """
 
 from __future__ import annotations
@@ -409,6 +410,34 @@ def has_noise(wave: int | None) -> bool:
     return wave is not None and bool(wave & 0x80)
 
 
+def voice_has_dynamic_registers(rows: list[DumpRow], voice: int, length_frames: int,
+        grid_frames: int) -> bool:
+    wave_masks: set[int] = set()
+    adsrs: set[tuple[int, int, int, int]] = set()
+    pulses: set[int] = set()
+    previous_wave: int | None = None
+
+    for row in state_rows(rows):
+        if row.frame >= length_frames:
+            break
+        state = row.voices[voice - 1]
+        if state.wave is not None:
+            if has_noise(state.wave):
+                return True
+            wave_mask = state.wave & 0xF0
+            if wave_mask:
+                wave_masks.add(wave_mask)
+            if previous_wave is not None and state.wave != previous_wave and row.frame % grid_frames != 0:
+                return True
+            previous_wave = state.wave
+        if state.adsr is not None and state.adsr != (0, 0, 0, 0):
+            adsrs.add(state.adsr)
+        if state.pulse is not None and state.pulse != 0:
+            pulses.add(state.pulse)
+
+    return len(wave_masks) > 1 or len(adsrs) > 1 or len(pulses) > 1
+
+
 def choose_instrument(rows: list[DumpRow], voice: int) -> VoiceState:
     chosen: VoiceState | None = None
     fallback: VoiceState | None = None
@@ -667,6 +696,7 @@ def convert_sid(args: argparse.Namespace) -> None:
     low_rows: dict[int, list[DumpRow]] = {}
     full_rows: dict[int, list[DumpRow]] = {}
     instruments: dict[tuple[int, int], VoiceState] = {}
+    dynamic_voices: dict[tuple[int, int], bool] = {}
 
     for tune in range(1, header.songs + 1):
         seconds = lengths[tune - 1]
@@ -678,6 +708,8 @@ def convert_sid(args: argparse.Namespace) -> None:
             siddump_path, sid_path, tune, dump_seconds, system, args.grid_frames, lowres=False))
         for voice in range(1, VOICE_COUNT + 1):
             instruments[(tune, voice)] = choose_instrument(full_rows[tune], voice)
+            dynamic_voices[(tune, voice)] = voice_has_dynamic_registers(
+                full_rows[tune], voice, frames, args.grid_frames)
 
     base_id = sid_id(header.title or sid_path.stem)
 
@@ -685,7 +717,9 @@ def convert_sid(args: argparse.Namespace) -> None:
         return tune in effect_tunes or lengths[tune - 1] <= args.effect_threshold
 
     def voice_is_effect(tune: int, voice: int) -> bool:
-        return tune_is_effect_only(tune) or has_noise(instruments[(tune, voice)].wave)
+        return (tune_is_effect_only(tune)
+                or has_noise(instruments[(tune, voice)].wave)
+                or (dynamic_voices[(tune, voice)] and not args.compact_notation))
 
     lines: list[str] = [
         f"; {clean_ascii(header.title or sid_path.stem)} ({sid_display_path})",
@@ -696,7 +730,8 @@ def convert_sid(args: argparse.Namespace) -> None:
         f"flags {hex_value(header.flags)}.",
         f"; Length source: {length_source}; lengths: {' '.join(format_duration(v) for v in lengths)}.",
         f"; Conversion: {args.grid_frames}-frame notation grid, TEMPO {tempo}, "
-        f"SYSTEM {system}, effect threshold <= {args.effect_threshold}s.",
+        f"SYSTEM {system}, effect threshold <= {args.effect_threshold}s, "
+        f"{'compact notation' if args.compact_notation else 'dynamic voices as EFFECT'}.",
     ]
     if hvsc.relative_path:
         lines.append(f"; HVSC path: {hvsc.relative_path}")
@@ -801,6 +836,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Comma/space separated subtunes or ranges to force as EFFECT-only, for example '6,9-12'")
     parser.add_argument("--all-effects", action="store_true",
         help="Emit all voices in all subtunes as EFFECT timelines")
+    parser.add_argument("--compact-notation", action="store_true",
+        help="Keep melodic voices as static-INSTR notation where possible, even if this drops frame-level "
+             "instrument automation")
     return parser
 
 
