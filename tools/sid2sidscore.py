@@ -202,6 +202,10 @@ def raw_md5(path: Path) -> str:
     return hashlib.md5(path.read_bytes()).hexdigest()
 
 
+def same_header_identity(left: SidHeader, right: SidHeader) -> bool:
+    return (left.title, left.author, left.released) == (right.title, right.author, right.released)
+
+
 def find_hvsc_match(sid_path: Path, hvsc_root: Path) -> str | None:
     root = hvsc_root.resolve()
     try:
@@ -209,6 +213,7 @@ def find_hvsc_match(sid_path: Path, hvsc_root: Path) -> str | None:
     except ValueError:
         pass
 
+    target_header = read_sid_header(sid_path)
     target_md5 = raw_md5(sid_path)
     matches: list[str] = []
     for candidate in sorted(root.rglob("*.sid")):
@@ -217,7 +222,20 @@ def find_hvsc_match(sid_path: Path, hvsc_root: Path) -> str | None:
                 matches.append("/" + candidate.resolve().relative_to(root).as_posix())
         except OSError:
             continue
-    return matches[0] if matches else None
+    if matches:
+        return matches[0]
+
+    # Some distributed SIDs are older/subset PSID headers for the same tune.
+    # If the raw file differs, fall back to a narrow basename + metadata match.
+    header_matches: list[str] = []
+    for candidate in sorted(root.rglob(sid_path.name)):
+        try:
+            candidate_header = read_sid_header(candidate)
+            if same_header_identity(target_header, candidate_header) and candidate_header.songs >= target_header.songs:
+                header_matches.append("/" + candidate.resolve().relative_to(root).as_posix())
+        except (OSError, ValueError):
+            continue
+    return header_matches[0] if header_matches else None
 
 
 def read_hvsc_songlengths(songlengths_path: Path, relative_path: str) -> list[int] | None:
