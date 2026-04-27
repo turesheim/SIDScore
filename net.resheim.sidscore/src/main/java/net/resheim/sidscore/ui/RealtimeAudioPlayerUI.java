@@ -1128,10 +1128,13 @@ public final class RealtimeAudioPlayerUI {
 		int songForThread = selectedSong;
 		Thread thread;
 		if (renderer == PlaybackRenderer.VICE) {
+			player = null;
 			thread = new Thread(() -> runVicePlayback(timedForThread, bundleForThread, songForThread),
 					"sidscore-vice-player");
 		} else {
-			thread = new Thread(() -> runSrapPlayback(timedForThread), "sidscore-realtime-player");
+			RealtimeAudioPlayer currentPlayer = new RealtimeAudioPlayer();
+			player = currentPlayer;
+			thread = new Thread(() -> runSrapPlayback(timedForThread, currentPlayer), "sidscore-realtime-player");
 		}
 		thread.setDaemon(true);
 		playThread = thread;
@@ -1139,15 +1142,13 @@ public final class RealtimeAudioPlayerUI {
 		return true;
 	}
 
-	private void runSrapPlayback(SIDScoreIR.TimedScore timed) {
+	private void runSrapPlayback(SIDScoreIR.TimedScore timed, RealtimeAudioPlayer currentPlayer) {
 		playbackStartNanos = -1;
 		playbackStopNanos = -1;
 		viceStopRequested = false;
 		SwingUtilities.invokeLater(this::updateElapsedClock);
 		java.util.concurrent.atomic.AtomicBoolean startMarked = new java.util.concurrent.atomic.AtomicBoolean(false);
 
-		RealtimeAudioPlayer currentPlayer = new RealtimeAudioPlayer();
-		player = currentPlayer;
 		try {
 			currentPlayer.play(timed, (v1, v2, v3, length, sampleRate) -> {
 				if (startMarked.compareAndSet(false, true)) {
