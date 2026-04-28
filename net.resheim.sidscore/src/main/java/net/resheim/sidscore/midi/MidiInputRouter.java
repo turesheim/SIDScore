@@ -50,6 +50,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	private final double[] pitchBendByChannel = new double[17];
 	private long sequence = 0;
 	private volatile boolean closed = false;
+	private volatile boolean suspended = false;
 
 	private MidiInputRouter(MidiDevice device, Transmitter transmitter, Map<Integer, Integer> voiceChannelMap,
 			EventListener eventListener) {
@@ -157,6 +158,30 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		return displayName(device.getDeviceInfo());
 	}
 
+	public boolean isOpen() {
+		return !closed && device.isOpen();
+	}
+
+	public void suspendInput() {
+		synchronized (this) {
+			if (closed) {
+				return;
+			}
+			suspended = true;
+			clearState();
+		}
+	}
+
+	public void resumeInput() {
+		synchronized (this) {
+			if (closed) {
+				return;
+			}
+			clearState();
+			suspended = false;
+		}
+	}
+
 	@Override
 	public boolean controlsVoice(int voiceIndex) {
 		return voiceChannelMap.containsKey(voiceIndex);
@@ -193,8 +218,15 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		device.close();
 	}
 
+	private void clearState() {
+		Arrays.fill(pitchBendByChannel, 0.0);
+		for (int i = 1; i <= 3; i++) {
+			slots[i].clear();
+		}
+	}
+
 	private synchronized void noteOn(int channel, int note, int velocity) {
-		if (closed) {
+		if (closed || suspended) {
 			return;
 		}
 		if (velocity <= 0) {
@@ -222,7 +254,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	}
 
 	private synchronized void noteOff(int channel, int note) {
-		if (closed) {
+		if (closed || suspended) {
 			return;
 		}
 		List<Integer> voices = voicesByChannel.get(channel);
@@ -239,7 +271,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	}
 
 	private synchronized void allNotesOff(int channel) {
-		if (closed) {
+		if (closed || suspended) {
 			return;
 		}
 		List<Integer> voices = voicesByChannel.get(channel);
@@ -253,7 +285,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	}
 
 	private synchronized void pitchBend(int channel, int lsb, int msb) {
-		if (closed) {
+		if (closed || suspended) {
 			return;
 		}
 		int value = (lsb & 0x7F) | ((msb & 0x7F) << 7);
@@ -272,7 +304,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	}
 
 	private void controlChange(int channel, int controller, int value) {
-		if (closed) {
+		if (closed || suspended) {
 			return;
 		}
 		if (controller == 120 || controller == 123) {
@@ -387,7 +419,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	private final class RoutingReceiver implements Receiver {
 		@Override
 		public void send(MidiMessage message, long timeStamp) {
-			if (closed || !(message instanceof ShortMessage shortMessage)) {
+			if (closed || suspended || !(message instanceof ShortMessage shortMessage)) {
 				return;
 			}
 			int channel = shortMessage.getChannel() + 1;
@@ -450,6 +482,19 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 					pitchBendSemitones, sequence));
 			this.velocity = 0;
 			this.gate = false;
+		}
+
+		void clear() {
+			note = -1;
+			velocity = 0;
+			gate = false;
+			pitchBendSemitones = 0.0;
+			sequence = 0;
+			noteOnId = 0;
+			noteOffId = 0;
+			lastNote = -1;
+			lastVelocity = 0;
+			events.clear();
 		}
 
 		RealtimeAudioPlayer.MidiSnapshot snapshot() {

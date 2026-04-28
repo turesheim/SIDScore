@@ -565,7 +565,11 @@ public final class RealtimeAudioPlayerUI {
 			restartMidiMonitor();
 		} else {
 			stopMidiMonitor();
-			closeSharedMidiInput();
+			if (activeRenderer() == PlaybackRenderer.SRAP) {
+				suspendSharedMidiInput();
+			} else {
+				closeSharedMidiInput();
+			}
 		}
 	}
 
@@ -1211,7 +1215,6 @@ public final class RealtimeAudioPlayerUI {
 
 	private void restartMidiMonitor() {
 		stopMidiMonitor();
-		closeSharedMidiInput();
 		startMidiMonitorIfNeeded(false);
 	}
 
@@ -1238,7 +1241,12 @@ public final class RealtimeAudioPlayerUI {
 		synchronized (midiInputLock) {
 			MidiInputRouter existing = sharedMidiInput;
 			if (existing != null && midiConfig.equals(sharedMidiConfig)) {
-				return existing;
+				if (existing.isOpen()) {
+					existing.resumeInput();
+					return existing;
+				}
+				closeSharedMidiInputLocked();
+				appendMessageAsync("MIDI input closed; reconnecting.", MSG_WARN);
 			}
 			closeSharedMidiInputLocked();
 			MidiInputRouter opened = MidiInputRouter.open(midiConfig.deviceSelector(), midiConfig.voiceChannelMap(),
@@ -1252,6 +1260,15 @@ public final class RealtimeAudioPlayerUI {
 	private void closeSharedMidiInput() {
 		synchronized (midiInputLock) {
 			closeSharedMidiInputLocked();
+		}
+	}
+
+	private void suspendSharedMidiInput() {
+		synchronized (midiInputLock) {
+			MidiInputRouter input = sharedMidiInput;
+			if (input != null) {
+				input.suspendInput();
+			}
 		}
 	}
 
