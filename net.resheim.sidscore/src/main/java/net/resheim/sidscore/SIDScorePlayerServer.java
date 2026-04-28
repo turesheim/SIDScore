@@ -16,6 +16,11 @@ import java.net.Socket;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicLong;
@@ -41,17 +46,29 @@ import net.resheim.sidscore.sid.SidModel;
 public final class SIDScorePlayerServer {
 	private static final int DEFAULT_SCOPE_BUCKETS = 64;
 	private static final int OUTBOUND_QUEUE_SIZE = 512;
+	private static final int INSTRUMENT_SOURCE_DEFAULT = 0;
+	private static final int INSTRUMENT_SOURCE_SCORE = 1;
+	private static final int INSTRUMENT_SOURCE_OVERRIDE = 2;
+	private static final SIDScoreIR.InstrumentIR DEFAULT_SERVER_INSTRUMENT =
+			new SIDScoreIR.InstrumentIR("server_default", SIDScoreIR.Wave.PULSE.mask,
+					new SIDScoreIR.AdsrIR(0, 4, 10, 4), OptionalInt.of(0x0800),
+					OptionalInt.of(0x0000), OptionalInt.of(0x0FFF), 0,
+					Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+					0, OptionalInt.empty(), OptionalInt.empty(), Optional.empty(),
+					SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
 
 	private final int requestedPort;
 	private final BlockingQueue<OutboundFrame> outbound = new ArrayBlockingQueue<>(OUTBOUND_QUEUE_SIZE);
 	private final AtomicLong outboundSequence = new AtomicLong(1);
 	private final AtomicLong scoreIds = new AtomicLong(1);
+	private final SIDScoreIR.InstrumentIR[] instrumentOverrides = new SIDScoreIR.InstrumentIR[3];
 
 	private volatile boolean running = true;
 	private volatile int clientCapabilities = SrapProtocol.CAP_ALL;
 	private volatile int playbackState = SrapProtocol.STATE_IDLE;
 	private volatile long currentScoreId = 0;
 	private volatile ScoreMapExporter.ScoreMap currentScoreMap = null;
+	private volatile LoadedScore currentLoadedScore = null;
 	private volatile RealtimeAudioPlayer currentPlayer = null;
 	private volatile Thread currentPlayerThread = null;
 	private volatile boolean stopRequestedByClient = false;
@@ -150,6 +167,7 @@ public final class SIDScorePlayerServer {
 				.str("SIDScore Player Server")
 				.toByteArray();
 		enqueue(SrapProtocol.HELLO_ACK, payload, true);
+		sendAllInstrumentStates(0, true);
 	}
 
 	private void handleCommand(SrapProtocol.Frame frame) {
@@ -159,6 +177,8 @@ public final class SIDScorePlayerServer {
 		case SrapProtocol.PAUSE -> handlePause(frame.payload());
 		case SrapProtocol.CONTINUE -> handleContinue(frame.payload());
 		case SrapProtocol.STOP -> handleStop(frame.payload());
+		case SrapProtocol.SET_INSTRUMENT -> handleSetInstrument(frame.payload());
+		case SrapProtocol.RESET_INSTRUMENT -> handleResetInstrument(frame.payload());
 		default -> enqueueError(0, SrapProtocol.ERR_INVALID_FRAME, "Unsupported frame type: " + frame.type(), true);
 		}
 	}
@@ -216,6 +236,8 @@ public final class SIDScorePlayerServer {
 		stopCurrent(0, false);
 		long scoreId = scoreIds.getAndIncrement();
 		currentScoreId = scoreId;
+		currentLoadedScore = null;
+		currentScoreMap = null;
 		stopRequestedByClient = false;
 		lastVoiceBlockIndex = -1;
 		lastVoiceFrameIndex = 0;
@@ -242,21 +264,29 @@ public final class SIDScorePlayerServer {
 			return;
 		}
 
-		ScoreMapExporter.ScoreMap scoreMap = ScoreMapExporter.build(scoreId, parsed.tree(), parsed.timedScore(),
-				sourceUri, sourcePath);
-		currentScoreMap = scoreMap;
-		if ((clientCapabilities & SrapProtocol.CAP_SCORE_MAP) != 0) {
-			enqueue(SrapProtocol.SCORE_MAP, encodeScoreMap(scoreMap), true);
-		}
-		sendSilentVoiceState(scoreId, true);
-
 		SidModel sidModel = switch (sidModelRaw) {
 		case 2 -> SidModel.MOS8580;
 		default -> SidModel.MOS6581;
 		};
-		RealtimeAudioPlayer player = new RealtimeAudioPlayer(sidModel);
+		LoadedScore loaded = new LoadedScore(sourceUri, sourcePath, parsed.tree(), parsed.timedScore(), sidModel);
+		currentLoadedScore = loaded;
+		startResolvedPlayback(requestId, scoreId, loaded);
+	}
+
+	private void startResolvedPlayback(long requestId, long scoreId, LoadedScore loaded) {
+		SIDScoreIR.TimedScore timed = applyInstrumentOverrides(loaded.timedScore());
+		ScoreMapExporter.ScoreMap scoreMap = ScoreMapExporter.build(scoreId, loaded.tree(), timed,
+				loaded.sourceUri(), loaded.sourcePath());
+		currentScoreMap = scoreMap;
+		if ((clientCapabilities & SrapProtocol.CAP_SCORE_MAP) != 0) {
+			enqueue(SrapProtocol.SCORE_MAP, encodeScoreMap(scoreMap), true);
+		}
+		sendAllInstrumentStates(requestId, true);
+		sendSilentVoiceState(scoreId, true);
+
+		RealtimeAudioPlayer player = new RealtimeAudioPlayer(loaded.sidModel());
 		currentPlayer = player;
-		Thread thread = new Thread(() -> runPlayer(requestId, scoreId, player, parsed.timedScore()),
+		Thread thread = new Thread(() -> runPlayer(requestId, scoreId, player, timed),
 				"sidscore-srap-player");
 		currentPlayerThread = thread;
 		thread.start();
@@ -297,6 +327,58 @@ public final class SIDScorePlayerServer {
 		long requestId = SrapProtocol.reader(payload).u32();
 		stopRequestedByClient = true;
 		stopCurrent(requestId, true);
+	}
+
+	private void handleSetInstrument(byte[] payload) {
+		SrapProtocol.PayloadReader in = SrapProtocol.reader(payload);
+		long requestId = in.u32();
+		int voiceIndex = in.u8();
+		if (!isValidVoiceIndex(voiceIndex)) {
+			enqueueError(requestId, SrapProtocol.ERR_INVALID_FRAME, "Instrument voice index must be 1..3", true);
+			return;
+		}
+		SIDScoreIR.InstrumentIR instrument = decodeInstrument(voiceIndex, in);
+		instrumentOverrides[voiceIndex - 1] = instrument;
+		sendInstrumentState(requestId, voiceIndex, true);
+		restartLoadedScoreIfActive(requestId);
+	}
+
+	private void handleResetInstrument(byte[] payload) {
+		SrapProtocol.PayloadReader in = SrapProtocol.reader(payload);
+		long requestId = in.u32();
+		int voiceIndex = in.u8();
+		if (!isValidVoiceIndex(voiceIndex)) {
+			enqueueError(requestId, SrapProtocol.ERR_INVALID_FRAME, "Instrument voice index must be 1..3", true);
+			return;
+		}
+		instrumentOverrides[voiceIndex - 1] = null;
+		sendInstrumentState(requestId, voiceIndex, true);
+		restartLoadedScoreIfActive(requestId);
+	}
+
+	private void restartLoadedScoreIfActive(long requestId) {
+		int state = playbackState;
+		if (state != SrapProtocol.STATE_PLAYING && state != SrapProtocol.STATE_PAUSED) {
+			return;
+		}
+		LoadedScore loaded = currentLoadedScore;
+		if (loaded == null) {
+			return;
+		}
+		stopRequestedByClient = true;
+		stopCurrent(0, false);
+
+		long scoreId = scoreIds.getAndIncrement();
+		currentScoreId = scoreId;
+		stopRequestedByClient = false;
+		lastVoiceBlockIndex = -1;
+		lastVoiceFrameIndex = 0;
+		lastVoiceSampleRate = 44100.0f;
+		resetHighlightIds();
+		sendPlaybackState(requestId, SrapProtocol.STATE_LOADING, SrapProtocol.REASON_CLIENT_REQUEST, scoreId, 0, 0,
+				true);
+		sendSilentVoiceState(scoreId, true);
+		startResolvedPlayback(requestId, scoreId, loaded);
 	}
 
 	private void runPlayer(long requestId, long scoreId, RealtimeAudioPlayer player, SIDScoreIR.TimedScore timed) {
@@ -388,6 +470,161 @@ public final class SIDScorePlayerServer {
 		SIDScoreIR.ScoreIR scoreIR = builder.buildScoreIR();
 		SIDScoreIR.Resolver.Result resolved = new SIDScoreIR.Resolver().resolve(scoreIR);
 		return new ParsedScore(tree, resolved.timedScore());
+	}
+
+	private SIDScoreIR.InstrumentIR decodeInstrument(int voiceIndex, SrapProtocol.PayloadReader in) {
+		int waveMask = normalizeWaveMask(in.u8());
+		int attack = clamp(in.u8(), 0, 15);
+		int decay = clamp(in.u8(), 0, 15);
+		int sustain = clamp(in.u8(), 0, 15);
+		int release = clamp(in.u8(), 0, 15);
+		int pulseWidth = clamp(in.u16(), 0, 0x0FFF);
+		int pulseSweep = clamp(in.i16(), -128, 128);
+		int pulseMin = clamp(in.u16(), 0, 0x0FFF);
+		int pulseMax = clamp(in.u16(), 0, 0x0FFF);
+		if (pulseMin > pulseMax) {
+			int tmp = pulseMin;
+			pulseMin = pulseMax;
+			pulseMax = tmp;
+		}
+		int filterModeMask = in.u8() & 0x07;
+		int filterCutoff = clamp(in.u16(), 0, 0x07FF);
+		int filterResonance = clamp(in.u8(), 0, 15);
+		SIDScoreIR.InstrumentGateMode gateMode = in.u8() == 1
+				? SIDScoreIR.InstrumentGateMode.LEGATO
+				: SIDScoreIR.InstrumentGateMode.RETRIGGER;
+		int gateMin = clamp(in.u8(), 0, 16);
+		boolean sync = in.u8() != 0;
+		boolean ring = in.u8() != 0;
+		String name = in.str();
+
+		if ((waveMask & SIDScoreIR.Wave.NOISE.mask) != 0) {
+			ring = false;
+		} else if (ring && (waveMask & SIDScoreIR.Wave.TRI.mask) == 0) {
+			waveMask |= SIDScoreIR.Wave.TRI.mask;
+		}
+		if (name == null || name.isBlank()) {
+			name = "server_voice_" + voiceIndex;
+		}
+
+		OptionalInt cutoff = filterModeMask != 0 ? OptionalInt.of(filterCutoff) : OptionalInt.empty();
+		OptionalInt resonance = filterModeMask != 0 ? OptionalInt.of(filterResonance) : OptionalInt.empty();
+		return new SIDScoreIR.InstrumentIR(name, waveMask,
+				new SIDScoreIR.AdsrIR(attack, decay, sustain, release),
+				OptionalInt.of(pulseWidth), OptionalInt.of(pulseMin), OptionalInt.of(pulseMax), pulseSweep,
+				Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+				filterModeMask, cutoff, resonance, Optional.empty(), gateMode, gateMin, sync, ring);
+	}
+
+	private SIDScoreIR.TimedScore applyInstrumentOverrides(SIDScoreIR.TimedScore score) {
+		boolean hasOverrides = false;
+		for (SIDScoreIR.InstrumentIR override : instrumentOverrides) {
+			if (override != null) {
+				hasOverrides = true;
+				break;
+			}
+		}
+		if (!hasOverrides) {
+			return score;
+		}
+		Map<Integer, SIDScoreIR.TimedVoice> voices = new LinkedHashMap<>(score.voices());
+		for (int voiceIndex = 1; voiceIndex <= 3; voiceIndex++) {
+			SIDScoreIR.InstrumentIR override = instrumentOverrides[voiceIndex - 1];
+			if (override == null) {
+				continue;
+			}
+			SIDScoreIR.TimedVoice existing = voices.get(voiceIndex);
+			List<SIDScoreIR.TimedEvent> events = existing != null ? existing.events() : List.of();
+			voices.put(voiceIndex, new SIDScoreIR.TimedVoice(voiceIndex, override, events));
+		}
+		return new SIDScoreIR.TimedScore(score.title(), score.author(), score.released(),
+				score.tempoBpm(), score.ticksPerWhole(), score.defaultSwing(), score.system(),
+				score.tables(), score.effects(), voices, score.subtunes());
+	}
+
+	private void sendAllInstrumentStates(long requestId, boolean critical) {
+		for (int voiceIndex = 1; voiceIndex <= 3; voiceIndex++) {
+			sendInstrumentState(requestId, voiceIndex, critical);
+		}
+	}
+
+	private void sendInstrumentState(long requestId, int voiceIndex, boolean critical) {
+		if ((clientCapabilities & SrapProtocol.CAP_INSTRUMENT_STATE) == 0) {
+			return;
+		}
+		InstrumentState state = effectiveInstrumentState(voiceIndex);
+		enqueue(SrapProtocol.INSTRUMENT_STATE,
+				encodeInstrumentState(requestId, voiceIndex, state.source(), state.instrument()), critical);
+	}
+
+	private InstrumentState effectiveInstrumentState(int voiceIndex) {
+		SIDScoreIR.InstrumentIR override = instrumentOverrides[voiceIndex - 1];
+		if (override != null) {
+			return new InstrumentState(INSTRUMENT_SOURCE_OVERRIDE, override);
+		}
+		LoadedScore loaded = currentLoadedScore;
+		if (loaded != null) {
+			SIDScoreIR.TimedVoice voice = loaded.timedScore().voices().get(voiceIndex);
+			if (voice != null && voice.instrument() != null) {
+				return new InstrumentState(INSTRUMENT_SOURCE_SCORE, voice.instrument());
+			}
+		}
+		return new InstrumentState(INSTRUMENT_SOURCE_DEFAULT, DEFAULT_SERVER_INSTRUMENT);
+	}
+
+	private byte[] encodeInstrumentState(long requestId, int voiceIndex, int source,
+			SIDScoreIR.InstrumentIR instrument) {
+		SrapProtocol.PayloadWriter out = SrapProtocol.payload()
+				.u32(requestId)
+				.u8(voiceIndex)
+				.u8(source)
+				.u16(0);
+		writeInstrumentFields(out, instrument);
+		return out.toByteArray();
+	}
+
+	private static void writeInstrumentFields(SrapProtocol.PayloadWriter out, SIDScoreIR.InstrumentIR instrument) {
+		int filterModeMask = instrument.filterModeMask() & 0x07;
+		out.u8(instrument.waveMask() & 0x0F)
+				.u8(clamp(instrument.adsr().a(), 0, 15))
+				.u8(clamp(instrument.adsr().d(), 0, 15))
+				.u8(clamp(instrument.adsr().s(), 0, 15))
+				.u8(clamp(instrument.adsr().r(), 0, 15))
+				.u16(clamp(instrument.pw().orElse(0x0800), 0, 0x0FFF))
+				.i16(clamp(instrument.pwSweep(), -128, 128))
+				.u16(clamp(instrument.pwMin().orElse(0x0000), 0, 0x0FFF))
+				.u16(clamp(instrument.pwMax().orElse(0x0FFF), 0, 0x0FFF))
+				.u8(filterModeMask)
+				.u16(filterModeMask != 0 ? clamp(instrument.filterCutoff().orElse(0), 0, 0x07FF) : 0)
+				.u8(filterModeMask != 0 ? clamp(instrument.filterRes().orElse(0), 0, 15) : 0)
+				.u8(instrument.gateMode() == SIDScoreIR.InstrumentGateMode.LEGATO ? 1 : 0)
+				.u8(clamp(instrument.gateMin(), 0, 16))
+				.u8(instrument.sync() ? 1 : 0)
+				.u8(instrument.ring() ? 1 : 0)
+				.str(instrument.name());
+	}
+
+	private static int normalizeWaveMask(int waveMask) {
+		if ((waveMask & SIDScoreIR.Wave.NOISE.mask) != 0) {
+			return SIDScoreIR.Wave.NOISE.mask;
+		}
+		int nonNoise = waveMask & (SIDScoreIR.Wave.TRI.mask | SIDScoreIR.Wave.SAW.mask
+				| SIDScoreIR.Wave.PULSE.mask);
+		return nonNoise != 0 ? nonNoise : SIDScoreIR.Wave.PULSE.mask;
+	}
+
+	private static boolean isValidVoiceIndex(int voiceIndex) {
+		return voiceIndex >= 1 && voiceIndex <= 3;
+	}
+
+	private static int clamp(int value, int min, int max) {
+		if (value < min) {
+			return min;
+		}
+		if (value > max) {
+			return max;
+		}
+		return value;
 	}
 
 	private byte[] encodeScoreMap(ScoreMapExporter.ScoreMap map) {
@@ -659,6 +896,13 @@ public final class SIDScorePlayerServer {
 	}
 
 	private record ParsedScore(SIDScoreParser.FileContext tree, SIDScoreIR.TimedScore timedScore) {
+	}
+
+	private record LoadedScore(String sourceUri, Path sourcePath, SIDScoreParser.FileContext tree,
+			SIDScoreIR.TimedScore timedScore, SidModel sidModel) {
+	}
+
+	private record InstrumentState(int source, SIDScoreIR.InstrumentIR instrument) {
 	}
 
 	private record OutboundFrame(int type, byte[] payload, boolean poison) {

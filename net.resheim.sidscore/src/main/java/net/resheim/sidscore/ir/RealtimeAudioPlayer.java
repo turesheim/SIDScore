@@ -77,6 +77,11 @@ public final class RealtimeAudioPlayer {
 			new SIDScoreIR.AdsrIR(0, 0, 0, 0), OptionalInt.empty(), OptionalInt.empty(), OptionalInt.empty(), 0,
 			Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), 0, OptionalInt.empty(),
 			OptionalInt.empty(), Optional.empty(), SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
+	private static final SIDScoreIR.InstrumentIR DEFAULT_MIDI_INSTR = new SIDScoreIR.InstrumentIR("midi",
+			SIDScoreIR.Wave.PULSE.mask, new SIDScoreIR.AdsrIR(0, 4, 10, 4), OptionalInt.of(0x0800),
+			OptionalInt.empty(), OptionalInt.empty(), 0, Optional.empty(), Optional.empty(), Optional.empty(),
+			Optional.empty(), 0, OptionalInt.empty(), OptionalInt.empty(), Optional.empty(),
+			SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
 	private final AtomicBoolean stopRequested = new AtomicBoolean(false);
 	private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
 	private volatile SourceDataLine activeLine = null;
@@ -104,6 +109,32 @@ public final class RealtimeAudioPlayer {
 		void onBlock(PlaybackBlock block);
 	}
 
+	public interface MidiSource {
+		boolean controlsVoice(int voiceIndex);
+
+		MidiSnapshot snapshot(int voiceIndex);
+
+		default List<MidiEvent> drainEvents(int voiceIndex) {
+			return List.of();
+		}
+	}
+
+	public static final record MidiEvent(int note, int velocity, boolean gate, double pitchBendSemitones, long id) {
+	}
+
+	public static final record MidiSnapshot(int note, int velocity, boolean gate, double pitchBendSemitones,
+			long noteOnId, long noteOffId) {
+		private static final MidiSnapshot OFF = new MidiSnapshot(-1, 0, false, 0.0, 0, 0);
+
+		public static MidiSnapshot off() {
+			return OFF;
+		}
+
+		public boolean active() {
+			return gate && note >= 0 && velocity > 0;
+		}
+	}
+
 	public static final record PlaybackBlock(long blockIndex, long frameIndex, float sampleRate,
 			VoiceSnapshot[] voices, float[][] samples, int length) {
 	}
@@ -114,11 +145,15 @@ public final class RealtimeAudioPlayer {
 	}
 
 	public void play(SIDScoreIR.TimedScore score) throws LineUnavailableException {
-		play(score, null, null);
+		render(score, null, true, null, null, null);
+	}
+
+	public void play(SIDScoreIR.TimedScore score, MidiSource midiSource) throws LineUnavailableException {
+		render(score, null, true, null, null, midiSource);
 	}
 
 	public void play(SIDScoreIR.TimedScore score, Path wavOut) throws LineUnavailableException {
-		render(score, wavOut, true, null, null);
+		render(score, wavOut, true, null, null, null);
 	}
 
 	public void play(SIDScoreIR.TimedScore score, SampleListener listener) throws LineUnavailableException {
@@ -126,11 +161,16 @@ public final class RealtimeAudioPlayer {
 	}
 
 	public void play(SIDScoreIR.TimedScore score, Path wavOut, SampleListener listener) throws LineUnavailableException {
-		render(score, wavOut, true, listener, null);
+		render(score, wavOut, true, listener, null, null);
+	}
+
+	public void play(SIDScoreIR.TimedScore score, SampleListener listener, MidiSource midiSource)
+			throws LineUnavailableException {
+		render(score, null, true, listener, null, midiSource);
 	}
 
 	public void playWithTelemetry(SIDScoreIR.TimedScore score, PlaybackListener listener) throws LineUnavailableException {
-		render(score, null, true, null, listener);
+		render(score, null, true, null, listener, null);
 	}
 
 	public void renderToWav(SIDScoreIR.TimedScore score, Path wavOut) {
@@ -142,7 +182,7 @@ public final class RealtimeAudioPlayer {
 			throw new IllegalArgumentException("wavOut is required");
 		}
 		try {
-			render(score, wavOut, false, listener, null);
+			render(score, wavOut, false, listener, null, null);
 		} catch (LineUnavailableException e) {
 			e.printStackTrace();
 		}
@@ -171,7 +211,7 @@ public final class RealtimeAudioPlayer {
 	}
 
 	private void render(SIDScoreIR.TimedScore score, Path wavOut, boolean playAudio, SampleListener listener,
-			PlaybackListener playbackListener)
+			PlaybackListener playbackListener, MidiSource midiSource)
 			throws LineUnavailableException {
 		pauseRequested.set(false);
 		AudioFormat fmt = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
@@ -192,14 +232,26 @@ public final class RealtimeAudioPlayer {
 			FilterRuntime filter = new FilterRuntime(frameRate);
 			RuntimeVoice[] vr = new RuntimeVoice[3];
 			for (int i = 0; i < 3; i++) {
+				int voiceIndex = i + 1;
 				var tv = score.voices().get(i + 1);
-				List<FrameEventCompiler.FrameEvent> events = FrameEventCompiler.compileVoice(tv, score);
-				if (tv == null) {
-					vr[i] = new VoiceRuntime(SILENT_INSTR, events, sidClockHz, frameRate, score.tables(), filter,
+				SIDScoreIR.InstrumentIR instrument = tv != null ? tv.instrument() : DEFAULT_MIDI_INSTR;
+				RuntimeVoice primary;
+				boolean midiControlsVoice = midiSource != null && midiSource.controlsVoice(voiceIndex);
+				if (midiControlsVoice || tv == null) {
+					List<FrameEventCompiler.FrameEvent> events = FrameEventCompiler.compileVoice(null, score);
+					primary = new VoiceRuntime(SILENT_INSTR, events, sidClockHz, frameRate, score.tables(), filter,
 							waveTables);
 				} else {
-					vr[i] = new VoiceRuntime(tv.instrument(), events, sidClockHz, frameRate, score.tables(), filter,
+					List<FrameEventCompiler.FrameEvent> events = FrameEventCompiler.compileVoice(tv, score);
+					primary = new VoiceRuntime(instrument, events, sidClockHz, frameRate, score.tables(), filter,
 							waveTables);
+				}
+				if (midiControlsVoice) {
+					RuntimeVoice midiRuntime = new MidiRuntime(voiceIndex, instrument, midiSource, sidClockHz,
+							frameRate, score.tables(), filter, waveTables);
+					vr[i] = new SharedTimelineRuntimeVoice(primary, midiRuntime);
+				} else {
+					vr[i] = primary;
 				}
 			}
 			if (!score.effects().isEmpty()) {
@@ -231,7 +283,9 @@ public final class RealtimeAudioPlayer {
 			}
 			for (int i = 0; i < 3; i++) {
 				var tv = score.voices().get(i + 1);
-				if (tv != null && tv.instrument().ring()) {
+				SIDScoreIR.InstrumentIR instrument = tv != null ? tv.instrument()
+						: (midiSource != null && midiSource.controlsVoice(i + 1) ? DEFAULT_MIDI_INSTR : null);
+				if (instrument != null && instrument.ring()) {
 					oversample = Math.max(oversample, OVERSAMPLE_RING);
 				}
 			}
@@ -536,6 +590,629 @@ public final class RealtimeAudioPlayer {
 		@Override
 		public VoiceSnapshot snapshot(int voiceIndex) {
 			return effect.ownsVoice() ? effect.snapshot(voiceIndex) : primary.snapshot(voiceIndex);
+		}
+	}
+
+	static final class MidiRuntime implements RuntimeVoice {
+		private static final double RELEASE_SILENCE = 1.0e-4;
+		private static final double MIN_TRIGGER_SECONDS = 0.025;
+
+		private final int voiceIndex;
+		private final SIDScoreIR.InstrumentIR instr;
+		private final MidiSource midiSource;
+		private final double sidClockHz;
+		private final double frameRate;
+		private final Osc osc;
+		private final Env env = new Env();
+		private final FilterRuntime filter;
+		private final int waveMask;
+		private final boolean filterRoute;
+		private final int filterModeMask;
+		private final int filterCutoff;
+		private final int filterRes;
+		private final SIDScoreIR.TableIR filterTable;
+		private final SIDScoreIR.TableIR pwTable;
+		private final SIDScoreIR.TableIR waveTable;
+		private final SIDScoreIR.TableIR gateTable;
+		private final SIDScoreIR.TableIR pitchTable;
+
+		private boolean gateOn = false;
+		private boolean active = false;
+		private boolean keyHeld = false;
+		private boolean sync;
+		private boolean ring;
+		private int activeWaveMask = 0;
+		private int pw = 0x0800;
+		private int pwMin = 0x0000;
+		private int pwMax = 0x0FFF;
+		private int pwSweep = 0;
+		private int pwSamplesLeft = 0;
+		private double pwSampleRemainder = 0.0;
+		private int pwStep = 0;
+		private boolean pwHolding = false;
+		private int waveStep = 0;
+		private int waveSamplesLeft = 0;
+		private double waveSampleRemainder = 0.0;
+		private boolean waveHolding = false;
+		private int gateStep = 0;
+		private int gateSamplesLeft = 0;
+		private double gateSampleRemainder = 0.0;
+		private boolean gateHolding = false;
+		private int pitchStep = 0;
+		private int pitchSamplesLeft = 0;
+		private double pitchSampleRemainder = 0.0;
+		private boolean pitchHolding = false;
+		private int currentMidi = -1;
+		private int noteBaseMidi = -1;
+		private int pitchOffset = 0;
+		private double currentBend = 0.0;
+		private int currentFreqReg = 0;
+		private double velocityScale = 1.0;
+		private double lastEnvelopeLevel = 0.0;
+		private double lastOutputLevel = 0.0;
+		private long seenNoteOnId = 0;
+		private long seenNoteOffId = 0;
+		private int pendingReleaseSamples = 0;
+
+		MidiRuntime(int voiceIndex, SIDScoreIR.InstrumentIR instr, MidiSource midiSource, double sidClockHz,
+				double frameRate, java.util.Map<String, SIDScoreIR.TableIR> tables, FilterRuntime filter,
+				SidWaveforms.TableSet waveTables) {
+			this.voiceIndex = voiceIndex;
+			this.instr = instr != null ? instr : DEFAULT_MIDI_INSTR;
+			this.midiSource = midiSource;
+			this.sidClockHz = sidClockHz;
+			this.frameRate = frameRate;
+			this.filter = filter;
+			this.osc = new Osc(waveTables);
+			this.waveMask = this.instr.waveMask();
+			this.sync = this.instr.sync();
+			this.ring = this.instr.ring();
+			this.filterModeMask = this.instr.filterModeMask();
+			this.filterRoute = filterModeMask != 0;
+			this.filterCutoff = this.instr.filterCutoff().orElse(0);
+			this.filterRes = this.instr.filterRes().orElse(0);
+			this.filterTable = this.instr.filterSeq().isPresent() ? tables.get(this.instr.filterSeq().get()) : null;
+			this.pwTable = this.instr.pwSeq().isPresent() ? tables.get(this.instr.pwSeq().get()) : null;
+			this.waveTable = this.instr.waveSeq().isPresent() ? tables.get(this.instr.waveSeq().get()) : null;
+			this.gateTable = this.instr.gateSeq().isPresent() ? tables.get(this.instr.gateSeq().get()) : null;
+			this.pitchTable = this.instr.pitchSeq().isPresent() ? tables.get(this.instr.pitchSeq().get()) : null;
+			env.setAdsr(this.instr.adsr().a(), this.instr.adsr().d(), this.instr.adsr().s(), this.instr.adsr().r());
+		}
+
+		@Override
+		public boolean done() {
+			return false;
+		}
+
+		@Override
+		public boolean ownsVoice() {
+			return gateOn || active || lastEnvelopeLevel > RELEASE_SILENCE;
+		}
+
+		@Override
+		public boolean filterRoute() {
+			return filterRoute;
+		}
+
+		@Override
+		public void prepareSample(float sr) {
+			List<MidiEvent> events = midiSource.drainEvents(voiceIndex);
+			for (MidiEvent event : events) {
+				if (event.gate()) {
+					seenNoteOnId = Math.max(seenNoteOnId, event.id());
+					keyHeld = true;
+					pendingReleaseSamples = 0;
+					velocityScale = Math.max(0.0, Math.min(1.0, event.velocity() / 127.0));
+					startNote(clampMidi(event.note()), event.pitchBendSemitones(), sr);
+				} else if (currentMidi < 0 || event.note() == currentMidi) {
+					seenNoteOffId = Math.max(seenNoteOffId, event.id());
+					keyHeld = false;
+					pendingReleaseSamples = Math.max(pendingReleaseSamples, minTriggerSamples(sr));
+				}
+			}
+
+			MidiSnapshot snapshot = midiSource.snapshot(voiceIndex);
+			if (snapshot.noteOnId() > seenNoteOnId && snapshot.note() >= 0 && snapshot.velocity() > 0) {
+				seenNoteOnId = snapshot.noteOnId();
+				keyHeld = snapshot.gate();
+				velocityScale = Math.max(0.0, Math.min(1.0, snapshot.velocity() / 127.0));
+				startNote(clampMidi(snapshot.note()), snapshot.pitchBendSemitones(), sr);
+				if (!snapshot.gate() && snapshot.noteOffId() >= snapshot.noteOnId()) {
+					seenNoteOffId = Math.max(seenNoteOffId, snapshot.noteOffId());
+					pendingReleaseSamples = Math.max(pendingReleaseSamples, minTriggerSamples(sr));
+				} else {
+					pendingReleaseSamples = 0;
+				}
+				return;
+			}
+
+			if (pendingReleaseSamples > 0) {
+				pendingReleaseSamples--;
+				if (pendingReleaseSamples == 0 && !snapshot.gate()) {
+					releaseGate();
+				}
+			}
+
+			if (!snapshot.active()) {
+				keyHeld = false;
+				if (snapshot.noteOffId() > seenNoteOffId) {
+					seenNoteOffId = snapshot.noteOffId();
+				}
+				if (pendingReleaseSamples <= 0) {
+					releaseGate();
+				}
+				return;
+			}
+
+			keyHeld = true;
+			int midi = clampMidi(snapshot.note());
+			double bend = snapshot.pitchBendSemitones();
+			boolean noteChanged = currentMidi != midi;
+			boolean bendChanged = Math.abs(currentBend - bend) > 0.0001;
+			velocityScale = Math.max(0.0, Math.min(1.0, snapshot.velocity() / 127.0));
+			if (noteChanged) {
+				startNote(midi, bend, sr);
+			} else if (bendChanged) {
+				currentBend = bend;
+				applyFrequency(sr);
+			}
+		}
+
+		@Override
+		public OscState advanceOsc(float sr) {
+			if (!ownsVoice()) {
+				return OscState.OFF;
+			}
+			return osc.advance(sr);
+		}
+
+		@Override
+		public void applySync(boolean modRise) {
+			if (ownsVoice() && sync && modRise) {
+				osc.syncReset();
+			}
+		}
+
+		@Override
+		public double renderSample(float sr, boolean modMsb) {
+			if (!ownsVoice()) {
+				lastOutputLevel = 0.0;
+				return 0.0;
+			}
+			advanceGateSeq(sr);
+			advanceWaveSeq(sr);
+			advancePwm(sr);
+			advancePitchSeq(sr);
+			osc.setPulseWidth(pw);
+			double e = env.next(sr);
+			double o = activeWaveMask != 0 ? osc.output(activeWaveMask, ring, modMsb) : 0.0;
+			double out = MIX_GAIN * velocityScale * e * o;
+			lastEnvelopeLevel = e;
+			lastOutputLevel = Math.abs(out);
+			active = gateOn || e > RELEASE_SILENCE || (keyHeld && active);
+			if (!active) {
+				currentFreqReg = 0;
+				currentMidi = -1;
+				noteBaseMidi = -1;
+				pitchOffset = 0;
+			}
+			return out;
+		}
+
+		@Override
+		public VoiceSnapshot snapshot(int voiceIndex) {
+			int noteKind = 0;
+			int noteLetter = 255;
+			int accidental = 0;
+			int octave = 0;
+			if (currentMidi >= 0 && ownsVoice()) {
+				noteKind = 1;
+				int baseMidi = noteBaseMidi >= 0 ? noteBaseMidi : currentMidi;
+				NoteParts note = noteParts(clampMidi((int) Math.round(baseMidi + pitchOffset + currentBend)));
+				noteLetter = note.letter;
+				accidental = note.accidental;
+				octave = note.octave;
+			}
+
+			int flags = 0;
+			if (ownsVoice())
+				flags |= 1;
+			if (gateOn)
+				flags |= 1 << 1;
+			if (sync)
+				flags |= 1 << 2;
+			if (ring)
+				flags |= 1 << 3;
+			if (filterRoute)
+				flags |= 1 << 4;
+			if (pwTable != null && !pwTable.steps().isEmpty())
+				flags |= 1 << 6;
+			if (waveTable != null && !waveTable.steps().isEmpty())
+				flags |= 1 << 7;
+			if (pitchTable != null && !pitchTable.steps().isEmpty())
+				flags |= 1 << 8;
+			if (gateTable != null && !gateTable.steps().isEmpty())
+				flags |= 1 << 9;
+
+			return new VoiceSnapshot(voiceIndex, noteKind, noteLetter, accidental, octave, activeWaveMask, flags,
+					currentFreqReg & 0xFFFF, pw & 0x0FFF, pitchOffset + (int) Math.round(currentBend),
+					(float) clamp01(lastEnvelopeLevel), (float) clamp01(lastOutputLevel / Math.max(0.0001, MIX_GAIN)));
+		}
+
+		private void startNote(int midi, double bend, float sr) {
+			currentMidi = midi;
+			noteBaseMidi = midi;
+			pitchOffset = 0;
+			currentBend = bend;
+			sync = instr.sync();
+			ring = instr.ring();
+			resetPwm(sr);
+			resetWaveSeq(sr);
+			resetGateSeq();
+			resetPitchSeq(sr);
+			osc.setWaveMask(activeWaveMask, OptionalInt.of(pw));
+			applyFrequency(sr);
+			if (filterRoute) {
+				filter.activate(filterModeMask, filterCutoff, filterRes, filterTable, sr);
+			}
+			active = true;
+			if (gateTable != null && !gateTable.steps().isEmpty()) {
+				primeGateSeq(sr);
+			} else {
+				triggerGate(sr, true);
+			}
+		}
+
+		private void releaseGate() {
+			if (gateOn) {
+				env.noteOff();
+				gateOn = false;
+			}
+		}
+
+		private void applyFrequency(float sr) {
+			if (currentMidi < 0) {
+				currentFreqReg = 0;
+				osc.setFreq(0.0, sr);
+				return;
+			}
+			int baseMidi = noteBaseMidi >= 0 ? noteBaseMidi : currentMidi;
+			double midi = Math.max(0.0, Math.min(127.0, baseMidi + pitchOffset + currentBend));
+			currentFreqReg = RealtimeAudioPlayer.freqRegFromMidi(midi, sidClockHz);
+			osc.setFreq(RealtimeAudioPlayer.freqRegToHz(currentFreqReg, sidClockHz), sr);
+		}
+
+		private void resetPwm(float sr) {
+			pw = instr.pw().orElse(0x0800) & 0x0FFF;
+			pwSweep = instr.pwSweep();
+			pwSamplesLeft = 0;
+			pwSampleRemainder = 0.0;
+			pwStep = 0;
+			pwHolding = false;
+			if (pwTable != null && !pwTable.steps().isEmpty()) {
+				pwMin = 0x0000;
+				pwMax = 0x0FFF;
+				loadPwTableStep(sr);
+				return;
+			}
+			pwMin = instr.pwMin().isPresent() ? (instr.pwMin().getAsInt() & 0x0FFF) : 0x0000;
+			pwMax = instr.pwMax().isPresent() ? (instr.pwMax().getAsInt() & 0x0FFF) : 0x0FFF;
+			if (pwMin > pwMax) {
+				int tmp = pwMin;
+				pwMin = pwMax;
+				pwMax = tmp;
+			}
+			pw = clampPw(pw);
+			if (pwSweep != 0) {
+				setPwSamplesLeft(1, sr);
+			}
+		}
+
+		private void advancePwm(float sr) {
+			if (!active)
+				return;
+			if (pwTable != null && !pwTable.steps().isEmpty()) {
+				if (pwHolding)
+					return;
+				if (pwSamplesLeft > 0) {
+					pwSamplesLeft--;
+					if (pwSamplesLeft > 0)
+						return;
+				}
+				loadPwTableStep(sr);
+				return;
+			}
+			if (pwSweep == 0)
+				return;
+			if (pwSamplesLeft > 0) {
+				pwSamplesLeft--;
+				if (pwSamplesLeft > 0)
+					return;
+			}
+			pw = clampPw(pw + pwSweep);
+			setPwSamplesLeft(1, sr);
+		}
+
+		private void resetWaveSeq(float sr) {
+			waveStep = 0;
+			waveSamplesLeft = 0;
+			waveSampleRemainder = 0.0;
+			waveHolding = false;
+			activeWaveMask = waveMask;
+			if (waveTable != null && !waveTable.steps().isEmpty()) {
+				loadWaveTableStep(sr);
+			}
+		}
+
+		private void resetGateSeq() {
+			gateStep = 0;
+			gateSamplesLeft = 0;
+			gateSampleRemainder = 0.0;
+			gateHolding = false;
+		}
+
+		private void primeGateSeq(float sr) {
+			SIDScoreIR.TableStepIR step = gateTable.steps().get(0);
+			applyGateValue(step.value() != 0, sr, true);
+			if (step.hold() || step.durationFrames() <= 0) {
+				gateHolding = true;
+				gateSamplesLeft = 0;
+			} else {
+				setGateSamplesLeft(step.durationFrames(), sr);
+			}
+			gateStep = 1;
+		}
+
+		private void resetPitchSeq(float sr) {
+			pitchStep = 0;
+			pitchSamplesLeft = 0;
+			pitchSampleRemainder = 0.0;
+			pitchHolding = false;
+			pitchOffset = 0;
+			noteBaseMidi = currentMidi;
+			if (pitchTable != null && !pitchTable.steps().isEmpty()) {
+				loadPitchTableStep(sr);
+			} else {
+				applyFrequency(sr);
+			}
+		}
+
+		private void advanceWaveSeq(float sr) {
+			if (!active || waveTable == null || waveTable.steps().isEmpty() || waveHolding)
+				return;
+			if (waveSamplesLeft > 0) {
+				waveSamplesLeft--;
+				if (waveSamplesLeft > 0)
+					return;
+			}
+			loadWaveTableStep(sr);
+			osc.setWaveMask(activeWaveMask, OptionalInt.of(pw));
+		}
+
+		private void advanceGateSeq(float sr) {
+			if (!active || gateTable == null || gateTable.steps().isEmpty() || gateHolding)
+				return;
+			if (gateSamplesLeft > 0) {
+				gateSamplesLeft--;
+				if (gateSamplesLeft > 0)
+					return;
+			}
+			loadGateTableStep(sr);
+		}
+
+		private void advancePitchSeq(float sr) {
+			if (!active || currentMidi < 0 || pitchTable == null || pitchTable.steps().isEmpty() || pitchHolding)
+				return;
+			if (pitchSamplesLeft > 0) {
+				pitchSamplesLeft--;
+				if (pitchSamplesLeft > 0)
+					return;
+			}
+			loadPitchTableStep(sr);
+		}
+
+		private void loadWaveTableStep(float sr) {
+			List<SIDScoreIR.TableStepIR> steps = waveTable.steps();
+			if (waveStep >= steps.size()) {
+				if (waveTable.loop()) {
+					waveStep = 0;
+				} else {
+					waveHolding = true;
+					return;
+				}
+			}
+			SIDScoreIR.TableStepIR step = steps.get(waveStep);
+			if (step.waveSet()) {
+				activeWaveMask = step.value();
+			}
+			applyWaveControls(step, sr);
+			if (step.hold() || step.durationFrames() <= 0) {
+				waveHolding = true;
+				waveSamplesLeft = 0;
+				return;
+			}
+			setWaveSamplesLeft(step.durationFrames(), sr);
+			waveStep++;
+		}
+
+		private void applyWaveControls(SIDScoreIR.TableStepIR step, float sr) {
+			if (step.noteMode() != SIDScoreIR.NoteMode.NONE && noteBaseMidi >= 0) {
+				if (step.noteMode() == SIDScoreIR.NoteMode.ABS) {
+					noteBaseMidi = clampMidi(step.noteValue());
+				} else if (step.noteMode() == SIDScoreIR.NoteMode.REL) {
+					noteBaseMidi = clampMidi(noteBaseMidi + step.noteValue());
+				}
+				applyFrequency(sr);
+			}
+			if (step.gate() != SIDScoreIR.TriState.UNSET) {
+				applyGateValue(step.gate() == SIDScoreIR.TriState.ON, sr, false);
+			}
+			if (step.ring() != SIDScoreIR.TriState.UNSET) {
+				ring = step.ring() == SIDScoreIR.TriState.ON;
+			}
+			if (step.sync() != SIDScoreIR.TriState.UNSET) {
+				sync = step.sync() == SIDScoreIR.TriState.ON;
+			}
+			if (step.reset()) {
+				osc.hardReset();
+			}
+		}
+
+		private void loadGateTableStep(float sr) {
+			List<SIDScoreIR.TableStepIR> steps = gateTable.steps();
+			if (gateStep >= steps.size()) {
+				if (gateTable.loop()) {
+					gateStep = 0;
+				} else {
+					gateHolding = true;
+					return;
+				}
+			}
+			SIDScoreIR.TableStepIR step = steps.get(gateStep);
+			applyGateValue(step.value() != 0, sr, false);
+			if (step.hold() || step.durationFrames() <= 0) {
+				gateHolding = true;
+				gateSamplesLeft = 0;
+				return;
+			}
+			setGateSamplesLeft(step.durationFrames(), sr);
+			gateStep++;
+		}
+
+		private void loadPitchTableStep(float sr) {
+			List<SIDScoreIR.TableStepIR> steps = pitchTable.steps();
+			if (pitchStep >= steps.size()) {
+				if (pitchTable.loop()) {
+					pitchStep = 0;
+				} else {
+					pitchHolding = true;
+					return;
+				}
+			}
+			SIDScoreIR.TableStepIR step = steps.get(pitchStep);
+			pitchOffset = step.value();
+			applyFrequency(sr);
+			if (step.hold() || step.durationFrames() <= 0) {
+				pitchHolding = true;
+				pitchSamplesLeft = 0;
+				return;
+			}
+			setPitchSamplesLeft(step.durationFrames(), sr);
+			pitchStep++;
+		}
+
+		private void loadPwTableStep(float sr) {
+			List<SIDScoreIR.TableStepIR> steps = pwTable.steps();
+			if (pwStep >= steps.size()) {
+				if (pwTable.loop()) {
+					pwStep = 0;
+				} else {
+					pwHolding = true;
+					return;
+				}
+			}
+			SIDScoreIR.TableStepIR step = steps.get(pwStep);
+			pw = clampPw(step.value() & 0x0FFF);
+			if (step.hold() || step.durationFrames() <= 0) {
+				pwHolding = true;
+				pwSamplesLeft = 0;
+				return;
+			}
+			setPwSamplesLeft(step.durationFrames(), sr);
+			pwStep++;
+		}
+
+		private void applyGateValue(boolean on, float sr, boolean forceRetrigger) {
+			if (on) {
+				triggerGate(sr, forceRetrigger);
+			} else {
+				releaseGate();
+			}
+		}
+
+		private void triggerGate(float sr, boolean forceRetrigger) {
+			boolean wasGateOn = gateOn;
+			gateOn = true;
+			if (forceRetrigger || !wasGateOn || instr.gateMode() == SIDScoreIR.InstrumentGateMode.RETRIGGER) {
+				boolean shortAttack = env.isActive() && !env.isReleasing();
+				env.noteOn(true, shortAttack);
+			}
+		}
+
+		private void setPwSamplesLeft(int frames, float sr) {
+			double samplesExact = frames * (sr / frameRate) + pwSampleRemainder;
+			pwSamplesLeft = Math.max(1, (int) Math.round(samplesExact));
+			pwSampleRemainder = samplesExact - pwSamplesLeft;
+		}
+
+		private void setWaveSamplesLeft(int frames, float sr) {
+			double samplesExact = frames * (sr / frameRate) + waveSampleRemainder;
+			waveSamplesLeft = Math.max(1, (int) Math.round(samplesExact));
+			waveSampleRemainder = samplesExact - waveSamplesLeft;
+		}
+
+		private void setGateSamplesLeft(int frames, float sr) {
+			double samplesExact = frames * (sr / frameRate) + gateSampleRemainder;
+			gateSamplesLeft = Math.max(1, (int) Math.round(samplesExact));
+			gateSampleRemainder = samplesExact - gateSamplesLeft;
+		}
+
+		private void setPitchSamplesLeft(int frames, float sr) {
+			double samplesExact = frames * (sr / frameRate) + pitchSampleRemainder;
+			pitchSamplesLeft = Math.max(1, (int) Math.round(samplesExact));
+			pitchSampleRemainder = samplesExact - pitchSamplesLeft;
+		}
+
+		private static int minTriggerSamples(float sr) {
+			return Math.max(1, (int) Math.round(sr * MIN_TRIGGER_SECONDS));
+		}
+
+		private int clampPw(int v) {
+			if (v < pwMin)
+				return pwMin;
+			if (v > pwMax)
+				return pwMax;
+			return v;
+		}
+
+		private static int clampMidi(int midi) {
+			return Math.max(0, Math.min(127, midi));
+		}
+
+		private static double clamp01(double value) {
+			return Math.max(0.0, Math.min(1.0, value));
+		}
+
+		private static NoteParts noteParts(int midi) {
+			int semitone = Math.floorMod(midi, 12);
+			int octave = midi / 12 - 1;
+			return switch (semitone) {
+			case 0 -> new NoteParts(0, 0, octave);
+			case 1 -> new NoteParts(0, 1, octave);
+			case 2 -> new NoteParts(1, 0, octave);
+			case 3 -> new NoteParts(1, 1, octave);
+			case 4 -> new NoteParts(2, 0, octave);
+			case 5 -> new NoteParts(3, 0, octave);
+			case 6 -> new NoteParts(3, 1, octave);
+			case 7 -> new NoteParts(4, 0, octave);
+			case 8 -> new NoteParts(4, 1, octave);
+			case 9 -> new NoteParts(5, 0, octave);
+			case 10 -> new NoteParts(5, 1, octave);
+			case 11 -> new NoteParts(6, 0, octave);
+			default -> new NoteParts(255, 0, 0);
+			};
+		}
+
+		private static final class NoteParts {
+			final int letter;
+			final int accidental;
+			final int octave;
+
+			NoteParts(int letter, int accidental, int octave) {
+				this.letter = letter;
+				this.accidental = accidental;
+				this.octave = octave;
+			}
 		}
 	}
 
@@ -2488,6 +3165,19 @@ public final class RealtimeAudioPlayer {
 		private static int clampNibble(int n) {
 			return Math.max(0, Math.min(15, n));
 		}
+	}
+
+	private static int freqRegFromMidi(double midi, double sidClockHz) {
+		double clamped = Math.max(0.0, Math.min(127.0, midi));
+		double hz = 440.0 * Math.pow(2.0, (clamped - 69.0) / 12.0);
+		int reg = (int) Math.round(hz * 16777216.0 / sidClockHz);
+		return Math.max(1, Math.min(0xFFFF, reg));
+	}
+
+	private static double freqRegToHz(int reg, double sidClockHz) {
+		if (reg <= 0)
+			return 0.0;
+		return (reg & 0xFFFF) * sidClockHz / 16777216.0;
 	}
 
 	private static double quantizeToSidHz(double hz, double sidClockHz) {

@@ -21,6 +21,7 @@ import net.resheim.sidscore.export.driver.SidDriverRegistry;
 import net.resheim.sidscore.ir.RealtimeAudioPlayer;
 import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.ir.ScoreBuildingListener;
+import net.resheim.sidscore.midi.MidiInputRouter;
 import net.resheim.sidscore.parser.SIDScoreLexer;
 import net.resheim.sidscore.parser.SIDScoreParser;
 import net.resheim.sidscore.sid.SidModel;
@@ -51,7 +52,8 @@ import java.util.stream.Collectors;
   private static final String DEFAULT_DRIVER = "sidscore";
   private static final String USAGE = "Usage: java SIDScoreCLI <file.sidscore> [--stitch <more.sidscore>]... "
       + "[--wav <out.wav>] [--asm <out.asm>] [--prg <out.prg>] [--sid <out.sid>] [--driver <id>] [--list-drivers] "
-      + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--no-play]\n"
+      + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--midi] [--midi-device <index|name>] "
+      + "[--midi-map <voice:channel,...>] [--list-midi-devices] [--no-play]\n"
       + "       java SIDScoreCLI --player-server [--port <port>]";
 
   public static void main(String[] args) throws Exception {
@@ -65,6 +67,10 @@ import java.util.stream.Collectors;
 
     if (args.length == 1 && "--list-drivers".equals(args[0])) {
       printDrivers(driverRegistry);
+      return;
+    }
+    if (args.length == 1 && "--list-midi-devices".equals(args[0])) {
+      printMidiDevices();
       return;
     }
     if (args.length < 1 || args[0].startsWith("--")) {
@@ -81,6 +87,9 @@ import java.util.stream.Collectors;
     SidModel sidModel = SidModel.MOS6581;
     String driverId = DEFAULT_DRIVER;
     boolean noPlay = false;
+    boolean midiEnabled = false;
+    String midiDeviceSelector = null;
+    Map<Integer, Integer> midiVoiceMap = MidiInputRouter.defaultVoiceChannelMap();
     List<Path> stitchInputs = new ArrayList<>();
     for (int i = 1; i < args.length; i++) {
       switch (args[i]) {
@@ -150,6 +159,33 @@ import java.util.stream.Collectors;
           printDrivers(driverRegistry);
           return;
         }
+        case "--list-midi-devices" -> {
+          printMidiDevices();
+          return;
+        }
+        case "--midi" -> midiEnabled = true;
+        case "--midi-device" -> {
+          if (i + 1 >= args.length) {
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          midiDeviceSelector = args[++i];
+          midiEnabled = true;
+        }
+        case "--midi-map" -> {
+          if (i + 1 >= args.length) {
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          try {
+            midiVoiceMap = MidiInputRouter.parseVoiceChannelMap(args[++i]);
+          } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          midiEnabled = true;
+        }
         case "--no-play" -> noPlay = true;
         default -> {
           System.err.println(USAGE);
@@ -171,6 +207,15 @@ import java.util.stream.Collectors;
         System.err.println("--stitch is only supported for SID export");
         System.exit(2);
       }
+    }
+
+    if (midiEnabled && noPlay) {
+      System.err.println("--midi requires realtime playback and cannot be used with --no-play");
+      System.exit(2);
+    }
+    if (midiEnabled && wavOut != null) {
+      System.err.println("--midi cannot be combined with --wav recording");
+      System.exit(2);
     }
 
     if (noPlay && wavOut == null && asmOut == null && prgOut == null && sidOut == null) {
@@ -363,6 +408,31 @@ import java.util.stream.Collectors;
 		deleteIfExists(wavOut);
 		new RealtimeAudioPlayer(sidModel, sidWaveforms).play(timed, wavOut);
 		System.out.println("WAV: " + wavOut);
+	} else if (midiEnabled) {
+		RealtimeAudioPlayer player = new RealtimeAudioPlayer(sidModel, sidWaveforms);
+		try (MidiInputRouter midi = MidiInputRouter.open(midiDeviceSelector, midiVoiceMap)) {
+			Thread shutdownHook = new Thread(() -> {
+				player.stop();
+				midi.close();
+			}, "sidscore-midi-shutdown");
+			Runtime.getRuntime().addShutdownHook(shutdownHook);
+			try {
+				System.out.println("MIDI Input: " + midi.deviceName());
+				System.out.println("MIDI Map: " + formatMidiMap(midi.voiceChannelMap()));
+				System.out.println("MIDI playback active. Press Ctrl+C to stop.");
+				player.play(timed, midi);
+			} finally {
+				try {
+					Runtime.getRuntime().removeShutdownHook(shutdownHook);
+				} catch (IllegalStateException ignored) {
+					// JVM shutdown already in progress.
+				}
+			}
+		} catch (Exception e) {
+			System.err.println("MIDI input failed: " + e.getMessage());
+			System.err.println("Use --list-midi-devices to see available MIDI inputs.");
+			System.exit(1);
+		}
 	} else {
 		new RealtimeAudioPlayer(sidModel, sidWaveforms).play(timed);
 	}
@@ -503,6 +573,26 @@ import java.util.stream.Collectors;
     for (SidDriverBackend backend : registry.list()) {
       System.out.println("  - " + backend.id() + ": " + backend.description());
     }
+  }
+
+  private static void printMidiDevices() {
+    List<MidiInputRouter.InputDevice> devices = MidiInputRouter.listInputDevices();
+    if (devices.isEmpty()) {
+      System.out.println("No MIDI input devices found.");
+      return;
+    }
+    System.out.println("Available MIDI input devices:");
+    for (MidiInputRouter.InputDevice device : devices) {
+      System.out.println("  [" + device.index() + "] " + device.displayName()
+          + " - " + device.description()
+          + " (" + device.vendor() + " " + device.version() + ")");
+    }
+  }
+
+  private static String formatMidiMap(Map<Integer, Integer> voiceChannelMap) {
+    return voiceChannelMap.entrySet().stream()
+        .map(e -> "voice " + e.getKey() + " <- channel " + e.getValue())
+        .collect(Collectors.joining(", "));
   }
 
   private static void printProgramStats(SidDriverBackend driver,
