@@ -81,6 +81,27 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
   net.resheim.sidscore.SIDScoreCLI examples/test.sidscore --driver sidscore --sid out.sid --no-play
 ```
 
+## Live MIDI input
+
+SRAP can use a USB MIDI keyboard or controller, such as an Arturia MicroLab, as a live input source. MIDI is a realtime audition feature and does not change `ASM/PRG/SID` export.
+
+List available MIDI input devices:
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.SIDScoreCLI --list-midi-devices
+```
+
+Play a score with live MIDI control:
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.SIDScoreCLI examples/test.sidscore \
+  --midi --midi-device MicroLab --midi-map 1:1,2:1,3:1
+```
+
+`--midi-map` uses `voice:channel` pairs. The example above maps SID voices 1, 2, and 3 to MIDI channel 1 for three-voice polyphony from a single keyboard channel. Use `1:1,2:2,3:3` to control each SID voice from a separate MIDI channel. Live MIDI uses the mapped voice's instrument definition from the loaded score. If omitted, the default map is `1:1`; MIDI output is not supported.
+
 ## SIDScore GUI
 
 The GUI player lets you edit and audition scores interactively:
@@ -89,6 +110,7 @@ The GUI player lets you edit and audition scores interactively:
 - New/Save/Load file controls plus Play/Continue/Stop.
 - Playback renderer selector: `SRAP` (built-in realtime synth) or `VICE` (external `vsid` direct playback).
 - Tune selector (`1..N`) for choosing which PSID subtune to play.
+- MIDI input controls for SRAP: enable live input, select the input device, and map SID voices 1-3 to MIDI channels. MIDI output is not supported.
 - Examples navigator that loads and plays on activation.
 - Three voice oscilloscope views for quick feedback.
 - `Messages` panel shows `vsid` output during VICE playback.

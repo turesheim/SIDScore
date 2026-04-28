@@ -36,10 +36,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
 import javax.imageio.ImageIO;
+import javax.sound.midi.MidiUnavailableException;
 import javax.sound.sampled.LineUnavailableException;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
@@ -89,6 +91,7 @@ import net.resheim.sidscore.export.driver.DriverAddresses;
 import net.resheim.sidscore.ir.RealtimeAudioPlayer;
 import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.ir.ScoreBuildingListener;
+import net.resheim.sidscore.midi.MidiInputRouter;
 import net.resheim.sidscore.parser.SIDScoreLexer;
 import net.resheim.sidscore.parser.SIDScoreParser;
 import net.resheim.sidscore.sid.SidModel;
@@ -124,6 +127,9 @@ public final class RealtimeAudioPlayerUI {
 	private static final double VICE_TAIL_SECONDS = 1.5;
 	private static final int COMPACT_VICE_CAPTURE_MAX = 12_000;
 	private static final int COMPACT_MESSAGES_MAX = 16_000;
+	private static final int MESSAGE_AREA_MAX = 128_000;
+	private static final int MIDI_MESSAGE_QUEUE_MAX = 512;
+	private static final int MIDI_MESSAGE_FLUSH_MAX = 64;
 	private static volatile boolean compactViceLogs = isCompactLogEnabledByDefault();
 
 	private final JFrame frame = new JFrame("SIDScore Realtime Player");
@@ -139,6 +145,12 @@ public final class RealtimeAudioPlayerUI {
 	private final JComboBox<PlaybackRenderer> rendererCombo = new JComboBox<>(PlaybackRenderer.values());
 	private final JComboBox<Integer> songNumberCombo = new JComboBox<>(new Integer[] { 1 });
 	private final JToggleButton autoReloadButton = new JToggleButton("Auto Reload");
+	private final JToggleButton midiButton = new JToggleButton("MIDI");
+	private final JComboBox<MidiDeviceItem> midiDeviceCombo = new JComboBox<>();
+	private final JButton midiScanButton = new JButton("Scan");
+	private final JComboBox<MidiChannelChoice> midiVoice1ChannelCombo = new JComboBox<>(midiChannelChoices());
+	private final JComboBox<MidiChannelChoice> midiVoice2ChannelCombo = new JComboBox<>(midiChannelChoices());
+	private final JComboBox<MidiChannelChoice> midiVoice3ChannelCombo = new JComboBox<>(midiChannelChoices());
 	private final JButton exportAsmButton = new JButton("ASM");
 	private final JButton exportWavButton = new JButton("WAV");
 	private final JButton exportSidButton = new JButton("SID");
@@ -151,11 +163,24 @@ public final class RealtimeAudioPlayerUI {
 	private final JLabel elapsedLabel = new JLabel("00:00");
 	private volatile Thread playThread;
 	private volatile RealtimeAudioPlayer player;
+	private volatile MidiInputRouter midiInput;
+	private volatile MidiInputRouter sharedMidiInput;
+	private volatile MidiPlaybackConfig sharedMidiConfig;
+	private volatile Thread midiMonitorThread;
+	private volatile RealtimeAudioPlayer midiMonitorPlayer;
+	private volatile MidiInputRouter midiMonitorInput;
+	private volatile long midiMonitorGeneration = 0;
+	private final Object midiInputLock = new Object();
 	private volatile Process viceProcess;
 	private volatile boolean viceStopRequested = false;
 	private final Timer autoReloadTimer;
 	private final Timer clockTimer;
 	private final Timer highlightTimer;
+	private final Timer midiMessageTimer;
+	private final List<String> pendingMidiMessages = new ArrayList<>();
+	private int droppedMidiMessages = 0;
+	private boolean refreshingMidiDevices = false;
+	private boolean updatingSongSelection = false;
 	private volatile boolean autoReloadEnabled = false;
 	private volatile boolean restartPending = false;
 	private volatile boolean restartOnlyWhenAutoReload = false;
@@ -206,6 +231,19 @@ public final class RealtimeAudioPlayerUI {
 		exportPanel.add(exportSidButton);
 		exportPanel.add(exportPrgButton);
 
+		JPanel midiPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
+		midiPanel.setBackground(C64_BG);
+		midiPanel.add(createSectionLabel("MIDI In:"));
+		midiPanel.add(midiButton);
+		midiPanel.add(midiDeviceCombo);
+		midiPanel.add(midiScanButton);
+		midiPanel.add(createSectionLabel("V1"));
+		midiPanel.add(midiVoice1ChannelCombo);
+		midiPanel.add(createSectionLabel("V2"));
+		midiPanel.add(midiVoice2ChannelCombo);
+		midiPanel.add(createSectionLabel("V3"));
+		midiPanel.add(midiVoice3ChannelCombo);
+
 		styleButton(newButton);
 		styleButton(saveButton);
 		styleButton(loadButton);
@@ -213,12 +251,21 @@ public final class RealtimeAudioPlayerUI {
 		styleButton(continueButton);
 		styleButton(stopButton);
 		styleButton(autoReloadButton);
+		styleButton(midiButton);
+		styleButton(midiScanButton);
 		styleButton(exportAsmButton);
 		styleButton(exportWavButton);
 		styleButton(exportSidButton);
 		styleButton(exportPrgButton);
 		styleComboBox(rendererCombo);
 		styleComboBox(songNumberCombo);
+		styleComboBox(midiDeviceCombo);
+		styleComboBox(midiVoice1ChannelCombo);
+		styleComboBox(midiVoice2ChannelCombo);
+		styleComboBox(midiVoice3ChannelCombo);
+		selectMidiChannel(midiVoice1ChannelCombo, 1);
+		selectMidiChannel(midiVoice2ChannelCombo, 0);
+		selectMidiChannel(midiVoice3ChannelCombo, 0);
 		resetSongSelection();
 
 		stopButton.setEnabled(false);
@@ -227,7 +274,15 @@ public final class RealtimeAudioPlayerUI {
 		playButton.addActionListener(e -> onPlay());
 		continueButton.addActionListener(e -> onContinue());
 		stopButton.addActionListener(e -> onStop(true));
+		rendererCombo.addActionListener(e -> onMidiSettingsChanged());
+		songNumberCombo.addActionListener(e -> onMidiSettingsChanged());
 		autoReloadButton.addActionListener(e -> onAutoReloadToggle());
+		midiButton.addActionListener(e -> onMidiSettingsChanged());
+		midiScanButton.addActionListener(e -> refreshMidiDevices(true));
+		midiDeviceCombo.addActionListener(e -> onMidiSettingsChanged());
+		midiVoice1ChannelCombo.addActionListener(e -> onMidiSettingsChanged());
+		midiVoice2ChannelCombo.addActionListener(e -> onMidiSettingsChanged());
+		midiVoice3ChannelCombo.addActionListener(e -> onMidiSettingsChanged());
 		newButton.addActionListener(e -> onNew());
 		saveButton.addActionListener(e -> onSave());
 		loadButton.addActionListener(e -> onLoad());
@@ -360,9 +415,17 @@ public final class RealtimeAudioPlayerUI {
 		JPanel header = new JPanel(new BorderLayout());
 		header.setBackground(C64_BG);
 		header.add(bannerPanel, BorderLayout.NORTH);
+		JPanel playbackPanel = new JPanel();
+		playbackPanel.setLayout(new javax.swing.BoxLayout(playbackPanel, javax.swing.BoxLayout.Y_AXIS));
+		playbackPanel.setBackground(C64_BG);
+		controlsPanel.setAlignmentX(JPanel.LEFT_ALIGNMENT);
+		midiPanel.setAlignmentX(JPanel.LEFT_ALIGNMENT);
+		playbackPanel.add(controlsPanel);
+		playbackPanel.add(midiPanel);
+
 		JPanel headerControls = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 0));
 		headerControls.setBackground(C64_BG);
-		headerControls.add(controlsPanel);
+		headerControls.add(playbackPanel);
 		headerControls.add(exportPanel);
 		header.add(headerControls, BorderLayout.SOUTH);
 		GrillePanel grillePanel = new GrillePanel();
@@ -393,11 +456,15 @@ public final class RealtimeAudioPlayerUI {
 		clockTimer.start();
 		highlightTimer = new Timer(60, e -> updatePlaybackHighlight());
 		highlightTimer.start();
+		midiMessageTimer = new Timer(100, e -> flushMidiMessages());
+		midiMessageTimer.start();
 
 		examplesRoot = resolveExamplesRoot();
 		File defaultFile = examplesRoot.toFile();
 		lastDirectory = defaultFile.isDirectory() ? defaultFile : new File(System.getProperty("user.dir"));
 
+		refreshMidiDevices(false);
+		updateMidiControls();
 		refreshExampleList();
 	}
 
@@ -412,12 +479,105 @@ public final class RealtimeAudioPlayerUI {
 		});
 	}
 
+	private void refreshMidiDevices(boolean showMessage) {
+		MidiDeviceItem selected = (MidiDeviceItem) midiDeviceCombo.getSelectedItem();
+		String previousSelector = selected != null ? selected.selector() : null;
+		DefaultComboBoxModel<MidiDeviceItem> model = new DefaultComboBoxModel<>();
+		List<MidiInputRouter.InputDevice> devices = MidiInputRouter.listInputDevices();
+		for (MidiInputRouter.InputDevice device : devices) {
+			model.addElement(MidiDeviceItem.available(device));
+		}
+		if (model.getSize() == 0) {
+			model.addElement(MidiDeviceItem.unavailable("No MIDI input"));
+		}
+		refreshingMidiDevices = true;
+		try {
+			midiDeviceCombo.setModel(model);
+			if (previousSelector != null) {
+				for (int i = 0; i < model.getSize(); i++) {
+					MidiDeviceItem item = model.getElementAt(i);
+					if (previousSelector.equals(item.selector())) {
+						midiDeviceCombo.setSelectedIndex(i);
+						break;
+					}
+				}
+			}
+		} finally {
+			refreshingMidiDevices = false;
+		}
+		if (showMessage) {
+			if (devices.isEmpty()) {
+				setMessage("No MIDI input devices found.", MSG_WARN);
+			} else {
+				setMessage("MIDI devices: " + devices.size(), MSG_INFO);
+			}
+		}
+		updateMidiControls();
+		if (showMessage) {
+			onMidiSettingsChanged();
+		}
+	}
+
+	private MidiPlaybackConfig selectedMidiPlaybackConfig(boolean showDialogs) {
+		if (!midiButton.isSelected() || activeRenderer() != PlaybackRenderer.SRAP) {
+			return MidiPlaybackConfig.disabled();
+		}
+		MidiDeviceItem device = (MidiDeviceItem) midiDeviceCombo.getSelectedItem();
+		if (device == null || !device.available()) {
+			reportPlaybackConfigError("MIDI playback requires an input device.", showDialogs);
+			return null;
+		}
+		Map<Integer, Integer> voiceChannelMap = new LinkedHashMap<>();
+		addMidiVoiceChannel(voiceChannelMap, 1, midiVoice1ChannelCombo);
+		addMidiVoiceChannel(voiceChannelMap, 2, midiVoice2ChannelCombo);
+		addMidiVoiceChannel(voiceChannelMap, 3, midiVoice3ChannelCombo);
+		if (voiceChannelMap.isEmpty()) {
+			reportPlaybackConfigError("MIDI playback requires at least one mapped SID voice.", showDialogs);
+			return null;
+		}
+		return new MidiPlaybackConfig(true, device.selector(), voiceChannelMap);
+	}
+
+	private void reportPlaybackConfigError(String message, boolean showDialogs) {
+		setMessage(message, MSG_ERROR);
+		if (showDialogs) {
+			JOptionPane.showMessageDialog(frame, message, "MIDI Error", JOptionPane.ERROR_MESSAGE);
+		}
+	}
+
+	private static void addMidiVoiceChannel(Map<Integer, Integer> voiceChannelMap, int voiceIndex,
+			JComboBox<MidiChannelChoice> combo) {
+		MidiChannelChoice choice = (MidiChannelChoice) combo.getSelectedItem();
+		if (choice != null && choice.channel() > 0) {
+			voiceChannelMap.put(voiceIndex, choice.channel());
+		}
+	}
+
+	private void onMidiSettingsChanged() {
+		updateMidiControls();
+		if (refreshingMidiDevices || updatingSongSelection) {
+			return;
+		}
+		if (isPlaying()) {
+			return;
+		}
+		if (midiButton.isSelected() && activeRenderer() == PlaybackRenderer.SRAP) {
+			restartMidiMonitor();
+		} else {
+			stopMidiMonitor();
+			closeSharedMidiInput();
+		}
+	}
+
 	private void onPlay() {
 		if (isPlaying()) {
 			onStop(true);
 			return;
 		}
-		startPlayback(true);
+		stopMidiMonitor();
+		if (!startPlayback(true)) {
+			startMidiMonitorIfNeeded(false);
+		}
 	}
 
 	private void onContinue() {
@@ -471,6 +631,7 @@ public final class RealtimeAudioPlayerUI {
 		if (current != null) {
 			current.stop();
 		}
+		stopMidiMonitor();
 		updatePlaybackButtons();
 	}
 
@@ -564,6 +725,7 @@ public final class RealtimeAudioPlayerUI {
 				updateSongSelection(lastScoreIR);
 			}
 			setMessage("Loaded: " + selected.getName(), MSG_INFO);
+			onMidiSettingsChanged();
 		} catch (IOException ex) {
 			String msg = "Failed to load: " + selected.getName() + " (" + ex.getMessage() + ")";
 			setMessage(msg, MSG_ERROR);
@@ -1002,10 +1164,222 @@ public final class RealtimeAudioPlayerUI {
 		continueButton.setEnabled(playing && playbackPaused && activeRenderer() == PlaybackRenderer.SRAP);
 		rendererCombo.setEnabled(!playing);
 		songNumberCombo.setEnabled(!playing);
+		updateMidiControls();
 	}
 
 	private void updatePlaybackButtons() {
 		setPlaybackButtons(isPlaying());
+	}
+
+	private void updateMidiControls() {
+		boolean editable = !isPlaying();
+		boolean srap = activeRenderer() == PlaybackRenderer.SRAP;
+		boolean midiEnabled = editable && srap && midiButton.isSelected();
+		MidiDeviceItem selectedDevice = (MidiDeviceItem) midiDeviceCombo.getSelectedItem();
+		boolean hasDevice = selectedDevice != null && selectedDevice.available();
+		midiButton.setEnabled(editable && srap);
+		midiDeviceCombo.setEnabled(midiEnabled && hasDevice);
+		midiScanButton.setEnabled(editable && srap);
+		midiVoice1ChannelCombo.setEnabled(midiEnabled);
+		midiVoice2ChannelCombo.setEnabled(midiEnabled);
+		midiVoice3ChannelCombo.setEnabled(midiEnabled);
+	}
+
+	private void startMidiMonitorIfNeeded(boolean showDialogs) {
+		if (isPlaying() || midiMonitorThread != null || !midiButton.isSelected()
+				|| activeRenderer() != PlaybackRenderer.SRAP) {
+			return;
+		}
+		MidiPlaybackConfig midiConfig = selectedMidiPlaybackConfig(showDialogs);
+		if (midiConfig == null || !midiConfig.enabled()) {
+			return;
+		}
+		SIDScoreIR.TimedScore sourceScore = selectedSrapScoreForMidiMonitor(showDialogs);
+		if (sourceScore == null) {
+			return;
+		}
+		SIDScoreIR.TimedScore monitorScore = liveMidiScore(sourceScore, midiConfig.voiceChannelMap());
+		RealtimeAudioPlayer monitorPlayer = new RealtimeAudioPlayer();
+		long generation = ++midiMonitorGeneration;
+		Thread thread = new Thread(() -> runMidiMonitor(monitorPlayer, midiConfig, monitorScore, generation),
+				"sidscore-midi-monitor");
+		thread.setDaemon(true);
+		midiMonitorPlayer = monitorPlayer;
+		midiMonitorThread = thread;
+		thread.start();
+	}
+
+	private void restartMidiMonitor() {
+		stopMidiMonitor();
+		closeSharedMidiInput();
+		startMidiMonitorIfNeeded(false);
+	}
+
+	private void stopMidiMonitor() {
+		midiMonitorGeneration++;
+		Thread monitorThread = midiMonitorThread;
+		RealtimeAudioPlayer monitorPlayer = midiMonitorPlayer;
+		if (monitorPlayer != null) {
+			monitorPlayer.stop();
+		}
+		midiMonitorPlayer = null;
+		midiMonitorInput = null;
+		midiMonitorThread = null;
+		if (monitorThread != null && monitorThread != Thread.currentThread()) {
+			try {
+				monitorThread.join(250);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		}
+	}
+
+	private MidiInputRouter ensureSharedMidiInput(MidiPlaybackConfig midiConfig) throws MidiUnavailableException {
+		synchronized (midiInputLock) {
+			MidiInputRouter existing = sharedMidiInput;
+			if (existing != null && midiConfig.equals(sharedMidiConfig)) {
+				return existing;
+			}
+			closeSharedMidiInputLocked();
+			MidiInputRouter opened = MidiInputRouter.open(midiConfig.deviceSelector(), midiConfig.voiceChannelMap(),
+					this::appendMidiMessageAsync);
+			sharedMidiInput = opened;
+			sharedMidiConfig = midiConfig;
+			return opened;
+		}
+	}
+
+	private void closeSharedMidiInput() {
+		synchronized (midiInputLock) {
+			closeSharedMidiInputLocked();
+		}
+	}
+
+	private void closeSharedMidiInputLocked() {
+		MidiInputRouter input = sharedMidiInput;
+		sharedMidiInput = null;
+		sharedMidiConfig = null;
+		if (input != null) {
+			input.close();
+		}
+	}
+
+	private void runMidiMonitor(RealtimeAudioPlayer monitorPlayer, MidiPlaybackConfig midiConfig,
+			SIDScoreIR.TimedScore monitorScore, long generation) {
+		MidiInputRouter monitorInput = null;
+		try {
+			monitorInput = ensureSharedMidiInput(midiConfig);
+			if (midiMonitorGeneration != generation || midiMonitorPlayer != monitorPlayer) {
+				return;
+			}
+			midiMonitorInput = monitorInput;
+			appendMessageAsync("MIDI monitor: " + monitorInput.deviceName(), MSG_INFO);
+			appendMessageAsync("MIDI Map: " + formatMidiMap(midiConfig.voiceChannelMap()), MSG_INFO);
+			appendMessageAsync("MIDI Instruments: " + formatMidiInstruments(monitorScore, midiConfig.voiceChannelMap()),
+					MSG_INFO);
+			monitorPlayer.play(monitorScore, (v1, v2, v3, length, sampleRate) -> {
+				scopes[0].append(v1, length);
+				scopes[1].append(v2, length);
+				scopes[2].append(v3, length);
+			}, monitorInput);
+		} catch (Exception e) {
+			if (midiMonitorGeneration == generation) {
+				appendMessageAsync("MIDI monitor failed: " + e.getMessage(), MSG_ERROR);
+			}
+		} finally {
+			if (midiMonitorGeneration == generation && midiMonitorInput == monitorInput) {
+				midiMonitorInput = null;
+			}
+			if (midiMonitorGeneration == generation && midiMonitorPlayer == monitorPlayer) {
+				midiMonitorPlayer = null;
+			}
+			if (midiMonitorGeneration == generation && midiMonitorThread == Thread.currentThread()) {
+				midiMonitorThread = null;
+			}
+		}
+	}
+
+	private SIDScoreIR.TimedScore selectedSrapScoreForMidiMonitor(boolean showDialogs) {
+		SIDScoreIR.TimedScore mainTimed = parseScore(input.getText(), showDialogs, false);
+		if (mainTimed == null) {
+			return null;
+		}
+		SIDScoreIR.ScoreIR mainScore = lastScoreIR;
+		if (mainScore == null) {
+			setMessage("MIDI monitor failed: internal parse state is missing.", MSG_ERROR);
+			return null;
+		}
+		updateSongSelection(mainScore);
+		int selectedSong = selectedSongNumber();
+		if (selectedSong == 1) {
+			return mainTimed;
+		}
+		if (mainScore.songs().containsKey(selectedSong)) {
+			return resolveInlineSong(mainScore, selectedSong, showDialogs);
+		}
+		Path selectedPath = mainScore.subtunes().get(selectedSong);
+		if (selectedPath == null) {
+			setMessage("MIDI monitor failed: subtune " + selectedSong + " is not defined.", MSG_ERROR);
+			return null;
+		}
+		return parseScorePath(selectedPath, showDialogs, false);
+	}
+
+	private static SIDScoreIR.TimedScore liveMidiScore(SIDScoreIR.TimedScore source,
+			Map<Integer, Integer> voiceChannelMap) {
+		Map<Integer, SIDScoreIR.TimedVoice> voices = new LinkedHashMap<>();
+		for (int voiceIndex : voiceChannelMap.keySet()) {
+			SIDScoreIR.TimedVoice sourceVoice = source.voices().get(voiceIndex);
+			if (sourceVoice != null) {
+				voices.put(voiceIndex, new SIDScoreIR.TimedVoice(voiceIndex, sourceVoice.instrument(), List.of()));
+			}
+		}
+		return new SIDScoreIR.TimedScore(source.title(), source.author(), source.released(),
+				source.tempoBpm(), source.ticksPerWhole(), source.defaultSwing(), source.system(),
+				source.tables(), Map.of(), voices, Map.of());
+	}
+
+	private static MidiChannelChoice[] midiChannelChoices() {
+		MidiChannelChoice[] choices = new MidiChannelChoice[17];
+		choices[0] = new MidiChannelChoice(0, "Off");
+		for (int channel = 1; channel <= 16; channel++) {
+			choices[channel] = new MidiChannelChoice(channel, "Ch " + channel);
+		}
+		return choices;
+	}
+
+	private static void selectMidiChannel(JComboBox<MidiChannelChoice> combo, int channel) {
+		for (int i = 0; i < combo.getItemCount(); i++) {
+			MidiChannelChoice choice = combo.getItemAt(i);
+			if (choice.channel() == channel) {
+				combo.setSelectedIndex(i);
+				return;
+			}
+		}
+	}
+
+	private static String formatMidiMap(Map<Integer, Integer> voiceChannelMap) {
+		StringBuilder sb = new StringBuilder();
+		for (var entry : voiceChannelMap.entrySet()) {
+			if (sb.length() > 0) {
+				sb.append(", ");
+			}
+			sb.append("voice ").append(entry.getKey()).append(" <- channel ").append(entry.getValue());
+		}
+		return sb.toString();
+	}
+
+	private static String formatMidiInstruments(SIDScoreIR.TimedScore score, Map<Integer, Integer> voiceChannelMap) {
+		StringBuilder sb = new StringBuilder();
+		for (int voiceIndex : voiceChannelMap.keySet()) {
+			if (sb.length() > 0) {
+				sb.append(", ");
+			}
+			SIDScoreIR.TimedVoice voice = score.voices().get(voiceIndex);
+			sb.append("voice ").append(voiceIndex).append("=");
+			sb.append(voice != null ? voice.instrument().name() : "default");
+		}
+		return sb.toString();
 	}
 
 	private boolean markPlaybackStartIfUnset() {
@@ -1078,6 +1452,10 @@ public final class RealtimeAudioPlayerUI {
 		if (renderer == null) {
 			renderer = PlaybackRenderer.SRAP;
 		}
+		MidiPlaybackConfig midiConfig = selectedMidiPlaybackConfig(showDialogs);
+		if (midiConfig == null) {
+			return false;
+		}
 
 		SIDScoreIR.TimedScore playbackTimed = mainTimed;
 		if (selectedSong != 1 && renderer == PlaybackRenderer.SRAP) {
@@ -1126,6 +1504,7 @@ public final class RealtimeAudioPlayerUI {
 		SIDScoreIR.TimedScore timedForThread = playbackTimed;
 		List<SIDScoreIR.TimedScore> bundleForThread = bundleTunes;
 		int songForThread = selectedSong;
+		MidiPlaybackConfig midiForThread = midiConfig;
 		Thread thread;
 		if (renderer == PlaybackRenderer.VICE) {
 			player = null;
@@ -1134,7 +1513,8 @@ public final class RealtimeAudioPlayerUI {
 		} else {
 			RealtimeAudioPlayer currentPlayer = new RealtimeAudioPlayer();
 			player = currentPlayer;
-			thread = new Thread(() -> runSrapPlayback(timedForThread, currentPlayer), "sidscore-realtime-player");
+			thread = new Thread(() -> runSrapPlayback(timedForThread, currentPlayer, midiForThread),
+					"sidscore-realtime-player");
 		}
 		thread.setDaemon(true);
 		playThread = thread;
@@ -1142,14 +1522,22 @@ public final class RealtimeAudioPlayerUI {
 		return true;
 	}
 
-	private void runSrapPlayback(SIDScoreIR.TimedScore timed, RealtimeAudioPlayer currentPlayer) {
+	private void runSrapPlayback(SIDScoreIR.TimedScore timed, RealtimeAudioPlayer currentPlayer,
+			MidiPlaybackConfig midiConfig) {
 		playbackStartNanos = -1;
 		playbackStopNanos = -1;
 		viceStopRequested = false;
 		SwingUtilities.invokeLater(this::updateElapsedClock);
 		java.util.concurrent.atomic.AtomicBoolean startMarked = new java.util.concurrent.atomic.AtomicBoolean(false);
+		MidiInputRouter currentMidi = null;
 
 		try {
+			if (midiConfig != null && midiConfig.enabled()) {
+				currentMidi = ensureSharedMidiInput(midiConfig);
+				midiInput = currentMidi;
+				appendMessageAsync("MIDI Input: " + currentMidi.deviceName(), MSG_INFO);
+				appendMessageAsync("MIDI Map: " + formatMidiMap(midiConfig.voiceChannelMap()), MSG_INFO);
+			}
 			currentPlayer.play(timed, (v1, v2, v3, length, sampleRate) -> {
 				if (startMarked.compareAndSet(false, true)) {
 					markPlaybackStartIfUnset();
@@ -1157,12 +1545,17 @@ public final class RealtimeAudioPlayerUI {
 				scopes[0].append(v1, length);
 				scopes[1].append(v2, length);
 				scopes[2].append(v3, length);
-			});
+			}, currentMidi);
 		} catch (LineUnavailableException e) {
 			SwingUtilities.invokeLater(
 					() -> JOptionPane.showMessageDialog(frame, e.getMessage(), "Audio Error",
 							JOptionPane.ERROR_MESSAGE));
+		} catch (Exception e) {
+			appendMessageAsync("MIDI playback failed: " + e.getMessage(), MSG_ERROR);
 		} finally {
+			if (midiInput == currentMidi) {
+				midiInput = null;
+			}
 			if (player == currentPlayer) {
 				player = null;
 			}
@@ -1238,8 +1631,8 @@ public final class RealtimeAudioPlayerUI {
 			playbackPaused = false;
 			playbackPauseNanos = -1;
 			boolean preserveStoppedHighlight = keepHighlightOnStop && !restartPending;
-			setPlaybackButtons(false);
 			playThread = null;
+			setPlaybackButtons(false);
 			if (playbackStartNanos > 0 && playbackStopNanos < 0) {
 				playbackStopNanos = System.nanoTime();
 			}
@@ -1253,6 +1646,8 @@ public final class RealtimeAudioPlayerUI {
 				restartOnlyWhenAutoReload = false;
 				keepHighlightOnStop = false;
 				startPlayback(show);
+			} else {
+				startMidiMonitorIfNeeded(false);
 			}
 		});
 	}
@@ -1564,8 +1959,13 @@ public final class RealtimeAudioPlayerUI {
 	}
 
 	private void resetSongSelection() {
-		songNumberCombo.setModel(new DefaultComboBoxModel<>(new Integer[] { 1 }));
-		songNumberCombo.setSelectedItem(1);
+		updatingSongSelection = true;
+		try {
+			songNumberCombo.setModel(new DefaultComboBoxModel<>(new Integer[] { 1 }));
+			songNumberCombo.setSelectedItem(1);
+		} finally {
+			updatingSongSelection = false;
+		}
 	}
 
 	private void updateSongSelection(SIDScoreIR.ScoreIR score) {
@@ -1589,11 +1989,16 @@ public final class RealtimeAudioPlayerUI {
 		for (int song : songs.keySet()) {
 			model.addElement(song);
 		}
-		songNumberCombo.setModel(model);
-		if (songs.containsKey(current)) {
-			songNumberCombo.setSelectedItem(current);
-		} else {
-			songNumberCombo.setSelectedItem(1);
+		updatingSongSelection = true;
+		try {
+			songNumberCombo.setModel(model);
+			if (songs.containsKey(current)) {
+				songNumberCombo.setSelectedItem(current);
+			} else {
+				songNumberCombo.setSelectedItem(1);
+			}
+		} finally {
+			updatingSongSelection = false;
 		}
 	}
 
@@ -1858,23 +2263,70 @@ public final class RealtimeAudioPlayerUI {
 		SwingUtilities.invokeLater(() -> appendMessage(message, color));
 	}
 
-	private void appendMessage(String message, Color color) {
-		messageArea.setForeground(SCOPE_BG);
-		String current = messageArea.getText();
-		StringBuilder sb = new StringBuilder();
-		if (current != null && !current.isBlank()) {
-			sb.append(current);
-			if (!current.endsWith("\n")) {
-				sb.append('\n');
+	private void appendMidiMessageAsync(String message) {
+		if (message == null || message.isBlank()) {
+			return;
+		}
+		synchronized (pendingMidiMessages) {
+			if (pendingMidiMessages.size() >= MIDI_MESSAGE_QUEUE_MAX) {
+				pendingMidiMessages.remove(0);
+				droppedMidiMessages++;
+			}
+			pendingMidiMessages.add("MIDI: " + message);
+		}
+	}
+
+	private void flushMidiMessages() {
+		List<String> batch = new ArrayList<>();
+		int dropped;
+		synchronized (pendingMidiMessages) {
+			dropped = droppedMidiMessages;
+			droppedMidiMessages = 0;
+			int count = Math.min(MIDI_MESSAGE_FLUSH_MAX, pendingMidiMessages.size());
+			for (int i = 0; i < count; i++) {
+				batch.add(pendingMidiMessages.remove(0));
 			}
 		}
-		sb.append(message);
-		String out = sb.toString();
-		if (compactViceLogs && out.length() > COMPACT_MESSAGES_MAX) {
-			out = "...(truncated)\n" + out.substring(out.length() - COMPACT_MESSAGES_MAX);
+		if (dropped > 0) {
+			batch.add(0, "MIDI: dropped " + dropped + " messages");
 		}
-		messageArea.setText(out);
+		if (!batch.isEmpty()) {
+			appendMessage(String.join("\n", batch), MSG_INFO);
+		}
+	}
+
+	private void appendMessage(String message, Color color) {
+		messageArea.setForeground(SCOPE_BG);
+		try {
+			int length = messageArea.getDocument().getLength();
+			if (length > 0) {
+				String last = messageArea.getDocument().getText(length - 1, 1);
+				if (!"\n".equals(last)) {
+					messageArea.append("\n");
+				}
+			}
+		} catch (BadLocationException ignored) {
+			// If the document changes while appending, JTextArea.append still keeps the log usable.
+		}
+		messageArea.append(message);
+		trimMessageArea(compactViceLogs ? COMPACT_MESSAGES_MAX : MESSAGE_AREA_MAX);
 		messageArea.setCaretPosition(messageArea.getDocument().getLength());
+	}
+
+	private void trimMessageArea(int maxChars) {
+		try {
+			int length = messageArea.getDocument().getLength();
+			if (length <= maxChars) {
+				return;
+			}
+			int remove = length - maxChars;
+			messageArea.getDocument().remove(0, remove);
+			if (messageArea.getDocument().getLength() > 0) {
+				messageArea.getDocument().insertString(0, "...(truncated)\n", null);
+			}
+		} catch (BadLocationException ignored) {
+			// Trimming is best-effort; losing a trim pass is preferable to blocking playback.
+		}
 	}
 
 	private void copyErrorMessages() {
@@ -2129,6 +2581,53 @@ public final class RealtimeAudioPlayerUI {
 			this.endOffset = endOffset;
 			this.startTick = startTick;
 			this.endTick = endTick;
+		}
+	}
+
+	private static final record MidiPlaybackConfig(boolean enabled, String deviceSelector,
+			Map<Integer, Integer> voiceChannelMap) {
+		static MidiPlaybackConfig disabled() {
+			return new MidiPlaybackConfig(false, "", Map.of());
+		}
+	}
+
+	private static final record MidiChannelChoice(int channel, String label) {
+		@Override
+		public String toString() {
+			return label;
+		}
+	}
+
+	private static final class MidiDeviceItem {
+		private final boolean available;
+		private final String selector;
+		private final String label;
+
+		private MidiDeviceItem(boolean available, String selector, String label) {
+			this.available = available;
+			this.selector = selector;
+			this.label = label;
+		}
+
+		static MidiDeviceItem available(MidiInputRouter.InputDevice device) {
+			return new MidiDeviceItem(true, Integer.toString(device.index()), device.displayName());
+		}
+
+		static MidiDeviceItem unavailable(String label) {
+			return new MidiDeviceItem(false, "", label);
+		}
+
+		boolean available() {
+			return available;
+		}
+
+		String selector() {
+			return selector;
+		}
+
+		@Override
+		public String toString() {
+			return label;
 		}
 	}
 
