@@ -37,6 +37,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.TreeMap;
 import java.util.concurrent.TimeUnit;
 
@@ -45,6 +46,7 @@ import javax.sound.midi.MidiUnavailableException;
 import javax.sound.sampled.LineUnavailableException;
 import javax.swing.BorderFactory;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -130,6 +132,7 @@ public final class RealtimeAudioPlayerUI {
 	private static final int MESSAGE_AREA_MAX = 128_000;
 	private static final int MIDI_MESSAGE_QUEUE_MAX = 512;
 	private static final int MIDI_MESSAGE_FLUSH_MAX = 64;
+	private static final int INSTRUMENT_PANEL_WIDTH = 390;
 	private static volatile boolean compactViceLogs = isCompactLogEnabledByDefault();
 
 	private final JFrame frame = new JFrame("SIDScore Realtime Player");
@@ -151,6 +154,33 @@ public final class RealtimeAudioPlayerUI {
 	private final JComboBox<MidiChannelChoice> midiVoice1ChannelCombo = new JComboBox<>(midiChannelChoices());
 	private final JComboBox<MidiChannelChoice> midiVoice2ChannelCombo = new JComboBox<>(midiChannelChoices());
 	private final JComboBox<MidiChannelChoice> midiVoice3ChannelCombo = new JComboBox<>(midiChannelChoices());
+	private final JComboBox<Integer> instrumentVoiceCombo = new JComboBox<>(new Integer[] { 1, 2, 3 });
+	private final JCheckBox instrumentLiveModeCheck = new JCheckBox("Live mode");
+	private final JToggleButton waveTriButton = new JToggleButton("TRI");
+	private final JToggleButton waveSawButton = new JToggleButton("SAW");
+	private final JToggleButton wavePulseButton = new JToggleButton("PULSE");
+	private final JToggleButton waveNoiseButton = new JToggleButton("NOISE");
+	private final JToggleButton ringButton = new JToggleButton("RING");
+	private final JToggleButton syncButton = new JToggleButton("SYNC");
+	private final JLabel waveStatusLabel = createInstrumentValueLabel("PULSE");
+	private final KnobControl attackSlider = new KnobControl(0, 15, 0);
+	private final KnobControl decaySlider = new KnobControl(0, 15, 4);
+	private final KnobControl sustainSlider = new KnobControl(0, 15, 10);
+	private final KnobControl releaseSlider = new KnobControl(0, 15, 4);
+	private final KnobControl pulseWidthSlider = new KnobControl(0, 0x0FFF, 0x0800);
+	private final KnobControl pulseSweepSlider = new KnobControl(-128, 128, 0);
+	private final KnobControl pulseMinSlider = new KnobControl(0, 0x0FFF, 0);
+	private final KnobControl pulseMaxSlider = new KnobControl(0, 0x0FFF, 0x0FFF);
+	private final JToggleButton filterLowButton = new JToggleButton("LOW");
+	private final JToggleButton filterBandButton = new JToggleButton("BAND");
+	private final JToggleButton filterHighButton = new JToggleButton("HIGH");
+	private final JLabel pulseStatusLabel = createInstrumentValueLabel("PULSE REQUIRED");
+	private final JLabel filterStatusLabel = createInstrumentValueLabel("OFF");
+	private final KnobControl filterCutoffSlider = new KnobControl(0, 2047, 0);
+	private final KnobControl filterResonanceSlider = new KnobControl(0, 15, 0);
+	private final JComboBox<SIDScoreIR.InstrumentGateMode> gateModeCombo =
+			new JComboBox<>(SIDScoreIR.InstrumentGateMode.values());
+	private final KnobControl gateMinSlider = new KnobControl(0, 16, 0);
 	private final JButton exportAsmButton = new JButton("ASM");
 	private final JButton exportWavButton = new JButton("WAV");
 	private final JButton exportSidButton = new JButton("SID");
@@ -159,6 +189,7 @@ public final class RealtimeAudioPlayerUI {
 	private final OscilloscopePanel[] scopes = new OscilloscopePanel[3];
 	private final BannerPanel bannerPanel = new BannerPanel(resolveBannerPath());
 	private final JSplitPane mainSplit;
+	private final JSplitPane editorInstrumentSplit;
 	private final JSplitPane contentSplit;
 	private final JLabel elapsedLabel = new JLabel("00:00");
 	private volatile Thread playThread;
@@ -174,11 +205,19 @@ public final class RealtimeAudioPlayerUI {
 	private volatile Process viceProcess;
 	private volatile boolean viceStopRequested = false;
 	private final Timer autoReloadTimer;
+	private final Timer instrumentLiveTimer;
 	private final Timer clockTimer;
 	private final Timer highlightTimer;
 	private final Timer midiMessageTimer;
+	private final InstrumentPanelState[] instrumentPanelStates = new InstrumentPanelState[] {
+			InstrumentPanelState.defaults(1),
+			InstrumentPanelState.defaults(2),
+			InstrumentPanelState.defaults(3)
+	};
 	private final List<String> pendingMidiMessages = new ArrayList<>();
 	private int droppedMidiMessages = 0;
+	private int activeInstrumentVoice = 1;
+	private boolean syncingInstrumentPanel = false;
 	private boolean refreshingMidiDevices = false;
 	private boolean updatingSongSelection = false;
 	private volatile boolean autoReloadEnabled = false;
@@ -209,6 +248,9 @@ public final class RealtimeAudioPlayerUI {
 	}
 
 	private RealtimeAudioPlayerUI() {
+		instrumentLiveTimer = new Timer(250, e -> requestLiveInstrumentRestart());
+		instrumentLiveTimer.setRepeats(false);
+
 		JPanel controlsPanel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 2));
 		controlsPanel.setBackground(C64_BG);
 		controlsPanel.add(createSectionLabel("Playback:"));
@@ -263,6 +305,18 @@ public final class RealtimeAudioPlayerUI {
 		styleComboBox(midiVoice1ChannelCombo);
 		styleComboBox(midiVoice2ChannelCombo);
 		styleComboBox(midiVoice3ChannelCombo);
+		styleComboBox(instrumentVoiceCombo);
+		styleComboBox(gateModeCombo);
+		styleInstrumentToggle(waveTriButton);
+		styleInstrumentToggle(waveSawButton);
+		styleInstrumentToggle(wavePulseButton);
+		styleInstrumentToggle(waveNoiseButton);
+		styleInstrumentToggle(ringButton);
+		styleInstrumentToggle(syncButton);
+		styleInstrumentToggle(filterLowButton);
+		styleInstrumentToggle(filterBandButton);
+		styleInstrumentToggle(filterHighButton);
+		styleCheckBox(instrumentLiveModeCheck);
 		selectMidiChannel(midiVoice1ChannelCombo, 1);
 		selectMidiChannel(midiVoice2ChannelCombo, 0);
 		selectMidiChannel(midiVoice3ChannelCombo, 0);
@@ -283,6 +337,8 @@ public final class RealtimeAudioPlayerUI {
 		midiVoice1ChannelCombo.addActionListener(e -> onMidiSettingsChanged());
 		midiVoice2ChannelCombo.addActionListener(e -> onMidiSettingsChanged());
 		midiVoice3ChannelCombo.addActionListener(e -> onMidiSettingsChanged());
+		instrumentVoiceCombo.addActionListener(e -> onInstrumentVoiceChanged());
+		instrumentLiveModeCheck.addActionListener(e -> onInstrumentLiveModeChanged());
 		newButton.addActionListener(e -> onNew());
 		saveButton.addActionListener(e -> onSave());
 		loadButton.addActionListener(e -> onLoad());
@@ -341,6 +397,12 @@ public final class RealtimeAudioPlayerUI {
 		scopeStack.add(scopeFooter);
 
 		JPanel editorPanel = wrapWithLabel("SIDScore", editorScroll);
+		JPanel instrumentPanel = createInstrumentPanel();
+		editorPanel.setMinimumSize(new Dimension(320, 240));
+		instrumentPanel.setMinimumSize(new Dimension(INSTRUMENT_PANEL_WIDTH, 240));
+		editorInstrumentSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, editorPanel, instrumentPanel);
+		editorInstrumentSplit.setResizeWeight(1.0);
+		styleSplitPane(editorInstrumentSplit, 6);
 
 		JScrollPane examplesScroll = new JScrollPane(exampleTree);
 		styleScrollPane(examplesScroll);
@@ -381,7 +443,7 @@ public final class RealtimeAudioPlayerUI {
 		leftSplit.setResizeWeight(0.6);
 		styleSplitPane(leftSplit, 6);
 
-		mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftSplit, editorPanel);
+		mainSplit = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftSplit, editorInstrumentSplit);
 		mainSplit.setResizeWeight(0.3);
 		styleSplitPane(mainSplit, 6);
 
@@ -440,7 +502,7 @@ public final class RealtimeAudioPlayerUI {
 		styleSplitPane(contentSplit, 6);
 
 		frame.add(contentSplit, BorderLayout.CENTER);
-		frame.setMinimumSize(new Dimension(780, 500));
+		frame.setMinimumSize(new Dimension(1120, 560));
 		frame.getContentPane().setBackground(C64_BG);
 
 		Timer repaintTimer = new Timer(16, e -> {
@@ -475,6 +537,7 @@ public final class RealtimeAudioPlayerUI {
 		frame.setVisible(true);
 		SwingUtilities.invokeLater(() -> {
 			mainSplit.setDividerLocation(0.3);
+			editorInstrumentSplit.setDividerLocation(frame.getWidth() - INSTRUMENT_PANEL_WIDTH - 48);
 			contentSplit.setDividerLocation(0.76);
 		});
 	}
@@ -1092,6 +1155,19 @@ public final class RealtimeAudioPlayerUI {
 		button.setBackground(C64_BUTTON);
 	}
 
+	private static void styleCheckBox(JCheckBox checkBox) {
+		checkBox.setFont(C64_FONT_BOLD);
+		checkBox.setBackground(SCOPE_BG);
+		checkBox.setForeground(SCOPE_TRACE);
+		checkBox.setOpaque(true);
+		checkBox.setFocusPainted(false);
+	}
+
+	private static void styleInstrumentToggle(javax.swing.AbstractButton button) {
+		button.setFont(C64_FONT_BOLD);
+		button.setFocusPainted(false);
+	}
+
 	private static void styleComboBox(JComboBox<?> combo) {
 		combo.setFont(C64_FONT_BOLD);
 		combo.setForeground(C64_BUTTON);
@@ -1144,6 +1220,495 @@ public final class RealtimeAudioPlayerUI {
 		panel.add(label, BorderLayout.NORTH);
 		panel.add(content, BorderLayout.CENTER);
 		return panel;
+	}
+
+	private JPanel createInstrumentPanel() {
+		JPanel body = new JPanel();
+		body.setLayout(new javax.swing.BoxLayout(body, javax.swing.BoxLayout.Y_AXIS));
+		body.setBackground(SCOPE_BG);
+		body.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+
+		body.add(createInstrumentControlSection());
+		body.add(createInstrumentWaveformSection());
+		body.add(createInstrumentEnvelopeSection());
+		body.add(createInstrumentPulseSection());
+		body.add(createInstrumentFilterSection());
+		body.add(createInstrumentGateSection());
+
+		JScrollPane scroll = new JScrollPane(body);
+		styleScrollPane(scroll);
+		scroll.setBackground(SCOPE_BG);
+		scroll.getViewport().setBackground(SCOPE_BG);
+		scroll.setPreferredSize(new Dimension(INSTRUMENT_PANEL_WIDTH, 360));
+
+		addInstrumentControlListeners();
+		loadInstrumentPanelState(activeInstrumentVoice);
+
+		JPanel panel = wrapWithLabel("Instrument", scroll);
+		panel.setPreferredSize(new Dimension(INSTRUMENT_PANEL_WIDTH, 360));
+		return panel;
+	}
+
+	private JPanel createInstrumentControlSection() {
+		JPanel section = createInstrumentSection("CONTROL");
+		JPanel row = createInstrumentRow();
+		row.add(createInstrumentLabel("VOICE"));
+		row.add(instrumentVoiceCombo);
+		row.add(instrumentLiveModeCheck);
+		section.add(row);
+		return section;
+	}
+
+	private JPanel createInstrumentWaveformSection() {
+		JPanel section = createInstrumentSection("WAVEFORM");
+		JPanel grid = new JPanel(new java.awt.GridLayout(2, 2, 6, 6));
+		grid.setBackground(SCOPE_BG);
+		grid.setBorder(BorderFactory.createEmptyBorder(2, 6, 6, 6));
+		grid.add(waveTriButton);
+		grid.add(waveSawButton);
+		grid.add(wavePulseButton);
+		grid.add(waveNoiseButton);
+		section.add(grid);
+
+		JPanel row = createInstrumentRow();
+		row.add(syncButton);
+		row.add(ringButton);
+		waveStatusLabel.setPreferredSize(new Dimension(128, 20));
+		row.add(waveStatusLabel);
+		section.add(row);
+		return section;
+	}
+
+	private JPanel createInstrumentEnvelopeSection() {
+		JPanel section = createInstrumentSection("VOLUME ENVELOPE");
+		section.add(createInstrumentKnobRack(
+				new KnobSpec("A", attackSlider, Integer::toString),
+				new KnobSpec("D", decaySlider, Integer::toString),
+				new KnobSpec("S", sustainSlider, Integer::toString),
+				new KnobSpec("R", releaseSlider, Integer::toString)));
+		return section;
+	}
+
+	private JPanel createInstrumentPulseSection() {
+		JPanel section = createInstrumentSection("PULSE MODULATION");
+		JPanel statusRow = createInstrumentRow();
+		pulseStatusLabel.setPreferredSize(new Dimension(160, 20));
+		statusRow.add(pulseStatusLabel);
+		section.add(statusRow);
+		section.add(createInstrumentKnobRack(
+				new KnobSpec("PW", pulseWidthSlider, v -> formatHex(v, 4)),
+				new KnobSpec("SWEEP", pulseSweepSlider, Integer::toString),
+				new KnobSpec("MIN", pulseMinSlider, v -> formatHex(v, 4)),
+				new KnobSpec("MAX", pulseMaxSlider, v -> formatHex(v, 4))));
+		return section;
+	}
+
+	private JPanel createInstrumentFilterSection() {
+		JPanel section = createInstrumentSection("FILTER");
+		JPanel row = createInstrumentRow();
+		row.add(filterLowButton);
+		row.add(filterBandButton);
+		row.add(filterHighButton);
+		filterStatusLabel.setPreferredSize(new Dimension(70, 20));
+		row.add(filterStatusLabel);
+		section.add(row);
+		section.add(createInstrumentKnobRack(
+				new KnobSpec("CUTOFF", filterCutoffSlider, Integer::toString),
+				new KnobSpec("RESON", filterResonanceSlider, Integer::toString)));
+		return section;
+	}
+
+	private JPanel createInstrumentGateSection() {
+		JPanel section = createInstrumentSection("ARTICULATION");
+		JPanel row = createInstrumentRow();
+		row.add(createInstrumentLabel("GATE"));
+		row.add(gateModeCombo);
+		section.add(row);
+		section.add(createInstrumentKnobRack(
+				new KnobSpec("GATEMIN", gateMinSlider, Integer::toString)));
+		return section;
+	}
+
+	private static JPanel createInstrumentSection(String title) {
+		JPanel section = new JPanel();
+		section.setLayout(new javax.swing.BoxLayout(section, javax.swing.BoxLayout.Y_AXIS));
+		section.setBackground(SCOPE_BG);
+		section.setBorder(BorderFactory.createCompoundBorder(
+				BorderFactory.createMatteBorder(0, 0, 1, 0, C64_BUTTON),
+				BorderFactory.createEmptyBorder(8, 6, 8, 6)));
+		JLabel label = new JLabel(title);
+		label.setFont(C64_FONT_BOLD);
+		label.setForeground(C64_NAVIGATOR_TEXT);
+		label.setAlignmentX(JPanel.LEFT_ALIGNMENT);
+		section.add(label);
+		return section;
+	}
+
+	private static JPanel createInstrumentRow() {
+		JPanel row = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 3));
+		row.setBackground(SCOPE_BG);
+		row.setAlignmentX(JPanel.LEFT_ALIGNMENT);
+		return row;
+	}
+
+	private JPanel createInstrumentKnobRack(KnobSpec... specs) {
+		JPanel rack = new JPanel(new java.awt.GridLayout(1, specs.length, 8, 0));
+		rack.setBackground(SCOPE_BG);
+		rack.setBorder(BorderFactory.createEmptyBorder(4, 2, 4, 2));
+		rack.setMaximumSize(new Dimension(Integer.MAX_VALUE, 96));
+		rack.setAlignmentX(JPanel.LEFT_ALIGNMENT);
+		for (KnobSpec spec : specs) {
+			rack.add(createInstrumentKnobColumn(spec));
+		}
+		return rack;
+	}
+
+	private JPanel createInstrumentKnobColumn(KnobSpec spec) {
+		KnobControl knob = spec.knob();
+		InstrumentValueFormatter formatter = spec.formatter();
+		styleInstrumentKnob(knob);
+		JLabel value = createInstrumentValueLabel(formatter.format(knob.getValue()));
+		value.setHorizontalAlignment(SwingConstants.CENTER);
+		JLabel name = createInstrumentLabel(spec.title());
+		name.setHorizontalAlignment(SwingConstants.CENTER);
+		knob.addChangeListener(e -> {
+			value.setText(formatter.format(knob.getValue()));
+			onInstrumentSettingsChanged();
+		});
+
+		JPanel column = new JPanel(new BorderLayout(0, 0));
+		column.setBackground(SCOPE_BG);
+		column.setBorder(BorderFactory.createEmptyBorder(0, 0, 0, 0));
+		column.add(value, BorderLayout.NORTH);
+		column.add(knob, BorderLayout.CENTER);
+		column.add(name, BorderLayout.SOUTH);
+		return column;
+	}
+
+	private static JLabel createInstrumentLabel(String text) {
+		JLabel label = new JLabel(text);
+		label.setFont(C64_FONT_BOLD);
+		label.setForeground(SCOPE_TRACE);
+		return label;
+	}
+
+	private static JLabel createInstrumentValueLabel(String text) {
+		JLabel label = new JLabel(text);
+		label.setFont(C64_FONT_BOLD);
+		label.setForeground(SIDSCOREAREA_TEXT);
+		label.setHorizontalAlignment(SwingConstants.RIGHT);
+		return label;
+	}
+
+	private static void styleInstrumentKnob(KnobControl knob) {
+		knob.setOpaque(false);
+		knob.setBackground(SCOPE_BG);
+		knob.setForeground(SCOPE_TRACE);
+		knob.setPreferredSize(new Dimension(62, 58));
+	}
+
+	private void addInstrumentControlListeners() {
+		java.awt.event.ActionListener listener = e -> onInstrumentSettingsChanged();
+		waveTriButton.addActionListener(e -> onWaveButtonChanged(waveTriButton));
+		waveSawButton.addActionListener(e -> onWaveButtonChanged(waveSawButton));
+		wavePulseButton.addActionListener(e -> onWaveButtonChanged(wavePulseButton));
+		waveNoiseButton.addActionListener(e -> onWaveButtonChanged(waveNoiseButton));
+		ringButton.addActionListener(e -> onRingButtonChanged());
+		syncButton.addActionListener(listener);
+		filterLowButton.addActionListener(listener);
+		filterBandButton.addActionListener(listener);
+		filterHighButton.addActionListener(listener);
+		gateModeCombo.addActionListener(listener);
+	}
+
+	private void onWaveButtonChanged(JToggleButton source) {
+		if (syncingInstrumentPanel) {
+			return;
+		}
+		syncingInstrumentPanel = true;
+		try {
+			enforceLegalInstrumentSelection(source);
+		} finally {
+			syncingInstrumentPanel = false;
+		}
+		finishInstrumentSettingsChanged();
+	}
+
+	private void onRingButtonChanged() {
+		if (syncingInstrumentPanel) {
+			return;
+		}
+		syncingInstrumentPanel = true;
+		try {
+			enforceLegalInstrumentSelection(ringButton);
+		} finally {
+			syncingInstrumentPanel = false;
+		}
+		finishInstrumentSettingsChanged();
+	}
+
+	private void onInstrumentVoiceChanged() {
+		if (syncingInstrumentPanel) {
+			return;
+		}
+		saveInstrumentPanelState(activeInstrumentVoice);
+		activeInstrumentVoice = selectedInstrumentVoice();
+		loadInstrumentPanelState(activeInstrumentVoice);
+		if (instrumentLiveModeCheck.isSelected()) {
+			instrumentLiveTimer.restart();
+		}
+	}
+
+	private void onInstrumentLiveModeChanged() {
+		saveInstrumentPanelState(activeInstrumentVoice);
+		instrumentLiveTimer.restart();
+	}
+
+	private void onInstrumentSettingsChanged() {
+		if (syncingInstrumentPanel) {
+			return;
+		}
+		syncingInstrumentPanel = true;
+		try {
+			enforceLegalInstrumentSelection(null);
+		} finally {
+			syncingInstrumentPanel = false;
+		}
+		finishInstrumentSettingsChanged();
+	}
+
+	private void finishInstrumentSettingsChanged() {
+		saveInstrumentPanelState(activeInstrumentVoice);
+		if (instrumentLiveModeCheck.isSelected()) {
+			instrumentLiveTimer.restart();
+		}
+	}
+
+	private void enforceLegalInstrumentSelection(JToggleButton source) {
+		// SID can AND triangle/saw/pulse, but noise combinations can lock the noise generator.
+		if (source == waveNoiseButton && waveNoiseButton.isSelected()) {
+			waveTriButton.setSelected(false);
+			waveSawButton.setSelected(false);
+			wavePulseButton.setSelected(false);
+			ringButton.setSelected(false);
+		} else if (source != waveNoiseButton && source != null && source.isSelected()
+				&& (source == waveTriButton || source == waveSawButton || source == wavePulseButton)) {
+			waveNoiseButton.setSelected(false);
+		} else if (waveNoiseButton.isSelected() && selectedNonNoiseWaveMask() != 0) {
+			waveNoiseButton.setSelected(false);
+		}
+
+		if (source == ringButton && ringButton.isSelected() && !waveTriButton.isSelected()) {
+			waveNoiseButton.setSelected(false);
+			waveTriButton.setSelected(true);
+		}
+		if (!waveTriButton.isSelected()) {
+			ringButton.setSelected(false);
+		}
+		if (selectedWaveMask() == 0) {
+			wavePulseButton.setSelected(true);
+		}
+		updateInstrumentControlAvailability();
+	}
+
+	private void updateInstrumentControlAvailability() {
+		int waveMask = selectedWaveMask();
+		boolean pulse = (waveMask & SIDScoreIR.Wave.PULSE.mask) != 0;
+		boolean filter = selectedFilterModeMask() != 0;
+		pulseWidthSlider.setEnabled(pulse);
+		pulseSweepSlider.setEnabled(pulse);
+		pulseMinSlider.setEnabled(pulse);
+		pulseMaxSlider.setEnabled(pulse);
+		filterCutoffSlider.setEnabled(filter);
+		filterResonanceSlider.setEnabled(filter);
+		pulseStatusLabel.setText(pulse ? "ACTIVE" : "PULSE REQUIRED");
+		filterStatusLabel.setText(filter ? formatFilterMask(selectedFilterModeMask()) : "OFF");
+		waveStatusLabel.setText(formatWaveMask(waveMask));
+	}
+
+	private int selectedNonNoiseWaveMask() {
+		int mask = 0;
+		if (waveTriButton.isSelected()) {
+			mask |= SIDScoreIR.Wave.TRI.mask;
+		}
+		if (waveSawButton.isSelected()) {
+			mask |= SIDScoreIR.Wave.SAW.mask;
+		}
+		if (wavePulseButton.isSelected()) {
+			mask |= SIDScoreIR.Wave.PULSE.mask;
+		}
+		return mask;
+	}
+
+	private int selectedWaveMask() {
+		if (waveNoiseButton.isSelected()) {
+			return SIDScoreIR.Wave.NOISE.mask;
+		}
+		return selectedNonNoiseWaveMask();
+	}
+
+	private int selectedFilterModeMask() {
+		int filterModeMask = 0;
+		if (filterLowButton.isSelected()) {
+			filterModeMask |= SIDScoreIR.FilterMode.LP.mask;
+		}
+		if (filterBandButton.isSelected()) {
+			filterModeMask |= SIDScoreIR.FilterMode.BP.mask;
+		}
+		if (filterHighButton.isSelected()) {
+			filterModeMask |= SIDScoreIR.FilterMode.HP.mask;
+		}
+		return filterModeMask;
+	}
+
+	private static String formatWaveMask(int waveMask) {
+		if ((waveMask & SIDScoreIR.Wave.NOISE.mask) != 0) {
+			return "NOISE";
+		}
+		StringBuilder sb = new StringBuilder();
+		if ((waveMask & SIDScoreIR.Wave.TRI.mask) != 0) {
+			sb.append("TRI");
+		}
+		if ((waveMask & SIDScoreIR.Wave.SAW.mask) != 0) {
+			if (sb.length() > 0) {
+				sb.append('+');
+			}
+			sb.append("SAW");
+		}
+		if ((waveMask & SIDScoreIR.Wave.PULSE.mask) != 0) {
+			if (sb.length() > 0) {
+				sb.append('+');
+			}
+			sb.append("PULSE");
+		}
+		return sb.length() > 0 ? sb.toString() : "PULSE";
+	}
+
+	private static String formatFilterMask(int filterMask) {
+		StringBuilder sb = new StringBuilder();
+		if ((filterMask & SIDScoreIR.FilterMode.LP.mask) != 0) {
+			sb.append("LOW");
+		}
+		if ((filterMask & SIDScoreIR.FilterMode.BP.mask) != 0) {
+			if (sb.length() > 0) {
+				sb.append('+');
+			}
+			sb.append("BAND");
+		}
+		if ((filterMask & SIDScoreIR.FilterMode.HP.mask) != 0) {
+			if (sb.length() > 0) {
+				sb.append('+');
+			}
+			sb.append("HIGH");
+		}
+		return sb.length() > 0 ? sb.toString() : "OFF";
+	}
+
+	private void requestLiveInstrumentRestart() {
+		if (activeRenderer() != PlaybackRenderer.SRAP) {
+			if (isPlaying() && instrumentLiveModeCheck.isSelected()) {
+				setMessage("Instrument live mode is available for SRAP playback.", MSG_WARN);
+			}
+			return;
+		}
+		if (isPlaying()) {
+			restartPending = true;
+			restartOnlyWhenAutoReload = false;
+			restartShowDialogs = false;
+			onStop(false);
+		} else if (midiMonitorThread != null) {
+			restartMidiMonitor();
+		} else {
+			startMidiMonitorIfNeeded(false);
+		}
+	}
+
+	private int selectedInstrumentVoice() {
+		Object value = instrumentVoiceCombo.getSelectedItem();
+		if (value instanceof Integer voice && voice >= 1 && voice <= 3) {
+			return voice;
+		}
+		return 1;
+	}
+
+	private void saveInstrumentPanelState(int voiceIndex) {
+		int index = Math.max(1, Math.min(3, voiceIndex)) - 1;
+		instrumentPanelStates[index] = readInstrumentPanelState(index + 1);
+	}
+
+	private void loadInstrumentPanelState(int voiceIndex) {
+		int index = Math.max(1, Math.min(3, voiceIndex)) - 1;
+		InstrumentPanelState state = instrumentPanelStates[index];
+		syncingInstrumentPanel = true;
+		try {
+			waveTriButton.setSelected((state.waveMask & SIDScoreIR.Wave.TRI.mask) != 0);
+			waveSawButton.setSelected((state.waveMask & SIDScoreIR.Wave.SAW.mask) != 0);
+			wavePulseButton.setSelected((state.waveMask & SIDScoreIR.Wave.PULSE.mask) != 0);
+			waveNoiseButton.setSelected((state.waveMask & SIDScoreIR.Wave.NOISE.mask) != 0);
+			syncButton.setSelected(state.sync);
+			ringButton.setSelected(state.ring);
+			attackSlider.setValue(state.attack);
+			decaySlider.setValue(state.decay);
+			sustainSlider.setValue(state.sustain);
+			releaseSlider.setValue(state.release);
+			pulseWidthSlider.setValue(state.pulseWidth);
+			pulseSweepSlider.setValue(state.pulseSweep);
+			pulseMinSlider.setValue(state.pulseMin);
+			pulseMaxSlider.setValue(state.pulseMax);
+			filterLowButton.setSelected((state.filterModeMask & SIDScoreIR.FilterMode.LP.mask) != 0);
+			filterBandButton.setSelected((state.filterModeMask & SIDScoreIR.FilterMode.BP.mask) != 0);
+			filterHighButton.setSelected((state.filterModeMask & SIDScoreIR.FilterMode.HP.mask) != 0);
+			filterCutoffSlider.setValue(state.filterCutoff);
+			filterResonanceSlider.setValue(state.filterResonance);
+			gateModeCombo.setSelectedItem(state.gateMode);
+			gateMinSlider.setValue(state.gateMin);
+			enforceLegalInstrumentSelection(null);
+		} finally {
+			syncingInstrumentPanel = false;
+		}
+	}
+
+	private InstrumentPanelState readInstrumentPanelState(int voiceIndex) {
+		int waveMask = selectedWaveMask();
+		int filterModeMask = selectedFilterModeMask();
+		Object gateMode = gateModeCombo.getSelectedItem();
+		SIDScoreIR.InstrumentGateMode mode = gateMode instanceof SIDScoreIR.InstrumentGateMode selected
+				? selected
+				: SIDScoreIR.InstrumentGateMode.RETRIGGER;
+		int min = pulseMinSlider.getValue();
+		int max = pulseMaxSlider.getValue();
+		if (min > max) {
+			int tmp = min;
+			min = max;
+			max = tmp;
+		}
+		return new InstrumentPanelState(voiceIndex, waveMask,
+				attackSlider.getValue(), decaySlider.getValue(), sustainSlider.getValue(), releaseSlider.getValue(),
+				pulseWidthSlider.getValue(), pulseSweepSlider.getValue(), min, max,
+				filterModeMask, filterCutoffSlider.getValue(), filterResonanceSlider.getValue(),
+				syncButton.isSelected(), ringButton.isSelected(), mode, gateMinSlider.getValue());
+	}
+
+	private SIDScoreIR.TimedScore applyLiveInstrumentOverride(SIDScoreIR.TimedScore score) {
+		if (score == null || !instrumentLiveModeCheck.isSelected()) {
+			return score;
+		}
+		int voiceIndex = selectedInstrumentVoice();
+		saveInstrumentPanelState(voiceIndex);
+		InstrumentPanelState state = instrumentPanelStates[voiceIndex - 1];
+		Map<Integer, SIDScoreIR.TimedVoice> voices = new LinkedHashMap<>(score.voices());
+		SIDScoreIR.TimedVoice original = voices.get(voiceIndex);
+		List<SIDScoreIR.TimedEvent> events = original != null ? original.events() : List.of();
+		voices.put(voiceIndex, new SIDScoreIR.TimedVoice(voiceIndex, state.toInstrument(), events));
+		appendMessageAsync("Live Instrument: voice " + voiceIndex + " <- panel", MSG_INFO);
+		return new SIDScoreIR.TimedScore(score.title(), score.author(), score.released(),
+				score.tempoBpm(), score.ticksPerWhole(), score.defaultSwing(), score.system(),
+				score.tables(), score.effects(), voices, score.subtunes());
+	}
+
+	private static String formatHex(int value, int digits) {
+		String format = "$%0" + digits + "X";
+		return String.format(Locale.ROOT, format, value);
 	}
 
 	private void onSourceChanged() {
@@ -1202,7 +1767,8 @@ public final class RealtimeAudioPlayerUI {
 		if (sourceScore == null) {
 			return;
 		}
-		SIDScoreIR.TimedScore monitorScore = liveMidiScore(sourceScore, midiConfig.voiceChannelMap());
+		SIDScoreIR.TimedScore monitorScore =
+				applyLiveInstrumentOverride(liveMidiScore(sourceScore, midiConfig.voiceChannelMap()));
 		RealtimeAudioPlayer monitorPlayer = new RealtimeAudioPlayer();
 		long generation = ++midiMonitorGeneration;
 		Thread thread = new Thread(() -> runMidiMonitor(monitorPlayer, midiConfig, monitorScore, generation),
@@ -1508,6 +2074,12 @@ public final class RealtimeAudioPlayerUI {
 				return false;
 			}
 			playbackTimed = bundleTunes.get(selectedSong - 1);
+		}
+
+		if (renderer == PlaybackRenderer.SRAP) {
+			playbackTimed = applyLiveInstrumentOverride(playbackTimed);
+		} else if (instrumentLiveModeCheck.isSelected()) {
+			appendMessageAsync("Live Instrument: SRAP playback only.", MSG_WARN);
 		}
 
 		if (selectedSong == 1) {
@@ -2601,6 +3173,70 @@ public final class RealtimeAudioPlayerUI {
 		}
 	}
 
+	@FunctionalInterface
+	private interface InstrumentValueFormatter {
+		String format(int value);
+	}
+
+	private static final record KnobSpec(String title, KnobControl knob, InstrumentValueFormatter formatter) {
+	}
+
+	private static final record InstrumentPanelState(int voiceIndex, int waveMask,
+			int attack, int decay, int sustain, int release,
+			int pulseWidth, int pulseSweep, int pulseMin, int pulseMax,
+			int filterModeMask, int filterCutoff, int filterResonance,
+			boolean sync, boolean ring, SIDScoreIR.InstrumentGateMode gateMode, int gateMin) {
+
+		static InstrumentPanelState defaults(int voiceIndex) {
+			return new InstrumentPanelState(voiceIndex, SIDScoreIR.Wave.PULSE.mask,
+					0, 4, 10, 4,
+					0x0800, 0, 0x0000, 0x0FFF,
+					0, 0, 0,
+					false, false, SIDScoreIR.InstrumentGateMode.RETRIGGER, 0);
+		}
+
+		SIDScoreIR.InstrumentIR toInstrument() {
+			OptionalInt cutoff = filterModeMask != 0 ? OptionalInt.of(clamp(filterCutoff, 0, 2047))
+					: OptionalInt.empty();
+			OptionalInt resonance = filterModeMask != 0 ? OptionalInt.of(clamp(filterResonance, 0, 15))
+					: OptionalInt.empty();
+			int min = clamp(pulseMin, 0, 0x0FFF);
+			int max = clamp(pulseMax, 0, 0x0FFF);
+			if (min > max) {
+				int tmp = min;
+				min = max;
+				max = tmp;
+			}
+			return new SIDScoreIR.InstrumentIR("panel_voice_" + voiceIndex,
+					waveMask,
+					new SIDScoreIR.AdsrIR(clamp(attack, 0, 15), clamp(decay, 0, 15),
+							clamp(sustain, 0, 15), clamp(release, 0, 15)),
+					OptionalInt.of(clamp(pulseWidth, 0, 0x0FFF)),
+					OptionalInt.of(min),
+					OptionalInt.of(max),
+					clamp(pulseSweep, -128, 128),
+					Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
+					filterModeMask & 0x07,
+					cutoff,
+					resonance,
+					Optional.empty(),
+					gateMode != null ? gateMode : SIDScoreIR.InstrumentGateMode.RETRIGGER,
+					clamp(gateMin, 0, 16),
+					sync,
+					ring);
+		}
+
+		private static int clamp(int value, int min, int max) {
+			if (value < min) {
+				return min;
+			}
+			if (value > max) {
+				return max;
+			}
+			return value;
+		}
+	}
+
 	private static final record MidiPlaybackConfig(boolean enabled, String deviceSelector,
 			Map<Integer, Integer> voiceChannelMap) {
 		static MidiPlaybackConfig disabled() {
@@ -2805,6 +3441,154 @@ public final class RealtimeAudioPlayerUI {
 			g2.setColor(SCOPE_TRACE);
 			g2.setFont(C64_FONT_BOLD);
 			g2.drawString(title, 8, 16);
+		}
+	}
+
+	private static final class KnobControl extends JComponent {
+		private static final long serialVersionUID = -2329872384327522431L;
+
+		private final int min;
+		private final int max;
+		private final List<javax.swing.event.ChangeListener> listeners = new ArrayList<>();
+		private int value;
+		private int dragStartY;
+		private int dragStartValue;
+
+		KnobControl(int min, int max, int value) {
+			this.min = min;
+			this.max = max;
+			this.value = clamp(value);
+			setFocusable(true);
+			setPreferredSize(new Dimension(70, 62));
+			addMouseListener(new MouseAdapter() {
+				@Override
+				public void mousePressed(MouseEvent e) {
+					requestFocusInWindow();
+					dragStartY = e.getY();
+					dragStartValue = KnobControl.this.value;
+				}
+			});
+			addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+				@Override
+				public void mouseDragged(MouseEvent e) {
+					double unitsPerPixel = Math.max(0.08, (max - min) / 180.0);
+					int next = dragStartValue + (int) Math.round((dragStartY - e.getY()) * unitsPerPixel);
+					setValue(next);
+				}
+			});
+			addMouseWheelListener(e -> {
+				int range = Math.max(1, max - min);
+				int step = e.isShiftDown() ? Math.max(1, range / 32) : Math.max(1, range / 256);
+				setValue(this.value - e.getWheelRotation() * step);
+			});
+			getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_LEFT, 0), "decrease");
+			getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_DOWN, 0), "decrease");
+			getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_RIGHT, 0), "increase");
+			getInputMap(WHEN_FOCUSED).put(KeyStroke.getKeyStroke(KeyEvent.VK_UP, 0), "increase");
+			getActionMap().put("decrease", new javax.swing.AbstractAction() {
+				@Override
+				public void actionPerformed(java.awt.event.ActionEvent e) {
+					setValue(KnobControl.this.value - keyboardStep());
+				}
+			});
+			getActionMap().put("increase", new javax.swing.AbstractAction() {
+				@Override
+				public void actionPerformed(java.awt.event.ActionEvent e) {
+					setValue(KnobControl.this.value + keyboardStep());
+				}
+			});
+		}
+
+		int getValue() {
+			return value;
+		}
+
+		void setValue(int value) {
+			int next = clamp(value);
+			if (this.value == next) {
+				return;
+			}
+			this.value = next;
+			repaint();
+			fireStateChanged();
+		}
+
+		void addChangeListener(javax.swing.event.ChangeListener listener) {
+			listeners.add(listener);
+		}
+
+		@Override
+		public void setEnabled(boolean enabled) {
+			super.setEnabled(enabled);
+			repaint();
+		}
+
+		private int keyboardStep() {
+			int range = Math.max(1, max - min);
+			return Math.max(1, range / 128);
+		}
+
+		private int clamp(int candidate) {
+			if (candidate < min) {
+				return min;
+			}
+			if (candidate > max) {
+				return max;
+			}
+			return candidate;
+		}
+
+		private void fireStateChanged() {
+			javax.swing.event.ChangeEvent event = new javax.swing.event.ChangeEvent(this);
+			for (javax.swing.event.ChangeListener listener : listeners) {
+				listener.stateChanged(event);
+			}
+		}
+
+		@Override
+		protected void paintComponent(Graphics g) {
+			super.paintComponent(g);
+			int w = getWidth();
+			int h = getHeight();
+			if (w <= 0 || h <= 0) {
+				return;
+			}
+			Graphics2D g2 = (Graphics2D) g.create();
+			try {
+				g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+				int size = Math.min(w, h) - 12;
+				int x = (w - size) / 2;
+				int y = (h - size) / 2;
+				int cx = x + size / 2;
+				int cy = y + size / 2;
+				double fraction = max == min ? 0.0 : (value - min) / (double) (max - min);
+				Color base = isEnabled() ? C64_BUTTON : SCOPE_BG.darker();
+				Color rim = isEnabled() ? SCOPE_TRACE : C64_BUTTON;
+				Color accent = isEnabled() ? C64_ACCENT : C64_BUTTON;
+
+				g2.setColor(base);
+				g2.fillOval(x, y, size, size);
+				g2.setColor(rim);
+				g2.setStroke(new java.awt.BasicStroke(2f));
+				g2.drawOval(x + 1, y + 1, size - 2, size - 2);
+
+				g2.setColor(C64_BUTTON.darker());
+				g2.setStroke(new java.awt.BasicStroke(3f, java.awt.BasicStroke.CAP_ROUND,
+						java.awt.BasicStroke.JOIN_ROUND));
+				g2.drawArc(x + 6, y + 6, size - 12, size - 12, 225, -270);
+				g2.setColor(accent);
+				g2.drawArc(x + 6, y + 6, size - 12, size - 12, 225, (int) Math.round(-270 * fraction));
+
+				double angle = Math.toRadians(225.0 - 270.0 * fraction);
+				int px = cx + (int) Math.round(Math.cos(angle) * size * 0.32);
+				int py = cy - (int) Math.round(Math.sin(angle) * size * 0.32);
+				g2.setColor(isEnabled() ? SIDSCOREAREA_TEXT : C64_BUTTON);
+				g2.setStroke(new java.awt.BasicStroke(3f, java.awt.BasicStroke.CAP_ROUND,
+						java.awt.BasicStroke.JOIN_ROUND));
+				g2.drawLine(cx, cy, px, py);
+			} finally {
+				g2.dispose();
+			}
 		}
 	}
 

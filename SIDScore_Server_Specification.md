@@ -1,6 +1,6 @@
 # SIDScore Player Server Specification
 
-Version: **0.4.0 (draft)**
+Version: **0.5.0 (draft)**
 
 ## 1. Purpose
 
@@ -17,6 +17,7 @@ This specification covers:
 - Launch and connection model
 - Binary frame protocol
 - Playback commands
+- Live instrument configuration commands
 - Voice and waveform telemetry
 - Score source maps for editor highlighting
 - Live highlight state
@@ -59,8 +60,8 @@ startup error occurs.
 The first version uses one full-duplex TCP connection:
 
 - Client to server: playback commands.
-- Server to client: playback state, score maps, voice state, scope buckets,
-  highlight state, and errors.
+- Server to client: playback state, score maps, instrument state, voice state,
+  scope buckets, highlight state, and errors.
 
 Only one client connection is required. A server MAY reject additional clients
 with an error frame or by closing the connection.
@@ -120,6 +121,8 @@ they map directly to Monaco/Theia editor positions.
 0x12 CONTINUE           client -> server
 0x13 STOP               client -> server
 0x14 PLAY_SOURCE        client -> server
+0x15 SET_INSTRUMENT     client -> server
+0x16 RESET_INSTRUMENT   client -> server
 
 0x20 PLAYBACK_STATE     server -> client
 0x21 SCORE_MAP          server -> client
@@ -127,6 +130,7 @@ they map directly to Monaco/Theia editor positions.
 0x23 VOICE_STATE        server -> client
 0x24 SCOPE_BUCKETS      server -> client
 0x25 SCOPE_SAMPLES      server -> client
+0x26 INSTRUMENT_STATE   server -> client
 
 0x7f ERROR              both directions
 ```
@@ -152,6 +156,7 @@ bit 1  wants HIGHLIGHT_STATE
 bit 2  wants VOICE_STATE
 bit 3  wants SCOPE_BUCKETS
 bit 4  wants SCOPE_SAMPLES
+bit 5  wants INSTRUMENT_STATE
 ```
 
 ### HELLO_ACK Payload
@@ -182,9 +187,12 @@ Java process can read.
 
 On successful `PLAY`, the server parses and resolves the score, emits
 `PLAYBACK_STATE` with state `loading`, resets voice state to silence, emits
-`SCORE_MAP` if requested, resets voice state to silence again for clients that
-initialize visual state from the map, then starts playback and emits
-`PLAYBACK_STATE` with state `playing`.
+`SCORE_MAP` if requested, emits `INSTRUMENT_STATE` if requested, resets voice
+state to silence again for clients that initialize visual state from the map,
+then starts playback and emits `PLAYBACK_STATE` with state `playing`.
+
+Any currently wired instrument settings are applied to the resolved score before
+`SCORE_MAP` is built and before playback starts.
 
 If another score is already playing, `PLAY` stops the current score and starts
 the new one from the beginning.
@@ -218,7 +226,8 @@ limit.
 
 On successful `PLAY_SOURCE`, the server follows the same state sequence as
 `PLAY`: parse/resolve, emit `PLAYBACK_STATE` `loading`, emit `SCORE_MAP` if
-requested, start playback, and emit `PLAYBACK_STATE` `playing`.
+requested, emit `INSTRUMENT_STATE` if requested, start playback, and emit
+`PLAYBACK_STATE` `playing`.
 
 If another score is already playing, `PLAY_SOURCE` stops the current score and
 starts the sent source from the beginning.
@@ -258,7 +267,119 @@ After `STOP`, the server emits:
 - `HIGHLIGHT_STATE` with all active event ids set to `-1`
 - `PLAYBACK_STATE` state `stopped`
 
-## 9. Playback State
+## 9. Instrument Commands
+
+Instrument commands are per voice and can be sent before any score is loaded.
+The server stores them as wired overrides for the selected voice. If a score is
+loaded, wired overrides replace the resolved score instrument for that voice,
+including any instrument table references from the score.
+
+If playback is active when an instrument command changes the effective
+instrument, the server MAY stop and restart the loaded score from the beginning
+with a new `scoreId`. Restarting is allowed because gate settings can change
+frame-event timing and therefore require a new `SCORE_MAP`.
+
+### SET_INSTRUMENT Payload
+
+```text
+u32 requestId
+u8  voiceIndex        1..3
+u8  waveMask
+u8  attack            0..15
+u8  decay             0..15
+u8  sustain           0..15
+u8  release           0..15
+u16 pulseWidth        0..4095
+i16 pulseSweep        recommended -128..128
+u16 pulseMin          0..4095
+u16 pulseMax          0..4095
+u8  filterModeMask
+u16 filterCutoff      0..2047
+u8  filterResonance   0..15
+u8  gateMode          0=retrigger, 1=legato
+u8  gateMin           0..16
+bool8 sync
+bool8 ring
+str instrumentName
+```
+
+`SET_INSTRUMENT` stores a complete wired instrument for `voiceIndex`. The server
+responds with `INSTRUMENT_STATE` when the client advertises that capability.
+
+Wave bits:
+
+```text
+bit 0 PULSE
+bit 1 SAW
+bit 2 TRI
+bit 3 NOISE
+```
+
+Legal waveform rules:
+
+- `TRI`, `SAW`, and `PULSE` may be combined.
+- `NOISE` is exclusive; if set, the server treats the waveform as noise-only.
+- A zero waveform mask is normalized to `PULSE`.
+- Ring modulation requires `TRI`; if `ring` is true for a non-noise waveform
+  without `TRI`, the server adds `TRI`.
+- Ring modulation is disabled for `NOISE`.
+
+`filterModeMask` uses the same bits as SIDScore filter modes: bit 0 low-pass,
+bit 1 band-pass, bit 2 high-pass. When the mask is zero, cutoff and resonance
+are ignored.
+
+Wired instruments do not carry score table sequence names. A wired override
+therefore replaces `WAVESEQ`, `PWSEQ`, `GATESEQ`, `PITCHSEQ`, and `FILTERSEQ`
+from the score instrument for that voice while the override is active.
+
+### RESET_INSTRUMENT Payload
+
+```text
+u32 requestId
+u8  voiceIndex        1..3
+```
+
+`RESET_INSTRUMENT` clears the wired override for `voiceIndex`. The effective
+instrument becomes:
+
+1. the instrument resolved from the currently loaded score, if one exists for
+   that voice;
+2. otherwise the server default instrument.
+
+The server responds with `INSTRUMENT_STATE` when the client advertises that
+capability.
+
+### INSTRUMENT_STATE Payload
+
+```text
+u32 requestId          0 for unsolicited state
+u8  voiceIndex         1..3
+u8  source             0=default, 1=score, 2=override
+u16 reserved
+u8  waveMask
+u8  attack
+u8  decay
+u8  sustain
+u8  release
+u16 pulseWidth
+i16 pulseSweep
+u16 pulseMin
+u16 pulseMax
+u8  filterModeMask
+u16 filterCutoff
+u8  filterResonance
+u8  gateMode           0=retrigger, 1=legato
+u8  gateMin
+bool8 sync
+bool8 ring
+str instrumentName
+```
+
+The server emits `INSTRUMENT_STATE` for all three voices after `HELLO_ACK` when
+requested, after successful `PLAY`/`PLAY_SOURCE`, and after
+`SET_INSTRUMENT`/`RESET_INSTRUMENT`.
+
+## 10. Playback State
 
 ### PLAYBACK_STATE Payload
 
@@ -297,7 +418,7 @@ Reasons:
 
 `scoreId` is generated by the server for each successful `PLAY`.
 
-## 10. Score Map
+## 11. Score Map
 
 The score map is sent once after a successful parse and before playback starts.
 It maps compiled timeline events to source ranges. The IDE uses this for editor
@@ -357,7 +478,7 @@ to the same source range. Each still gets its own `eventId`.
 
 For imported files, `sourceId` references that imported source URI/path.
 
-## 11. Highlight State
+## 12. Highlight State
 
 Highlight state is sent during playback at frame-event boundaries and MAY also
 be sent once per telemetry block for simplicity.
@@ -380,7 +501,7 @@ The IDE highlights the source ranges for the active event ids in the current
 The Java server is authoritative for highlight timing. The IDE MUST NOT attempt
 to re-expand repeats, tuplets, ties, gate-min behavior, or imports.
 
-## 12. Voice State
+## 13. Voice State
 
 Voice state reports SIDScore/SID playback state for visualizers. It does not
 expose MIDI.
@@ -473,7 +594,7 @@ before each new playback starts. The silent state clears active, gate, waveform,
 frequency, sync/ring, filter-route, envelope, and output state for all three SID
 voices so clients do not carry stale gate or waveform state into the next play.
 
-## 13. Scope Data
+## 14. Scope Data
 
 The server supports two scope data formats:
 
@@ -532,7 +653,7 @@ This frame is larger than `SCOPE_BUCKETS` but still modest on localhost. With
 512 samples per block, 3 voices, and `i16` samples, the payload is roughly 3 KiB
 per block before the frame header.
 
-## 14. Error Frames
+## 15. Error Frames
 
 ### ERROR Payload
 
@@ -558,7 +679,7 @@ Error codes:
 
 Error messages are for diagnostics and logs. Clients should branch on `code`.
 
-## 15. Timing
+## 16. Timing
 
 `frameIndex` means SIDScore player frame, not audio sample. It follows the
 resolved score system:
@@ -571,7 +692,7 @@ resolved score system:
 `timestampNanos` in the frame header is sender-local monotonic time and is only
 for latency estimation. It is not a wall-clock timestamp.
 
-## 16. Implementation Notes
+## 17. Implementation Notes
 
 The Java implementation should introduce a dedicated server entry point, for
 example:
@@ -598,9 +719,10 @@ server should call these for `STOP`, `PAUSE`, and `CONTINUE`.
 The server should avoid letting network I/O block the audio thread. Telemetry
 frames should be written through a bounded queue. If the client falls behind,
 the server MAY drop `VOICE_STATE` and `SCOPE_BUCKETS` frames, but MUST preserve
-`PLAYBACK_STATE`, `SCORE_MAP`, `HIGHLIGHT_STATE`, and `ERROR` ordering.
+`PLAYBACK_STATE`, `SCORE_MAP`, `INSTRUMENT_STATE`, `HIGHLIGHT_STATE`, and
+`ERROR` ordering.
 
-## 17. Commodore Commander Integration
+## 18. Commodore Commander Integration
 
 Commodore Commander backend responsibilities:
 
@@ -609,18 +731,20 @@ Commodore Commander backend responsibilities:
 - Connect to the announced loopback port.
 - Send `HELLO`.
 - Send playback commands from UI actions.
+- Send instrument commands from live instrument UI actions.
 - Decode binary frames.
 - Forward editor highlight events and visualization data to the frontend.
 
 Commodore Commander frontend responsibilities:
 
 - Render playback controls.
+- Render and edit per-voice instrument settings.
 - Highlight editor ranges using `SCORE_MAP` and `HIGHLIGHT_STATE`.
 - Render voice state and scope buckets.
 
 The frontend should not parse SIDScore for playback semantics.
 
-## 18. Compatibility and Versioning
+## 19. Compatibility and Versioning
 
 Protocol version 1 is intentionally small. Future versions may add:
 

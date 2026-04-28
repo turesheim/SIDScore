@@ -1,6 +1,8 @@
 ; Shared instrument definition for Bach examples.
 ; Noisy quill transient, bright plucked body, quick decay, and narrow pulse shimmer.
 
+TEMPO 200
+
 ; --- Waveform ---
 TABLE wave HarpsiWave {
   WAVE=NOISE+PULSE RESET @1
