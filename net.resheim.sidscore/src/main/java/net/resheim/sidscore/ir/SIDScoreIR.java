@@ -113,6 +113,68 @@ public final class SIDScoreIR {
 		}
 	}
 
+	public enum EffectRetriggerMode {
+		RESTART, IGNORE, STEAL
+	}
+
+	public enum EffectSweepCurve {
+		LINEAR, EXP, LOG, STEP
+	}
+
+	public enum EffectParameter {
+		WAVE, GATE, SYNC, RING, RESET, PITCH, FREQ, PW, HIPULSE, LOWPULSE, ADSR,
+		ATTACK, DECAY, SUSTAIN, RELEASE, FILTER, FILTERROUTE, CUTOFF, RES, VOLUME
+	}
+
+	public enum EffectValueKind {
+		NONE, INT, PITCH, WAVE, ON_OFF, ADSR, FILTER
+	}
+
+	public static final record EffectValueIR(EffectValueKind kind, int value, Optional<AdsrIR> adsr) {
+		public static EffectValueIR none() {
+			return new EffectValueIR(EffectValueKind.NONE, 0, Optional.empty());
+		}
+
+		public static EffectValueIR integer(int value) {
+			return new EffectValueIR(EffectValueKind.INT, value, Optional.empty());
+		}
+
+		public static EffectValueIR pitch(int midi) {
+			return new EffectValueIR(EffectValueKind.PITCH, midi, Optional.empty());
+		}
+
+		public static EffectValueIR wave(int mask) {
+			return new EffectValueIR(EffectValueKind.WAVE, mask, Optional.empty());
+		}
+
+		public static EffectValueIR onOff(boolean on) {
+			return new EffectValueIR(EffectValueKind.ON_OFF, on ? 1 : 0, Optional.empty());
+		}
+
+		public static EffectValueIR adsr(AdsrIR adsr) {
+			return new EffectValueIR(EffectValueKind.ADSR, 0, Optional.of(adsr));
+		}
+
+		public static EffectValueIR filter(int mask) {
+			return new EffectValueIR(EffectValueKind.FILTER, mask, Optional.empty());
+		}
+	}
+
+	public sealed interface EffectStepIR permits EffectAssignmentIR, EffectSweepIR {
+	}
+
+	public static final record EffectAssignmentIR(int tick, EffectParameter parameter, EffectValueIR value)
+			implements EffectStepIR {
+	}
+
+	public static final record EffectSweepIR(EffectParameter parameter, EffectValueIR fromValue,
+			EffectValueIR toValue, int durationTicks, EffectSweepCurve curve) implements EffectStepIR {
+	}
+
+	public static final record EffectIR(String name, OptionalInt preferredVoice, int lengthTicks, int priority,
+			EffectRetriggerMode retriggerMode, List<EffectStepIR> steps) {
+	}
+
 	public static final record InstrumentIR(String name, int waveMask, AdsrIR adsr, OptionalInt pw,
 			OptionalInt pwMin, OptionalInt pwMax, int pwSweep, Optional<String> waveSeq, Optional<String> pwSeq,
 			Optional<String> gateSeq, Optional<String> pitchSeq, int filterModeMask, OptionalInt filterCutoff,
@@ -208,12 +270,14 @@ public final class SIDScoreIR {
 			Optional<TimeSigIR> timeSig,
 			Optional<VideoSystem> system,
 			Optional<SwingSetting> defaultSwing,
+			Map<String, EffectIR> effects,
 			Map<Integer, VoiceIR> voices) {
 	}
 
 	public static final record ScoreIR(Optional<String> title, Optional<String> author, Optional<String> released,
 			int tempoBpm, Optional<TimeSigIR> timeSig, Optional<VideoSystem> system, SwingSetting defaultSwing,
-			Map<String, TableIR> tables, Map<String, InstrumentIR> instruments, Map<Integer, VoiceIR> voices,
+			Map<String, TableIR> tables, Map<String, InstrumentIR> instruments, Map<String, EffectIR> effects,
+			Map<Integer, VoiceIR> voices,
 			Map<Integer, Path> subtunes, Map<Integer, SongIR> songs) {
 	}
 
@@ -283,7 +347,8 @@ public final class SIDScoreIR {
 
 	public static final record TimedScore(Optional<String> title, Optional<String> author, Optional<String> released,
 			int tempoBpm, int ticksPerWhole, SwingSetting defaultSwing, VideoSystem system,
-			Map<String, TableIR> tables, Map<Integer, TimedVoice> voices, Map<Integer, Path> subtunes) {
+			Map<String, TableIR> tables, Map<String, EffectIR> effects, Map<Integer, TimedVoice> voices,
+			Map<Integer, Path> subtunes) {
 	}
 
 	// -------------------------
@@ -406,10 +471,17 @@ public final class SIDScoreIR {
 				diag.warn(sb.toString());
 			}
 
+			for (EffectIR effect : score.effects().values()) {
+				if (effectControlsVoice(effect) && !effectEndsWithGateOff(effect)) {
+					diag.warn("EFFECT '" + effect.name() + "' ends without GATE=OFF");
+				}
+			}
+
 			diag.throwIfErrors();
 			VideoSystem system = score.system().orElse(VideoSystem.PAL);
 			TimedScore ts = new TimedScore(score.title(), score.author(), score.released(), score.tempoBpm(),
-					DEFAULT_TICKS_PER_WHOLE, score.defaultSwing(), system, tables, timedVoices, score.subtunes());
+					DEFAULT_TICKS_PER_WHOLE, score.defaultSwing(), system, tables, score.effects(),
+					timedVoices, score.subtunes());
 			return new Result(ts, diag);
 		}
 
@@ -587,6 +659,47 @@ public final class SIDScoreIR {
 				}
 			}
 			return sb.length() > 0 ? sb.toString() : "OFF";
+		}
+
+		private static boolean effectEndsWithGateOff(EffectIR effect) {
+			int lastTick = -1;
+			boolean gateOff = false;
+			for (EffectStepIR step : effect.steps()) {
+				if (!(step instanceof EffectAssignmentIR assignment))
+					continue;
+				if (assignment.parameter() != EffectParameter.GATE)
+					continue;
+				if (assignment.value().kind() != EffectValueKind.ON_OFF)
+					continue;
+				if (assignment.tick() >= lastTick) {
+					lastTick = assignment.tick();
+					gateOff = assignment.value().value() == 0;
+				}
+			}
+			return lastTick >= 0 && gateOff;
+		}
+
+		private static boolean effectControlsVoice(EffectIR effect) {
+			for (EffectStepIR step : effect.steps()) {
+				EffectParameter parameter = null;
+				if (step instanceof EffectAssignmentIR assignment) {
+					parameter = assignment.parameter();
+				} else if (step instanceof EffectSweepIR sweep) {
+					parameter = sweep.parameter();
+				}
+				if (parameter != null && !isGlobalEffectParameter(parameter)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		private static boolean isGlobalEffectParameter(EffectParameter parameter) {
+			return parameter == EffectParameter.FILTER
+					|| parameter == EffectParameter.FILTERROUTE
+					|| parameter == EffectParameter.CUTOFF
+					|| parameter == EffectParameter.RES
+					|| parameter == EffectParameter.VOLUME;
 		}
 
 		private static void flatten(List<VoiceItemIR> items, Consumer<VoiceItemIR> out) {

@@ -1,36 +1,49 @@
-; Shared piano-like instruments for Beethoven sonata imports.
-; This aims at a practical SID piano approximation: fast transient, quick decay,
-; low sustain, and slightly different color per register.
+; Shared harpsichord-like instrument.
+; Noisy quill transient, bright plucked body, quick decay, and narrow pulse shimmer.
 
-; Shared piano-like instruments for Beethoven sonata imports.
-; This aims at a practical SID piano approximation: fast transient, quick decay,
-; low sustain, and slightly different color per register.
-
-TABLE wave PianoHiWave {
-  WAVE=PULSE @1
-  WAVE=PULSE @1
-  WAVE=TRI+PULSE HOLD
+; --- Waveform ---
+TABLE wave HarpsichordPluckWave {
+  WAVE=NOISE+PULSE RESET @1
+  WAVE=SAW+PULSE @2
+  WAVE=PULSE @4
+  WAVE=SAW+PULSE HOLD
 }
 
-
-TABLE pw PianoHiPW {
-  $0680 @2
-  $0700 @2
-  $0740 @2
-  $0700 @2
- ; LOOP
+; --- Pulse Modulation ---
+TABLE pw HarpsichordQuillPW {
+  $0380 @1
+  $0500 @2
+  $0680 @3
+  $0580 @3
+  LOOP
 }
 
+; --- Filter Modulation ---
+TABLE filter HarpsichordCutoff {
+  2047 @1
+  1900 @2
+  1750 HOLD
+}
 
-INSTR piano_hi
-  WAVE=PULSE ADSR=0,9,0,0 PW=$0800
-  WAVESEQ=PianoHiWave PWSEQ=PianoHiPW
+; --- Instrument ---
+INSTR harpsichord
+  ; Waveform
+  WAVE=SAW+PULSE
+  WAVESEQ=HarpsichordPluckWave
 
-INSTR piano_mid
-  WAVE=PULSE ADSR=0,9,0,0 PW=$0800
-  WAVESEQ=PianoHiWave PWSEQ=PianoHiPW
+  ; Volume Envelope
+  ADSR=0,6,0,3
 
-INSTR piano_low
-  WAVE=PULSE ADSR=0,9,0,0 PW=$0800
-  WAVESEQ=PianoHiWave PWSEQ=PianoHiPW
+  ; Pulse Modulation
+  PW=$0600
+  PWSEQ=HarpsichordQuillPW
 
+  ; Filter Modulation
+  FILTER=LP
+  CUTOFF=1850
+  RES=1
+  FILTERSEQ=HarpsichordCutoff
+
+  ; Articulation
+  GATE=RETRIGGER
+  GATEMIN=1

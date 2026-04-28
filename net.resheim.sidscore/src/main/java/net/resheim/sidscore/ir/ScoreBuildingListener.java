@@ -24,6 +24,7 @@ import org.antlr.v4.runtime.Recognizer;
 import org.antlr.v4.runtime.Token;
 import org.antlr.v4.runtime.tree.ParseTree;
 import org.antlr.v4.runtime.tree.ParseTreeWalker;
+import org.antlr.v4.runtime.tree.TerminalNode;
 
 import net.resheim.sidscore.parser.SIDScoreLexer;
 import net.resheim.sidscore.parser.SIDScoreParser;
@@ -77,6 +78,8 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 
 	private final Map<String, SIDScoreIR.TableIR> tables = new LinkedHashMap<>();
 	private final Map<String, SIDScoreIR.InstrumentIR> instruments = new LinkedHashMap<>();
+	private final Map<String, SIDScoreIR.EffectIR> effects = new LinkedHashMap<>();
+	private final Set<String> effectNames = new LinkedHashSet<>();
 	private final Map<Integer, SIDScoreIR.VoiceIR> voices = new LinkedHashMap<>();
 	private final Map<Integer, Path> subtunes = new LinkedHashMap<>();
 	private final Map<Integer, SIDScoreIR.SongIR> songs = new LinkedHashMap<>();
@@ -113,7 +116,7 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 
 		return new SIDScoreIR.ScoreIR(title, author, released, tempoBpm, timeSig, system, defaultSwing,
 				Collections.unmodifiableMap(tables), Collections.unmodifiableMap(instruments),
-				Collections.unmodifiableMap(voices), Collections.unmodifiableMap(subtunes),
+				Collections.unmodifiableMap(effects), Collections.unmodifiableMap(voices), Collections.unmodifiableMap(subtunes),
 				Collections.unmodifiableMap(songs));
 	}
 
@@ -369,9 +372,9 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
 					"Internal error: TUNE state missing");
 		}
-		if (currentSong.voices.isEmpty()) {
+		if (currentSong.voices.isEmpty() && currentSong.effects.isEmpty()) {
 			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
-					"TUNE " + currentSong.number + " must contain at least one VOICE");
+					"TUNE " + currentSong.number + " must contain at least one VOICE or EFFECT");
 		}
 		SIDScoreIR.SongIR song = new SIDScoreIR.SongIR(
 				currentSong.title,
@@ -381,6 +384,7 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 				currentSong.timeSig,
 				currentSong.system,
 				currentSong.defaultSwing,
+				Collections.unmodifiableMap(new LinkedHashMap<>(currentSong.effects)),
 				Collections.unmodifiableMap(new LinkedHashMap<>(currentSong.voices)));
 		songs.put(currentSong.number, song);
 		currentSong = null;
@@ -588,6 +592,97 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		if (tables.putIfAbsent(name, table) != null) {
 			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
 					"Duplicate TABLE name: " + name);
+		}
+	}
+
+	@Override
+	public void exitEffectStmt(SIDScoreParser.EffectStmtContext ctx) {
+		String name = ctx.ID().getText();
+		if (!effectNames.add(name)) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"Duplicate EFFECT name: " + name);
+		}
+
+		OptionalInt preferredVoice = OptionalInt.empty();
+		boolean voiceSeen = false;
+		Integer lengthTicks = null;
+		Integer priority = 0;
+		SIDScoreIR.EffectRetriggerMode retriggerMode = SIDScoreIR.EffectRetriggerMode.RESTART;
+		boolean prioritySeen = false;
+		boolean retriggerSeen = false;
+		List<SIDScoreIR.EffectStepIR> steps = new ArrayList<>();
+
+		for (SIDScoreParser.EffectBodyStmtContext body : ctx.effectBodyStmt()) {
+			if (body.effectVoiceStmt() != null) {
+				if (voiceSeen) {
+					throw new ValidationException(posLine(body.getStart()), posCol(body.getStart()),
+							"EFFECT " + name + " has duplicate VOICE");
+				}
+				voiceSeen = true;
+				SIDScoreParser.EffectVoiceContext voice = body.effectVoiceStmt().effectVoice();
+				if (voice.ANY() != null) {
+					preferredVoice = OptionalInt.empty();
+				} else {
+					int value = Integer.parseInt(voice.INT().getText());
+					if (value < 1 || value > 3) {
+						throw new ValidationException(posLine(voice.getStart()), posCol(voice.getStart()),
+								"Invalid effect voice " + value + " for EFFECT " + name);
+					}
+					preferredVoice = OptionalInt.of(value);
+				}
+			} else if (body.effectLengthStmt() != null) {
+				if (lengthTicks != null) {
+					throw new ValidationException(posLine(body.getStart()), posCol(body.getStart()),
+							"EFFECT " + name + " has duplicate LENGTH");
+				}
+				lengthTicks = Integer.parseInt(body.effectLengthStmt().INT().getText());
+				if (lengthTicks < 1) {
+					throw new ValidationException(posLine(body.getStart()), posCol(body.getStart()),
+							"Invalid effect length " + lengthTicks + " for EFFECT " + name);
+				}
+			} else if (body.effectPriorityStmt() != null) {
+				if (prioritySeen) {
+					throw new ValidationException(posLine(body.getStart()), posCol(body.getStart()),
+							"EFFECT " + name + " has duplicate PRIORITY");
+				}
+				prioritySeen = true;
+				priority = Integer.parseInt(body.effectPriorityStmt().INT().getText());
+				if (priority < 0 || priority > 255) {
+					throw new ValidationException(posLine(body.getStart()), posCol(body.getStart()),
+							"EFFECT " + name + " PRIORITY out of range 0..255");
+				}
+			} else if (body.effectRetriggerStmt() != null) {
+				if (retriggerSeen) {
+					throw new ValidationException(posLine(body.getStart()), posCol(body.getStart()),
+							"EFFECT " + name + " has duplicate RETRIGGER");
+				}
+				retriggerSeen = true;
+				retriggerMode = parseEffectRetriggerMode(body.effectRetriggerStmt().effectRetriggerMode());
+			} else if (body.effectStep() != null) {
+				parseEffectStep(body.effectStep(), name, steps);
+			}
+		}
+
+		if (!voiceSeen) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"EFFECT " + name + " missing VOICE");
+		}
+		if (lengthTicks == null) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"EFFECT " + name + " missing LENGTH");
+		}
+		if (steps.isEmpty()) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					"EFFECT " + name + " has no steps");
+		}
+		validateEffectPitchFreqConflicts(name, steps, ctx.getStart());
+
+		var effect = new SIDScoreIR.EffectIR(name, preferredVoice, lengthTicks, priority, retriggerMode,
+				List.copyOf(steps));
+		if (currentSong != null) {
+			currentSong.effects.put(name, effect);
+		} else {
+			effects.put(name, effect);
 		}
 	}
 
@@ -992,6 +1087,228 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 	}
 
 	// ---------------------------
+	// Effect parsing helpers
+	// ---------------------------
+	private static void parseEffectStep(SIDScoreParser.EffectStepContext ctx, String effectName,
+			List<SIDScoreIR.EffectStepIR> out) {
+		if (ctx.effectAssignment() != null) {
+			int tick = ctx.effectTick() != null ? parseEffectTick(ctx.effectTick(), effectName) : 0;
+			out.add(parseEffectAssignment(ctx.effectAssignment(), tick));
+			return;
+		}
+		if (ctx.effectSweep() != null) {
+			out.add(parseEffectSweep(ctx.effectSweep(), effectName));
+			return;
+		}
+		if (ctx.effectGroup() != null) {
+			SIDScoreParser.EffectGroupContext group = ctx.effectGroup();
+			int tick = parseNonNegativeInt(group.INT().getText(), group.INT().getSymbol(),
+					"EFFECT " + effectName + " group tick");
+			if (group.effectAssignment().isEmpty()) {
+				throw new ValidationException(posLine(group.getStart()), posCol(group.getStart()),
+						"EFFECT " + effectName + " has empty AT/FRAME group");
+			}
+			for (SIDScoreParser.EffectAssignmentContext assignment : group.effectAssignment()) {
+				out.add(parseEffectAssignment(assignment, tick));
+			}
+		}
+	}
+
+	private static int parseEffectTick(SIDScoreParser.EffectTickContext ctx, String effectName) {
+		return parseNonNegativeInt(ctx.INT().getText(), ctx.INT().getSymbol(),
+				"EFFECT " + effectName + " tick");
+	}
+
+	private static SIDScoreIR.EffectAssignmentIR parseEffectAssignment(SIDScoreParser.EffectAssignmentContext ctx,
+			int tick) {
+		if (ctx.WAVE() != null) {
+			int mask = waveMaskFromWaveList(ctx.waveList());
+			if (mask == 0) {
+				throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+						"EFFECT WAVE must include at least one waveform");
+			}
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.WAVE, SIDScoreIR.EffectValueIR.wave(mask));
+		}
+		if (ctx.GATE() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.GATE, parseEffectOnOff(ctx.onOff()));
+		}
+		if (ctx.SYNC() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.SYNC, parseEffectOnOff(ctx.onOff()));
+		}
+		if (ctx.RING() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.RING, parseEffectOnOff(ctx.onOff()));
+		}
+		if (ctx.RESET() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.RESET, SIDScoreIR.EffectValueIR.none());
+		}
+		if (ctx.PITCH() != null) {
+			int midi = parseEffectPitch(ctx.NOTE().getText(), ctx.NOTE().getSymbol(), "PITCH");
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.PITCH, SIDScoreIR.EffectValueIR.pitch(midi));
+		}
+		if (ctx.FREQ() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.FREQ,
+					parseEffectNumericValue(ctx.numericValue(), "FREQ", 0, 0xFFFF));
+		}
+		if (ctx.PW() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.PW,
+					parseEffectNumericValue(ctx.numericValue(), "PW", 0, 0x0FFF));
+		}
+		if (ctx.HIPULSE() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.HIPULSE,
+					parseEffectNumericValue(ctx.numericValue(), "HIPULSE", 0, 0x0F));
+		}
+		if (ctx.LOWPULSE() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.LOWPULSE,
+					parseEffectNumericValue(ctx.numericValue(), "LOWPULSE", 0, 0xFF));
+		}
+		if (ctx.ADSR() != null) {
+			SIDScoreIR.AdsrIR adsr = new SIDScoreIR.AdsrIR(
+					parseEffectInt(ctx.INT(0).getText(), ctx.INT(0).getSymbol(), "ADSR attack", 0, 15),
+					parseEffectInt(ctx.INT(1).getText(), ctx.INT(1).getSymbol(), "ADSR decay", 0, 15),
+					parseEffectInt(ctx.INT(2).getText(), ctx.INT(2).getSymbol(), "ADSR sustain", 0, 15),
+					parseEffectInt(ctx.INT(3).getText(), ctx.INT(3).getSymbol(), "ADSR release", 0, 15));
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.ADSR, SIDScoreIR.EffectValueIR.adsr(adsr));
+		}
+		if (ctx.ATTACK() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.ATTACK,
+					parseEffectIntValue(ctx.INT(0), "ATTACK", 0, 15));
+		}
+		if (ctx.DECAY() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.DECAY,
+					parseEffectIntValue(ctx.INT(0), "DECAY", 0, 15));
+		}
+		if (ctx.SUSTAIN() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.SUSTAIN,
+					parseEffectIntValue(ctx.INT(0), "SUSTAIN", 0, 15));
+		}
+		if (ctx.RELEASE() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.RELEASE,
+					parseEffectIntValue(ctx.INT(0), "RELEASE", 0, 15));
+		}
+		if (ctx.FILTER() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.FILTER,
+					SIDScoreIR.EffectValueIR.filter(filterMaskFromFilterSpec(ctx.filterSpec())));
+		}
+		if (ctx.FILTERROUTE() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.FILTERROUTE,
+					parseEffectNumericValue(ctx.numericValue(), "FILTERROUTE", 0, 0x0F));
+		}
+		if (ctx.CUTOFF() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.CUTOFF,
+					parseEffectNumericValue(ctx.numericValue(), "CUTOFF", 0, 0x07FF));
+		}
+		if (ctx.RES() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.RES,
+					parseEffectIntValue(ctx.INT(0), "RES", 0, 15));
+		}
+		if (ctx.VOLUME() != null) {
+			return effectAssignment(tick, SIDScoreIR.EffectParameter.VOLUME,
+					parseEffectIntValue(ctx.INT(0), "VOLUME", 0, 15));
+		}
+		throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+				"Invalid effect parameter");
+	}
+
+	private static SIDScoreIR.EffectAssignmentIR effectAssignment(int tick, SIDScoreIR.EffectParameter parameter,
+			SIDScoreIR.EffectValueIR value) {
+		return new SIDScoreIR.EffectAssignmentIR(tick, parameter, value);
+	}
+
+	private static SIDScoreIR.EffectSweepIR parseEffectSweep(SIDScoreParser.EffectSweepContext ctx,
+			String effectName) {
+		SIDScoreIR.EffectParameter parameter = parseEffectSweepParameter(ctx.effectSweepParam());
+		SIDScoreIR.EffectValueIR from = parseEffectSweepValue(ctx.effectSweepValue(0), parameter);
+		SIDScoreIR.EffectValueIR to = parseEffectSweepValue(ctx.effectSweepValue(1), parameter);
+		int duration = parseNonNegativeInt(ctx.INT().getText(), ctx.INT().getSymbol(),
+				"EFFECT " + effectName + " sweep duration");
+		if (duration < 1) {
+			throw new ValidationException(posLine(ctx.INT().getSymbol()), posCol(ctx.INT().getSymbol()),
+					"EFFECT " + effectName + " sweep duration must be >= 1");
+		}
+		return new SIDScoreIR.EffectSweepIR(parameter, from, to, duration,
+				parseEffectSweepCurve(ctx.effectSweepCurve()));
+	}
+
+	private static SIDScoreIR.EffectParameter parseEffectSweepParameter(SIDScoreParser.EffectSweepParamContext ctx) {
+		if (ctx.PITCH() != null)
+			return SIDScoreIR.EffectParameter.PITCH;
+		if (ctx.FREQ() != null)
+			return SIDScoreIR.EffectParameter.FREQ;
+		if (ctx.PW() != null)
+			return SIDScoreIR.EffectParameter.PW;
+		if (ctx.CUTOFF() != null)
+			return SIDScoreIR.EffectParameter.CUTOFF;
+		return SIDScoreIR.EffectParameter.VOLUME;
+	}
+
+	private static SIDScoreIR.EffectValueIR parseEffectSweepValue(SIDScoreParser.EffectSweepValueContext ctx,
+			SIDScoreIR.EffectParameter parameter) {
+		if (parameter == SIDScoreIR.EffectParameter.PITCH) {
+			if (ctx.NOTE() == null) {
+				throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+						"PITCH sweep expects note values");
+			}
+			return SIDScoreIR.EffectValueIR.pitch(parseEffectPitch(ctx.NOTE().getText(),
+					ctx.NOTE().getSymbol(), "PITCH sweep"));
+		}
+		if (ctx.numericValue() == null) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					parameter + " sweep expects numeric values");
+		}
+		return switch (parameter) {
+		case FREQ -> parseEffectNumericValue(ctx.numericValue(), "FREQ sweep", 0, 0xFFFF);
+		case PW -> parseEffectNumericValue(ctx.numericValue(), "PW sweep", 0, 0x0FFF);
+		case CUTOFF -> parseEffectNumericValue(ctx.numericValue(), "CUTOFF sweep", 0, 0x07FF);
+		case VOLUME -> parseEffectNumericValue(ctx.numericValue(), "VOLUME sweep", 0, 15);
+		default -> throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+				"Invalid sweep parameter " + parameter);
+		};
+	}
+
+	private static SIDScoreIR.EffectSweepCurve parseEffectSweepCurve(SIDScoreParser.EffectSweepCurveContext ctx) {
+		if (ctx == null)
+			return SIDScoreIR.EffectSweepCurve.LINEAR;
+		if (ctx.EXP() != null)
+			return SIDScoreIR.EffectSweepCurve.EXP;
+		if (ctx.LOG() != null)
+			return SIDScoreIR.EffectSweepCurve.LOG;
+		if (ctx.STEP() != null)
+			return SIDScoreIR.EffectSweepCurve.STEP;
+		return SIDScoreIR.EffectSweepCurve.LINEAR;
+	}
+
+	private static SIDScoreIR.EffectRetriggerMode parseEffectRetriggerMode(
+			SIDScoreParser.EffectRetriggerModeContext ctx) {
+		if (ctx.IGNORE() != null)
+			return SIDScoreIR.EffectRetriggerMode.IGNORE;
+		if (ctx.STEAL() != null)
+			return SIDScoreIR.EffectRetriggerMode.STEAL;
+		return SIDScoreIR.EffectRetriggerMode.RESTART;
+	}
+
+	private static void validateEffectPitchFreqConflicts(String effectName, List<SIDScoreIR.EffectStepIR> steps,
+			Token where) {
+		Map<Integer, EnumSet<SIDScoreIR.EffectParameter>> byTick = new LinkedHashMap<>();
+		for (SIDScoreIR.EffectStepIR step : steps) {
+			if (!(step instanceof SIDScoreIR.EffectAssignmentIR assignment))
+				continue;
+			SIDScoreIR.EffectParameter parameter = assignment.parameter();
+			if (parameter != SIDScoreIR.EffectParameter.PITCH && parameter != SIDScoreIR.EffectParameter.FREQ)
+				continue;
+			EnumSet<SIDScoreIR.EffectParameter> params = byTick.computeIfAbsent(assignment.tick(),
+					ignored -> EnumSet.noneOf(SIDScoreIR.EffectParameter.class));
+			SIDScoreIR.EffectParameter other = parameter == SIDScoreIR.EffectParameter.PITCH
+					? SIDScoreIR.EffectParameter.FREQ
+					: SIDScoreIR.EffectParameter.PITCH;
+			if (params.contains(other)) {
+				throw new ValidationException(posLine(where), posCol(where),
+						"EFFECT " + effectName + " sets PITCH and FREQ at tick " + assignment.tick());
+			}
+			params.add(parameter);
+		}
+	}
+
+	// ---------------------------
 	// Internal voice build state
 	// ---------------------------
 	private static final class SongBuildState {
@@ -1003,6 +1320,7 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		Optional<SIDScoreIR.TimeSigIR> timeSig = Optional.empty();
 		Optional<SIDScoreIR.VideoSystem> system = Optional.empty();
 		Optional<SIDScoreIR.SwingSetting> defaultSwing = Optional.empty();
+		final Map<String, SIDScoreIR.EffectIR> effects = new LinkedHashMap<>();
 		final Map<Integer, SIDScoreIR.VoiceIR> voices = new LinkedHashMap<>();
 
 		SongBuildState(int number) {
@@ -1098,6 +1416,45 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		return mask;
 	}
 
+	private static int filterMaskFromFilterSpec(SIDScoreParser.FilterSpecContext spec) {
+		if (spec.OFF() != null)
+			return 0;
+		int mask = 0;
+		for (SIDScoreParser.FilterModeContext fm : spec.filterList().filterMode()) {
+			if (fm.LP() != null) {
+				mask |= SIDScoreIR.FilterMode.LP.mask;
+			} else if (fm.BP() != null) {
+				mask |= SIDScoreIR.FilterMode.BP.mask;
+			} else if (fm.HP() != null) {
+				mask |= SIDScoreIR.FilterMode.HP.mask;
+			}
+		}
+		return mask;
+	}
+
+	private static SIDScoreIR.EffectValueIR parseEffectOnOff(SIDScoreParser.OnOffContext ctx) {
+		return SIDScoreIR.EffectValueIR.onOff(ctx.ON() != null);
+	}
+
+	private static SIDScoreIR.EffectValueIR parseEffectNumericValue(SIDScoreParser.NumericValueContext ctx,
+			String label, int min, int max) {
+		int value;
+		if (ctx.HEX() != null) {
+			value = parseHexValue(ctx.HEX().getText(), ctx.HEX().getSymbol(), label);
+		} else {
+			value = parseEffectInt(ctx.INT().getText(), ctx.INT().getSymbol(), label, min, max);
+		}
+		if (value < min || value > max) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
+					label + " out of range " + min + ".." + max);
+		}
+		return SIDScoreIR.EffectValueIR.integer(value);
+	}
+
+	private static SIDScoreIR.EffectValueIR parseEffectIntValue(TerminalNode node, String label, int min, int max) {
+		return SIDScoreIR.EffectValueIR.integer(parseEffectInt(node.getText(), node.getSymbol(), label, min, max));
+	}
+
 	private static final Pattern NOTE_PAT = Pattern.compile("^(?<letter>[A-G])(?<acc>[#b])?(?<len>\\d+)?(?<dot>\\.)?$");
 
 	private static SIDScoreIR.NoteIR parseNoteToken(String text, int currentOctave) {
@@ -1150,6 +1507,30 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		return pitch.toMidi();
 	}
 
+	private static int parseEffectPitch(String text, Token where, String label) {
+		Matcher m = NOTE_PAT.matcher(text);
+		if (!m.matches() || m.group("dot") != null || m.group("len") == null) {
+			throw new ValidationException(posLine(where), posCol(where),
+					label + " expects a pitch like C4 or F#5");
+		}
+
+		SIDScoreIR.NoteLetter letter = SIDScoreIR.NoteLetter.valueOf(m.group("letter"));
+		SIDScoreIR.Accidental acc = SIDScoreIR.Accidental.NATURAL;
+		String accStr = m.group("acc");
+		if ("#".equals(accStr))
+			acc = SIDScoreIR.Accidental.SHARP;
+		else if ("b".equals(accStr))
+			acc = SIDScoreIR.Accidental.FLAT;
+
+		int octave = Integer.parseInt(m.group("len"));
+		int midi = new SIDScoreIR.PitchIR(letter, acc, octave).toMidi();
+		if (midi < 0 || midi > 127) {
+			throw new ValidationException(posLine(where), posCol(where),
+					label + " out of MIDI range 0..127");
+		}
+		return midi;
+	}
+
 	private static final Pattern REST_PAT = Pattern.compile("^R(?<len>\\d+)?(?<dot>\\.)?$");
 
 	private static SIDScoreIR.RestIR parseRestToken(String text) {
@@ -1186,6 +1567,24 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		if (text.length() < 2 || text.charAt(0) != prefix)
 			throw new IllegalArgumentException("Expected " + prefix + "<n>, got: " + text);
 		return Integer.parseInt(text.substring(1));
+	}
+
+	private static int parseNonNegativeInt(String text, Token where, String label) {
+		return parseEffectInt(text, where, label, 0, Integer.MAX_VALUE);
+	}
+
+	private static int parseEffectInt(String text, Token where, String label, int min, int max) {
+		int value;
+		try {
+			value = Integer.parseInt(text);
+		} catch (NumberFormatException ex) {
+			throw new ValidationException(posLine(where), posCol(where), label + " must be an integer");
+		}
+		if (value < min || value > max) {
+			throw new ValidationException(posLine(where), posCol(where),
+					label + " out of range " + min + ".." + max);
+		}
+		return value;
 	}
 
 	private static int parseHexValue(String raw, Token where, String label) {

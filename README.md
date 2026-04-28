@@ -110,6 +110,19 @@ If `VICE` playback is selected, SIDScore uses `vsid` from `PATH` (or `SIDSCORE_V
 Optional: set `SIDSCORE_VICE_DATA_DIR` to the VICE data directory if your installation needs explicit sysfile lookup.
 By default, VICE logs are shown in full in `Messages`. To re-enable compact/suppressed log mode, start UI with `--compact-vice-log` (or set `SIDSCORE_VICE_COMPACT_LOG=1` / `-Dsidscore.vice.compactLog=true`). Use `--full-vice-log` to force full logs.
 
+## SID Conversion Examples
+
+Game SID examples under `examples/games/` are generated with `tools/sid2sidscore.py` from the matching `.sid` files. Each `.sid` added there must have a generated `.sidscore` next to it.
+
+Regenerate the generated `.sidscore` files when conversion logic, playback semantics, or SIDScore language behavior changes in a way that can affect output:
+
+```sh
+python3 tools/sid2sidscore.py examples/games/Great_Giana_Sisters.sid \
+  -o examples/games/Great_Giana_Sisters.sidscore
+```
+
+By default the converter keeps simple melodic voices as notation, but emits voices with frame-level SID register automation as `EFFECT` timelines. This preserves driver instruments such as pulse-width/gate hi-hats that cannot be represented by one static `INSTR`. Use `--compact-notation` only when a smaller, less register-accurate transcription is preferred.
+
 ## Eclipse Generic Editor
 
 SIDScore includes a TextMate grammar at `syntaxes/sidscore.tmLanguage.json` for Eclipse TM4E / Generic Editor use.

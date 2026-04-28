@@ -1,6 +1,6 @@
 # SIDScore Player Server Specification
 
-Version: **0.3.0 (draft)**
+Version: **0.4.0 (draft)**
 
 ## 1. Purpose
 
@@ -181,8 +181,10 @@ u8  reserved[3]
 Java process can read.
 
 On successful `PLAY`, the server parses and resolves the score, emits
-`PLAYBACK_STATE` with state `loading`, emits `SCORE_MAP` if requested, then
-starts playback and emits `PLAYBACK_STATE` with state `playing`.
+`PLAYBACK_STATE` with state `loading`, resets voice state to silence, emits
+`SCORE_MAP` if requested, resets voice state to silence again for clients that
+initialize visual state from the map, then starts playback and emits
+`PLAYBACK_STATE` with state `playing`.
 
 If another score is already playing, `PLAY` stops the current score and starts
 the new one from the beginning.
@@ -465,6 +467,11 @@ bit 9 gate controlled by table
 
 `envelopeLevel` and `outputLevel` are normalized `0.0..1.0` values intended for
 visualization, not sample-accurate synthesis.
+
+The server emits a critical all-silent `VOICE_STATE` on stop, end-of-score, and
+before each new playback starts. The silent state clears active, gate, waveform,
+frequency, sync/ring, filter-route, envelope, and output state for all three SID
+voices so clients do not carry stale gate or waveform state into the next play.
 
 ## 13. Scope Data
 

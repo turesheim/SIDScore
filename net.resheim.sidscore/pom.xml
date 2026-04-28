@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <artifactId>sidscore-cli</artifactId>
   <name>SIDScoreCLI</name>
-  <version>0.3.0</version>
+  <version>0.4.0</version>
   <groupId>net.resheim.sidscore</groupId>
   <packaging>jar</packaging>
   <properties>

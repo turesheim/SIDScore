@@ -1,18 +1,50 @@
-; Shared piano-like instrument
-; This aims at a practical SID piano approximation: fast transient, quick decay,
-; and low sustain
+; Shared piano-like instrument for Beethoven sonata imports.
+; Fast hammer transient, long wooden-string decay, and a darker filtered tail.
 
-TABLE filter PianoCutoff {
-  1800 @2         ; open at attack
-  1400 @4
-  1100 @6
-  900  @8
-  750  HOLD       ; settles darker for tail
+; --- Waveform ---
+TABLE wave PianoHammerWave {
+  WAVE=SAW+PULSE RESET @1
+  WAVE=PULSE+TRI @3
+  WAVE=PULSE+TRI HOLD
 }
 
+; --- Pulse Modulation ---
+TABLE pw PianoStringPW {
+  $0700 @4
+  $0780 @6
+  $0840 @8
+  $0800 @10
+  LOOP
+}
 
+; --- Filter Modulation ---
+TABLE filter PianoCutoff {
+  2047 @1
+  1700 @4
+  1250 @8
+  850 @12
+  620 HOLD
+}
+
+; --- Instrument ---
 INSTR piano
-  WAVE=PULSE ADSR=0,9,0,0 PW=$0800 LOWPULSE=255 HIPULSE=0
-;  FILTER=LP CUTOFF=1600 RES=1
-  GATE=RETRIGGER GATEMIN=1
-;  FILTERSEQ=PianoCutoff
+  ; Waveform
+  WAVE=PULSE+TRI
+  WAVESEQ=PianoHammerWave
+
+  ; Volume Envelope
+  ADSR=0,10,0,5
+
+  ; Pulse Modulation
+  PW=$0800
+  PWSEQ=PianoStringPW
+
+  ; Filter Modulation
+  FILTER=LP
+  CUTOFF=1400
+  RES=1
+  FILTERSEQ=PianoCutoff
+
+  ; Articulation
+  GATE=RETRIGGER
+  GATEMIN=1

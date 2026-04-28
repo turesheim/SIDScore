@@ -1,0 +1,28 @@
+TITLE "Effect Same Voice Test"
+AUTHOR "SIDScore"
+TEMPO 140
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=0,4,8,2 PW=$0800
+
+EFFECT NoiseZap {
+  VOICE 1
+  LENGTH 8 TICKS
+
+  WAVE=NOISE
+  ADSR=0,4,8,2
+  GATE=ON
+  FREQ=$4000
+
+  FRAME 1 {
+    FREQ=$3000
+    FILTER=LP+BP
+    CUTOFF=$0200
+    RES=8
+    VOLUME=12
+  }
+  FREQ=$2000 @2
+  GATE=OFF @6
+}
+
+VOICE 1 lead: O5 C8 R8

@@ -1,0 +1,28 @@
+TITLE "Effect Only Test"
+AUTHOR "SIDScore"
+TEMPO 120
+SYSTEM PAL
+
+EFFECT Blip {
+  VOICE ANY
+  LENGTH 8 TICKS
+  WAVE=TRI
+  ADSR=0,0,15,0
+  GATE=ON
+  PITCH=C6
+  PITCH=G6 @3
+  GATE=OFF @6
+}
+
+TUNE 2 {
+  EFFECT NoiseZap {
+    VOICE 3
+    LENGTH 10 TICKS
+    WAVE=NOISE
+    ADSR=0,4,8,2
+    GATE=ON
+    FREQ=$4000
+    FREQ=$2000 @3
+    GATE=OFF @8
+  }
+}

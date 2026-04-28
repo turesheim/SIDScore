@@ -32,6 +32,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -449,27 +450,15 @@ public final class RealtimeAudioPlayerUI {
 			restartPending = false;
 			restartOnlyWhenAutoReload = false;
 		}
-		if (clearRestart && !playbackPaused && isPlaying() && activeRenderer() == PlaybackRenderer.SRAP) {
-			RealtimeAudioPlayer current = player;
-			if (current != null) {
-				current.pause();
-				playbackPaused = true;
-				playbackPauseNanos = System.nanoTime();
-				keepHighlightOnStop = true;
-				if (playbackStartNanos > 0 && playbackStopNanos < 0) {
-					playbackStopNanos = playbackPauseNanos;
-				}
-				updatePlaybackButtons();
-				updateElapsedClock();
-				return;
-			}
-		}
 		playbackPaused = false;
 		playbackPauseNanos = -1;
-		keepHighlightOnStop = clearRestart;
+		keepHighlightOnStop = false;
 		viceStopRequested = true;
 		if (playbackStartNanos > 0 && playbackStopNanos < 0) {
 			playbackStopNanos = System.nanoTime();
+		}
+		if (clearRestart) {
+			clearStoppedPlaybackVisuals();
 		}
 		Process renderProcess = viceProcess;
 		if (renderProcess != null) {
@@ -483,6 +472,14 @@ public final class RealtimeAudioPlayerUI {
 			current.stop();
 		}
 		updatePlaybackButtons();
+	}
+
+	private void clearStoppedPlaybackVisuals() {
+		resetPlaybackHighlighting();
+		for (OscilloscopePanel scope : scopes) {
+			scope.clear();
+			scope.repaint();
+		}
 	}
 
 	private void onAutoReloadToggle() {
@@ -1131,10 +1128,13 @@ public final class RealtimeAudioPlayerUI {
 		int songForThread = selectedSong;
 		Thread thread;
 		if (renderer == PlaybackRenderer.VICE) {
+			player = null;
 			thread = new Thread(() -> runVicePlayback(timedForThread, bundleForThread, songForThread),
 					"sidscore-vice-player");
 		} else {
-			thread = new Thread(() -> runSrapPlayback(timedForThread), "sidscore-realtime-player");
+			RealtimeAudioPlayer currentPlayer = new RealtimeAudioPlayer();
+			player = currentPlayer;
+			thread = new Thread(() -> runSrapPlayback(timedForThread, currentPlayer), "sidscore-realtime-player");
 		}
 		thread.setDaemon(true);
 		playThread = thread;
@@ -1142,15 +1142,13 @@ public final class RealtimeAudioPlayerUI {
 		return true;
 	}
 
-	private void runSrapPlayback(SIDScoreIR.TimedScore timed) {
+	private void runSrapPlayback(SIDScoreIR.TimedScore timed, RealtimeAudioPlayer currentPlayer) {
 		playbackStartNanos = -1;
 		playbackStopNanos = -1;
 		viceStopRequested = false;
 		SwingUtilities.invokeLater(this::updateElapsedClock);
 		java.util.concurrent.atomic.AtomicBoolean startMarked = new java.util.concurrent.atomic.AtomicBoolean(false);
 
-		RealtimeAudioPlayer currentPlayer = new RealtimeAudioPlayer();
-		player = currentPlayer;
 		try {
 			currentPlayer.play(timed, (v1, v2, v3, length, sampleRate) -> {
 				if (startMarked.compareAndSet(false, true)) {
@@ -1679,6 +1677,13 @@ public final class RealtimeAudioPlayerUI {
 
 	private static SIDScoreIR.ScoreIR buildInlineSongScore(SIDScoreIR.ScoreIR base, SIDScoreIR.SongIR song) {
 		int tempo = song.tempoBpm().isPresent() ? song.tempoBpm().getAsInt() : base.tempoBpm();
+		Map<String, SIDScoreIR.EffectIR> effects = new LinkedHashMap<>();
+		if (!song.effects().isEmpty()) {
+			effects.putAll(song.effects());
+		} else {
+			effects.putAll(base.effects());
+			effects.putAll(song.effects());
+		}
 		return new SIDScoreIR.ScoreIR(
 				song.title().isPresent() ? song.title() : base.title(),
 				song.author().isPresent() ? song.author() : base.author(),
@@ -1689,6 +1694,7 @@ public final class RealtimeAudioPlayerUI {
 				song.defaultSwing().isPresent() ? song.defaultSwing().get() : base.defaultSwing(),
 				base.tables(),
 				base.instruments(),
+				java.util.Collections.unmodifiableMap(effects),
 				song.voices(),
 				Map.of(),
 				Map.of());

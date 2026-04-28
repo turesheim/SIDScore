@@ -19,7 +19,10 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -60,6 +63,7 @@ public final class RealtimeAudioPlayer {
 
 	private static final float SAMPLE_RATE = 44100f;
 	private static final int BUFFER_SAMPLES = 512;
+	private static final int AUDIO_LINE_BUFFER_SAMPLES = BUFFER_SAMPLES * 8;
 	private static final double SID_CLOCK_NTSC = 1022727.0;
 	private static final double SID_CLOCK_PAL = 985248.0;
 	private static final double RASTER_RATE_PAL = 50.124542;
@@ -75,6 +79,7 @@ public final class RealtimeAudioPlayer {
 			OptionalInt.empty(), Optional.empty(), SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
 	private final AtomicBoolean stopRequested = new AtomicBoolean(false);
 	private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
+	private volatile SourceDataLine activeLine = null;
 	private final SidModel sidModel;
 	private final SidWaveforms.TableSet waveTables;
 
@@ -146,6 +151,15 @@ public final class RealtimeAudioPlayer {
 	public void stop() {
 		pauseRequested.set(false);
 		stopRequested.set(true);
+		SourceDataLine line = activeLine;
+		if (line != null) {
+			try {
+				line.stop();
+				line.flush();
+			} catch (IllegalStateException ignored) {
+				// The render thread may have closed the line already.
+			}
+		}
 	}
 
 	public void pause() {
@@ -159,175 +173,373 @@ public final class RealtimeAudioPlayer {
 	private void render(SIDScoreIR.TimedScore score, Path wavOut, boolean playAudio, SampleListener listener,
 			PlaybackListener playbackListener)
 			throws LineUnavailableException {
-		stopRequested.set(false);
 		pauseRequested.set(false);
 		AudioFormat fmt = new AudioFormat(SAMPLE_RATE, 16, 1, true, false);
 		SourceDataLine line = null;
-		if (playAudio) {
-			line = AudioSystem.getSourceDataLine(fmt);
-			line.open(fmt, BUFFER_SAMPLES * 2);
-			line.start();
-		}
-
-		double sidClockHz = score.system() == SIDScoreIR.VideoSystem.NTSC ? SID_CLOCK_NTSC : SID_CLOCK_PAL;
-		double frameRate = score.system() == SIDScoreIR.VideoSystem.NTSC ? RASTER_RATE_NTSC : RASTER_RATE_PAL;
-
-		FilterRuntime filter = new FilterRuntime(frameRate);
-		VoiceRuntime[] vr = new VoiceRuntime[3];
-		for (int i = 0; i < 3; i++) {
-			var tv = score.voices().get(i + 1);
-			if (tv == null) {
-				vr[i] = new VoiceRuntime(SILENT_INSTR, FrameEventCompiler.compileVoice(null, score), sidClockHz,
-						frameRate, score.tables(), filter, waveTables);
-			} else {
-				vr[i] = new VoiceRuntime(tv.instrument(), FrameEventCompiler.compileVoice(tv, score), sidClockHz,
-						frameRate, score.tables(), filter, waveTables);
+		try {
+			if (stopRequested.get()) {
+				return;
 			}
-		}
+			if (playAudio) {
+				line = AudioSystem.getSourceDataLine(fmt);
+				line.open(fmt, AUDIO_LINE_BUFFER_SAMPLES * fmt.getFrameSize());
+				activeLine = line;
+			}
 
-		byte[] buf = new byte[BUFFER_SAMPLES * 2];
-		ByteArrayOutputStream wavBuffer = wavOut != null ? new ByteArrayOutputStream() : null;
-		boolean wantsVoiceSamples = listener != null || playbackListener != null;
-		float[][] voiceBuf = wantsVoiceSamples ? new float[3][BUFFER_SAMPLES] : null;
-		double[] voiceMix = wantsVoiceSamples ? new double[3] : null;
-		long blockIndex = 0;
-		long renderedSamples = 0;
+			double sidClockHz = score.system() == SIDScoreIR.VideoSystem.NTSC ? SID_CLOCK_NTSC : SID_CLOCK_PAL;
+			double frameRate = score.system() == SIDScoreIR.VideoSystem.NTSC ? RASTER_RATE_NTSC : RASTER_RATE_PAL;
 
-		boolean[] msb = new boolean[3];
-		boolean[] rise = new boolean[3];
-		int[] modIndex = new int[] { 2, 0, 1 };
+			FilterRuntime filter = new FilterRuntime(frameRate);
+			RuntimeVoice[] vr = new RuntimeVoice[3];
+			for (int i = 0; i < 3; i++) {
+				var tv = score.voices().get(i + 1);
+				List<FrameEventCompiler.FrameEvent> events = FrameEventCompiler.compileVoice(tv, score);
+				if (tv == null) {
+					vr[i] = new VoiceRuntime(SILENT_INSTR, events, sidClockHz, frameRate, score.tables(), filter,
+							waveTables);
+				} else {
+					vr[i] = new VoiceRuntime(tv.instrument(), events, sidClockHz, frameRate, score.tables(), filter,
+							waveTables);
+				}
+			}
+			if (!score.effects().isEmpty()) {
+				Map<Integer, List<ScheduledEffect>> scheduledEffects = scheduleEffects(score.effects(), 0);
+				for (int i = 0; i < 3; i++) {
+					RuntimeVoice effectRuntime = new EffectRuntime(i + 1,
+							scheduledEffects.getOrDefault(i + 1, List.of()), sidClockHz, frameRate, filter, waveTables);
+					vr[i] = new SharedTimelineRuntimeVoice(vr[i], effectRuntime);
+				}
+			}
 
-		int oversample = OVERSAMPLE_BASE;
-		for (int i = 0; i < 3; i++) {
-			var tv = score.voices().get(i + 1);
-			if (tv != null && tv.instrument().ring()) {
+			byte[] buf = new byte[BUFFER_SAMPLES * 2];
+			ByteArrayOutputStream wavBuffer = wavOut != null ? new ByteArrayOutputStream() : null;
+			boolean wantsVoiceSamples = listener != null || playbackListener != null;
+			float[][] voiceBuf = wantsVoiceSamples ? new float[3][BUFFER_SAMPLES] : null;
+			double[] voiceMix = wantsVoiceSamples ? new double[3] : null;
+			double[] voiceSampleByVoice = wantsVoiceSamples ? new double[3] : null;
+			boolean[] voiceRouted = wantsVoiceSamples ? new boolean[3] : null;
+			long blockIndex = 0;
+			long renderedSamples = 0;
+
+			boolean[] msb = new boolean[3];
+			boolean[] rise = new boolean[3];
+			int[] modIndex = new int[] { 2, 0, 1 };
+
+			int oversample = OVERSAMPLE_BASE;
+			if (effectsMayUseRing(score.effects())) {
 				oversample = Math.max(oversample, OVERSAMPLE_RING);
 			}
-		}
-		boolean linePaused = false;
+			for (int i = 0; i < 3; i++) {
+				var tv = score.voices().get(i + 1);
+				if (tv != null && tv.instrument().ring()) {
+					oversample = Math.max(oversample, OVERSAMPLE_RING);
+				}
+			}
+			boolean linePaused = false;
+			boolean lineStarted = false;
 
-		double outLP = 0.0;
-		double srOS = SAMPLE_RATE * oversample;
-		double outLPAlpha = onePoleAlpha(OUTPUT_LP_HZ, srOS);
+			double outLP = 0.0;
+			double srOS = SAMPLE_RATE * oversample;
+			double outLPAlpha = onePoleAlpha(OUTPUT_LP_HZ, srOS);
 
-		boolean done;
-		do {
-			done = true;
-			int samplesWritten = 0;
-			for (int s = 0; s < BUFFER_SAMPLES; s++) {
-				while (pauseRequested.get() && !stopRequested.get()) {
-					if (playAudio && line != null && !linePaused) {
-						line.stop();
-						linePaused = true;
+			boolean done;
+			do {
+				done = true;
+				int samplesWritten = 0;
+				for (int s = 0; s < BUFFER_SAMPLES; s++) {
+					while (pauseRequested.get() && !stopRequested.get()) {
+						if (playAudio && line != null && lineStarted && !linePaused) {
+							line.stop();
+							linePaused = true;
+						}
+						try {
+							Thread.sleep(8);
+						} catch (InterruptedException ie) {
+							Thread.currentThread().interrupt();
+							stopRequested.set(true);
+							break;
+						}
 					}
-					try {
-						Thread.sleep(8);
-					} catch (InterruptedException ie) {
-						Thread.currentThread().interrupt();
-						stopRequested.set(true);
+					if (linePaused && playAudio && line != null && !stopRequested.get()) {
+						line.start();
+						lineStarted = true;
+						linePaused = false;
+					}
+					if (stopRequested.get()) {
 						break;
 					}
-				}
-				if (linePaused && playAudio && line != null && !stopRequested.get()) {
-					line.start();
-					linePaused = false;
-				}
-				if (stopRequested.get()) {
-					break;
-				}
-				if (voiceMix != null) {
-					voiceMix[0] = 0.0;
-					voiceMix[1] = 0.0;
-					voiceMix[2] = 0.0;
-				}
-				for (int os = 0; os < oversample; os++) {
-					for (int v = 0; v < 3; v++) {
-						vr[v].prepareSample((float) srOS);
+					if (voiceMix != null) {
+						voiceMix[0] = 0.0;
+						voiceMix[1] = 0.0;
+						voiceMix[2] = 0.0;
 					}
-					for (int v = 0; v < 3; v++) {
-						OscState st = vr[v].advanceOsc((float) srOS);
-						msb[v] = st.msb;
-						rise[v] = st.msbRise;
-					}
-					for (int v = 0; v < 3; v++) {
-						vr[v].applySync(rise[modIndex[v]]);
-					}
-
-					double dry = 0.0;
-					double wet = 0.0;
-					for (int v = 0; v < 3; v++) {
-						double voiceSample = vr[v].renderSample((float) srOS, msb[modIndex[v]]);
-						if (vr[v].filterRoute()) {
-							wet += voiceSample;
-						} else {
-							dry += voiceSample;
+					for (int os = 0; os < oversample; os++) {
+						for (int v = 0; v < 3; v++) {
+							vr[v].prepareSample((float) srOS);
 						}
-						if (voiceMix != null) {
-							voiceMix[v] += voiceSample;
+						for (int v = 0; v < 3; v++) {
+							OscState st = vr[v].advanceOsc((float) srOS);
+							msb[v] = st.msb;
+							rise[v] = st.msbRise;
 						}
-						done &= vr[v].done();
+						for (int v = 0; v < 3; v++) {
+							vr[v].applySync(rise[modIndex[v]]);
+						}
+
+						double dry = 0.0;
+						double wet = 0.0;
+						for (int v = 0; v < 3; v++) {
+							double voiceSample = vr[v].renderSample((float) srOS, msb[modIndex[v]]);
+							boolean routed = filter.routesVoice(v + 1, vr[v].filterRoute());
+							if (routed) {
+								wet += voiceSample;
+							} else {
+								dry += voiceSample;
+							}
+							if (wantsVoiceSamples) {
+								voiceSampleByVoice[v] = voiceSample;
+								voiceRouted[v] = routed;
+							}
+							done &= vr[v].done();
+						}
+
+						double filtered = filter.apply(wet, (float) srOS);
+						double volumeScale = filter.volumeScale();
+						if (wantsVoiceSamples) {
+							for (int v = 0; v < 3; v++) {
+								if (voiceRouted[v]) {
+									if (Math.abs(wet) > 1.0e-9) {
+										voiceMix[v] += filtered * (voiceSampleByVoice[v] / wet) * volumeScale;
+									}
+								} else {
+									voiceMix[v] += voiceSampleByVoice[v] * volumeScale;
+								}
+							}
+						}
+						double mix = (dry + filtered) * volumeScale;
+
+						// Output stage smoothing (simple RC) at oversampled rate.
+						outLP += outLPAlpha * (mix - outLP);
 					}
 
-					double filtered = filter.apply(wet, (float) srOS);
-					double mix = dry + filtered;
+					// Safety clamp at output sample rate.
+					double mix = Math.max(-1.0, Math.min(1.0, outLP));
 
-					// Output stage smoothing (simple RC) at oversampled rate.
-					outLP += outLPAlpha * (mix - outLP);
+					short pcm = (short) (mix * 32767);
+					buf[s * 2] = (byte) (pcm & 0xFF);
+					buf[s * 2 + 1] = (byte) ((pcm >>> 8) & 0xFF);
+
+					if (voiceBuf != null) {
+						voiceBuf[0][s] = (float) (voiceMix[0] / oversample);
+						voiceBuf[1][s] = (float) (voiceMix[1] / oversample);
+						voiceBuf[2][s] = (float) (voiceMix[2] / oversample);
+					}
+					samplesWritten++;
 				}
-
-				// Safety clamp at output sample rate.
-				double mix = Math.max(-1.0, Math.min(1.0, outLP));
-
-				short pcm = (short) (mix * 32767);
-				buf[s * 2] = (byte) (pcm & 0xFF);
-				buf[s * 2 + 1] = (byte) ((pcm >>> 8) & 0xFF);
-
-				if (voiceBuf != null) {
-					voiceBuf[0][s] = (float) (voiceMix[0] / oversample);
-					voiceBuf[1][s] = (float) (voiceMix[1] / oversample);
-					voiceBuf[2][s] = (float) (voiceMix[2] / oversample);
+				if (playAudio && line != null && samplesWritten > 0 && !stopRequested.get()) {
+					line.write(buf, 0, samplesWritten * 2);
+					if (!lineStarted && !stopRequested.get()) {
+						line.start();
+						lineStarted = true;
+					} else if (lineStarted && !line.isRunning() && !pauseRequested.get() && !stopRequested.get()) {
+						line.start();
+					}
 				}
-				samplesWritten++;
-			}
-			if (playAudio && line != null) {
-				line.write(buf, 0, samplesWritten * 2);
-			}
-			if (wavBuffer != null) {
-				wavBuffer.write(buf, 0, samplesWritten * 2);
-			}
-			if (listener != null && samplesWritten > 0) {
-				listener.onSamples(voiceBuf[0], voiceBuf[1], voiceBuf[2], samplesWritten, SAMPLE_RATE);
-			}
-			if (playbackListener != null && samplesWritten > 0) {
-				VoiceSnapshot[] snapshots = new VoiceSnapshot[3];
-				for (int i = 0; i < 3; i++) {
-					snapshots[i] = vr[i].snapshot(i + 1);
+				if (wavBuffer != null) {
+					wavBuffer.write(buf, 0, samplesWritten * 2);
 				}
-				long frameIndex = (long) Math.floor(renderedSamples * frameRate / SAMPLE_RATE);
-				playbackListener.onBlock(new PlaybackBlock(blockIndex++, frameIndex, SAMPLE_RATE, snapshots, voiceBuf,
-						samplesWritten));
-			}
-			renderedSamples += samplesWritten;
-		} while (!done && !stopRequested.get());
+				if (listener != null && samplesWritten > 0) {
+					listener.onSamples(voiceBuf[0], voiceBuf[1], voiceBuf[2], samplesWritten, SAMPLE_RATE);
+				}
+				if (playbackListener != null && samplesWritten > 0) {
+					VoiceSnapshot[] snapshots = new VoiceSnapshot[3];
+					for (int i = 0; i < 3; i++) {
+						snapshots[i] = vr[i].snapshot(i + 1);
+					}
+					long frameIndex = (long) Math.floor(renderedSamples * frameRate / SAMPLE_RATE);
+					playbackListener.onBlock(new PlaybackBlock(blockIndex++, frameIndex, SAMPLE_RATE, snapshots, voiceBuf,
+							samplesWritten));
+				}
+				renderedSamples += samplesWritten;
+			} while (!done && !stopRequested.get());
 
-		if (playAudio && line != null) {
 			if (stopRequested.get()) {
-				line.stop();
-				line.flush();
-			} else {
-				line.drain();
-				line.stop();
+				emitSilentTelemetry(listener, playbackListener, blockIndex++, renderedSamples, frameRate);
 			}
-			line.close();
-		}
 
-		if (wavBuffer != null) {
-			writeWav(wavBuffer.toByteArray(), fmt, wavOut);
+			if (playAudio && line != null) {
+				if (stopRequested.get()) {
+					line.stop();
+					line.flush();
+				} else {
+					line.drain();
+					line.stop();
+				}
+				line.close();
+			}
+
+			if (wavBuffer != null) {
+				writeWav(wavBuffer.toByteArray(), fmt, wavOut);
+			}
+		} finally {
+			pauseRequested.set(false);
+			stopRequested.set(false);
+			if (activeLine == line) {
+				activeLine = null;
+			}
+			if (line != null && line.isOpen()) {
+				try {
+					line.stop();
+					line.flush();
+					line.close();
+				} catch (IllegalStateException ignored) {
+					// The audio system can report a closed line during concurrent STOP.
+				}
+			}
 		}
 	}
 
+	private static void emitSilentTelemetry(SampleListener listener, PlaybackListener playbackListener,
+			long blockIndex, long renderedSamples, double frameRate) {
+		if (listener == null && playbackListener == null) {
+			return;
+		}
+		float[][] silence = new float[3][BUFFER_SAMPLES];
+		if (listener != null) {
+			listener.onSamples(silence[0], silence[1], silence[2], BUFFER_SAMPLES, SAMPLE_RATE);
+		}
+		if (playbackListener != null) {
+			VoiceSnapshot[] snapshots = new VoiceSnapshot[] {
+					silentSnapshot(1),
+					silentSnapshot(2),
+					silentSnapshot(3)
+			};
+			long frameIndex = (long) Math.floor(renderedSamples * frameRate / SAMPLE_RATE);
+			playbackListener.onBlock(new PlaybackBlock(blockIndex, frameIndex, SAMPLE_RATE, snapshots, silence,
+					BUFFER_SAMPLES));
+		}
+	}
+
+	private static VoiceSnapshot silentSnapshot(int voiceIndex) {
+		return new VoiceSnapshot(voiceIndex, 0, 255, 0, 0, 0, 1 << 5, 0, 0x0800, 0, 0.0f, 0.0f);
+	}
+
 	// -------- Voice runtime --------
-	static final class VoiceRuntime {
+	private interface RuntimeVoice {
+		boolean done();
+
+		boolean ownsVoice();
+
+		boolean filterRoute();
+
+		void prepareSample(float sr);
+
+		OscState advanceOsc(float sr);
+
+		void applySync(boolean modRise);
+
+		double renderSample(float sr, boolean modMsb);
+
+		VoiceSnapshot snapshot(int voiceIndex);
+	}
+
+	private static boolean effectsMayUseRing(Map<String, SIDScoreIR.EffectIR> effects) {
+		for (SIDScoreIR.EffectIR effect : effects.values()) {
+			for (SIDScoreIR.EffectStepIR step : effect.steps()) {
+				if (step instanceof SIDScoreIR.EffectAssignmentIR assignment
+						&& assignment.parameter() == SIDScoreIR.EffectParameter.RING
+						&& assignment.value().kind() == SIDScoreIR.EffectValueKind.ON_OFF
+						&& assignment.value().value() != 0) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	private static Map<Integer, List<ScheduledEffect>> scheduleEffects(Map<String, SIDScoreIR.EffectIR> effects,
+			int startFrame) {
+		Map<Integer, List<ScheduledEffect>> byVoice = new LinkedHashMap<>();
+		int start = Math.max(0, startFrame);
+		int nextAnyVoice = 1;
+		for (SIDScoreIR.EffectIR effect : effects.values()) {
+			int voice;
+			if (effect.preferredVoice().isPresent()) {
+				voice = effect.preferredVoice().getAsInt();
+			} else {
+				voice = nextAnyVoice;
+				nextAnyVoice = nextAnyVoice == 3 ? 1 : nextAnyVoice + 1;
+			}
+			voice = Math.max(1, Math.min(3, voice));
+			byVoice.computeIfAbsent(voice, ignored -> new ArrayList<>())
+					.add(new ScheduledEffect(start, effect));
+		}
+		return byVoice;
+	}
+
+	private static final record ScheduledEffect(int startFrame, SIDScoreIR.EffectIR effect) {
+	}
+
+	static final class SharedTimelineRuntimeVoice implements RuntimeVoice {
+		private final RuntimeVoice primary;
+		private final RuntimeVoice effect;
+
+		SharedTimelineRuntimeVoice(RuntimeVoice primary, RuntimeVoice effect) {
+			this.primary = primary;
+			this.effect = effect;
+		}
+
+		@Override
+		public boolean done() {
+			return primary.done() && effect.done();
+		}
+
+		@Override
+		public boolean ownsVoice() {
+			return primary.ownsVoice() || effect.ownsVoice();
+		}
+
+		@Override
+		public boolean filterRoute() {
+			return effect.ownsVoice() ? effect.filterRoute() : primary.filterRoute();
+		}
+
+		@Override
+		public void prepareSample(float sr) {
+			primary.prepareSample(sr);
+			effect.prepareSample(sr);
+		}
+
+		@Override
+		public OscState advanceOsc(float sr) {
+			OscState primaryState = primary.advanceOsc(sr);
+			OscState effectState = effect.advanceOsc(sr);
+			return effect.ownsVoice() ? effectState : primaryState;
+		}
+
+		@Override
+		public void applySync(boolean modRise) {
+			if (effect.ownsVoice()) {
+				effect.applySync(modRise);
+			} else {
+				primary.applySync(modRise);
+			}
+		}
+
+		@Override
+		public double renderSample(float sr, boolean modMsb) {
+			double primarySample = primary.renderSample(sr, modMsb);
+			double effectSample = effect.renderSample(sr, modMsb);
+			return effect.ownsVoice() ? effectSample : primarySample;
+		}
+
+		@Override
+		public VoiceSnapshot snapshot(int voiceIndex) {
+			return effect.ownsVoice() ? effect.snapshot(voiceIndex) : primary.snapshot(voiceIndex);
+		}
+	}
+
+	static final class VoiceRuntime implements RuntimeVoice {
 		private final SIDScoreIR.InstrumentIR instr;
 		private final List<FrameEventCompiler.FrameEvent> events;
 		private final double sidClockHz;
@@ -408,42 +620,52 @@ public final class RealtimeAudioPlayer {
 			env.setAdsr(instr.adsr().a(), instr.adsr().d(), instr.adsr().s(), instr.adsr().r());
 		}
 
-		boolean done() {
+		@Override
+		public boolean done() {
 			return done;
 		}
 
-		boolean filterRoute() {
+		@Override
+		public boolean ownsVoice() {
+			return !done;
+		}
+
+		@Override
+		public boolean filterRoute() {
 			return filterRoute;
 		}
 
-		void prepareSample(float sr) {
+		@Override
+		public void prepareSample(float sr) {
 			if (done)
 				return;
 			if (samplesLeft > 0)
 				return;
 			if (ev >= events.size()) {
 				done = true;
-				env.noteOff();
-				activeWaveMask = 0;
+				resetSidState();
 				return;
 			}
 			start(events.get(ev++), sr);
 		}
 
-		OscState advanceOsc(float sr) {
+		@Override
+		public OscState advanceOsc(float sr) {
 			if (done)
 				return OscState.OFF;
 			return osc.advance(sr);
 		}
 
-		void applySync(boolean modRise) {
+		@Override
+		public void applySync(boolean modRise) {
 			if (done || !sync)
 				return;
 			if (modRise)
 				osc.syncReset();
 		}
 
-		double renderSample(float sr, boolean modMsb) {
+		@Override
+		public double renderSample(float sr, boolean modMsb) {
 			if (done)
 				return 0.0;
 			if (samplesLeft > 0) {
@@ -468,7 +690,8 @@ public final class RealtimeAudioPlayer {
 			return out;
 		}
 
-		VoiceSnapshot snapshot(int voiceIndex) {
+		@Override
+		public VoiceSnapshot snapshot(int voiceIndex) {
 			int noteKind = 0;
 			int noteLetter = 255;
 			int accidental = 0;
@@ -514,11 +737,7 @@ public final class RealtimeAudioPlayer {
 		private void start(FrameEventCompiler.FrameEvent e, float sr) {
 			if (e.frames() <= 0) {
 				done = true;
-				active = false;
-				noise = false;
-				gateOn = false;
-				env.noteOff();
-				activeWaveMask = 0;
+				resetSidState();
 				return;
 			}
 
@@ -572,6 +791,40 @@ public final class RealtimeAudioPlayer {
 			if (!noise && gateOn) {
 				applyPitchOffset(sr, pitchOffset);
 			}
+		}
+
+		private void resetSidState() {
+			active = false;
+			noise = false;
+			gateOn = false;
+			sync = false;
+			ring = false;
+			activeWaveMask = 0;
+			pw = 0x0800;
+			pwSweep = 0;
+			pwStep = 0;
+			pwSamplesLeft = 0;
+			pwSampleRemainder = 0.0;
+			pwHolding = false;
+			waveStep = 0;
+			waveSamplesLeft = 0;
+			waveSampleRemainder = 0.0;
+			waveHolding = false;
+			gateStep = 0;
+			gateSamplesLeft = 0;
+			gateSampleRemainder = 0.0;
+			gateHolding = false;
+			pitchStep = 0;
+			pitchSamplesLeft = 0;
+			pitchSampleRemainder = 0.0;
+			pitchHolding = false;
+			baseMidi = -1;
+			noteBaseMidi = -1;
+			pitchOffset = 0;
+			currentFreqReg = 0;
+			lastEnvelopeLevel = 0.0;
+			lastOutputLevel = 0.0;
+			env.noteOff();
 		}
 
 		private void resetPwm(float sr) {
@@ -1004,11 +1257,481 @@ public final class RealtimeAudioPlayer {
 
 	}
 
+	// -------- Effect preview runtime --------
+	static final class EffectRuntime implements RuntimeVoice {
+		private final List<EffectFrameState> frames;
+		private final double sidClockHz;
+		private final double frameRate;
+		private final FilterRuntime filter;
+		private final int voiceIndex;
+		private final Osc osc;
+		private final Env env = new Env();
+
+		private int frameIndex = 0;
+		private int samplesLeft = 0;
+		private double sampleRemainder = 0.0;
+		private boolean done = false;
+		private boolean active = false;
+		private boolean ownsVoice = false;
+		private boolean gateOn = false;
+		private boolean sync = false;
+		private boolean ring = false;
+		private boolean noise = false;
+		private int activeWaveMask = 0;
+		private int currentFreqReg = 0;
+		private int baseMidi = -1;
+		private int pw = 0x0800;
+		private int filterModeMask = 0;
+		private int filterRouteMask = -1;
+		private int filterCutoff = 0;
+		private int filterRes = 0;
+		private int volume = -1;
+		private double lastEnvelopeLevel = 0.0;
+		private double lastOutputLevel = 0.0;
+
+		EffectRuntime(int voiceIndex, List<ScheduledEffect> scheduled, double sidClockHz, double frameRate,
+				FilterRuntime filter, SidWaveforms.TableSet waveTables) {
+			this.voiceIndex = voiceIndex;
+			this.sidClockHz = sidClockHz;
+			this.frameRate = frameRate;
+			this.filter = filter;
+			this.osc = new Osc(waveTables);
+			this.frames = compileFrames(scheduled, sidClockHz);
+			this.done = frames.isEmpty();
+			env.setAdsr(0, 0, 15, 0);
+		}
+
+		@Override
+		public boolean done() {
+			return done;
+		}
+
+		@Override
+		public boolean ownsVoice() {
+			return !done && ownsVoice;
+		}
+
+		@Override
+		public boolean filterRoute() {
+			if (filterRouteMask >= 0) {
+				return (filterRouteMask & (1 << (voiceIndex - 1))) != 0;
+			}
+			return filterModeMask != 0;
+		}
+
+		@Override
+		public void prepareSample(float sr) {
+			if (done || samplesLeft > 0) {
+				return;
+			}
+			if (frameIndex >= frames.size()) {
+				done = true;
+				resetSidState();
+				return;
+			}
+			setSamplesLeft(1, sr);
+			applyFrame(frames.get(frameIndex++), sr);
+		}
+
+		@Override
+		public OscState advanceOsc(float sr) {
+			if (done) {
+				return OscState.OFF;
+			}
+			return osc.advance(sr);
+		}
+
+		@Override
+		public void applySync(boolean modRise) {
+			if (!done && sync && modRise) {
+				osc.syncReset();
+			}
+		}
+
+		@Override
+		public double renderSample(float sr, boolean modMsb) {
+			if (done) {
+				return 0.0;
+			}
+			if (samplesLeft > 0) {
+				samplesLeft--;
+			}
+			osc.setPulseWidth(pw);
+			double e = env.next(sr);
+			double o = activeWaveMask != 0 ? osc.output(activeWaveMask, ring, modMsb) : 0.0;
+			active = gateOn || currentFreqReg != 0 || env.isActive();
+			double out = MIX_GAIN * e * o;
+			lastEnvelopeLevel = e;
+			lastOutputLevel = Math.abs(out);
+			return out;
+		}
+
+		@Override
+		public VoiceSnapshot snapshot(int voiceIndex) {
+			int noteKind = 0;
+			int noteLetter = 255;
+			int accidental = 0;
+			int octave = 0;
+			if (noise) {
+				noteKind = 2;
+			} else if (baseMidi >= 0 && active) {
+				noteKind = 1;
+				NoteParts note = noteParts(clampMidi(baseMidi));
+				noteLetter = note.letter;
+				accidental = note.accidental;
+				octave = note.octave;
+			}
+
+			int flags = 0;
+			if (active)
+				flags |= 1;
+			if (gateOn)
+				flags |= 1 << 1;
+			if (sync)
+				flags |= 1 << 2;
+			if (ring)
+				flags |= 1 << 3;
+			if (filterRoute())
+				flags |= 1 << 4;
+			if (done)
+				flags |= 1 << 5;
+
+			return new VoiceSnapshot(voiceIndex, noteKind, noteLetter, accidental, octave, activeWaveMask, flags,
+					currentFreqReg & 0xFFFF, pw & 0x0FFF, 0, (float) clamp01(lastEnvelopeLevel),
+					(float) clamp01(lastOutputLevel / Math.max(0.0001, MIX_GAIN)));
+		}
+
+		private void applyFrame(EffectFrameState frame, float sr) {
+			ownsVoice = frame.ownsVoice;
+			if (frame.reset) {
+				osc.hardReset();
+			}
+
+			env.setAdsr(frame.attack, frame.decay, frame.sustain, frame.release);
+			if (frame.gate && !gateOn) {
+				boolean shortAttack = env.isActive() && !env.isReleasing();
+				gateOn = true;
+				env.noteOn(true, shortAttack);
+			} else if (!frame.gate && gateOn) {
+				gateOn = false;
+				env.noteOff();
+			}
+
+			sync = frame.sync;
+			ring = frame.ring;
+			activeWaveMask = frame.waveMask;
+			noise = (activeWaveMask & SIDScoreIR.Wave.NOISE.mask) != 0;
+			pw = clampPw(frame.pw);
+			baseMidi = frame.baseMidi;
+			currentFreqReg = frame.freqReg & 0xFFFF;
+			osc.setWaveMask(activeWaveMask, OptionalInt.of(pw));
+			osc.setFreq(freqRegToHz(currentFreqReg, sidClockHz), sr);
+
+			if (frame.volume >= 0 && volume != frame.volume) {
+				volume = frame.volume;
+				filter.setVolume(volume);
+			}
+			if (frame.filterRouteMask >= 0 && filterRouteMask != frame.filterRouteMask) {
+				filterRouteMask = frame.filterRouteMask;
+				filter.setRouteMask(filterRouteMask);
+			}
+			if (filterModeMask != frame.filterModeMask || filterCutoff != frame.filterCutoff
+					|| filterRes != frame.filterRes) {
+				filterModeMask = frame.filterModeMask;
+				filterCutoff = frame.filterCutoff;
+				filterRes = frame.filterRes;
+				if (filterModeMask != 0) {
+					filter.activate(filterModeMask, filterCutoff, filterRes, null, sr);
+				}
+			}
+
+			active = frame.gate || currentFreqReg != 0 || env.isActive();
+		}
+
+		private void resetSidState() {
+			active = false;
+			ownsVoice = false;
+			gateOn = false;
+			sync = false;
+			ring = false;
+			noise = false;
+			activeWaveMask = 0;
+			currentFreqReg = 0;
+			baseMidi = -1;
+			pw = 0x0800;
+			filterModeMask = 0;
+			filterRouteMask = -1;
+			filterCutoff = 0;
+			filterRes = 0;
+			volume = -1;
+			lastEnvelopeLevel = 0.0;
+			lastOutputLevel = 0.0;
+			env.noteOff();
+		}
+
+		private void setSamplesLeft(int frames, float sr) {
+			double samplesExact = frames * (sr / frameRate) + sampleRemainder;
+			samplesLeft = Math.max(1, (int) Math.round(samplesExact));
+			sampleRemainder = samplesExact - samplesLeft;
+		}
+
+		private static List<EffectFrameState> compileFrames(List<ScheduledEffect> scheduled, double sidClockHz) {
+			int totalFrames = 0;
+			for (ScheduledEffect item : scheduled) {
+				totalFrames = Math.max(totalFrames,
+						item.startFrame() + Math.max(1, item.effect().lengthTicks()));
+			}
+			if (totalFrames <= 0) {
+				return List.of();
+			}
+
+			List<EffectFrameState> frames = new ArrayList<>(totalFrames);
+			int[] framePriority = new int[totalFrames];
+			for (int i = 0; i < totalFrames; i++) {
+				frames.add(EffectFrameState.defaults());
+				framePriority[i] = -1;
+			}
+
+			for (ScheduledEffect item : scheduled) {
+				boolean controlsVoice = effectControlsVoice(item.effect());
+				int length = Math.max(1, item.effect().lengthTicks());
+				List<EffectFrameState> local = new ArrayList<>(length);
+				for (int i = 0; i < length; i++) {
+					local.add(EffectFrameState.defaults());
+				}
+				for (SIDScoreIR.EffectStepIR step : item.effect().steps()) {
+					if (step instanceof SIDScoreIR.EffectAssignmentIR assignment) {
+						applyAssignment(local, assignment, sidClockHz);
+					} else if (step instanceof SIDScoreIR.EffectSweepIR sweep) {
+						applySweep(local, sweep, sidClockHz);
+					}
+				}
+				for (int i = 0; i < local.size() && item.startFrame() + i < frames.size(); i++) {
+					int targetFrame = item.startFrame() + i;
+					if (item.effect().priority() >= framePriority[targetFrame]) {
+						local.get(i).ownsVoice = controlsVoice;
+						frames.set(targetFrame, local.get(i));
+						framePriority[targetFrame] = item.effect().priority();
+					}
+				}
+			}
+
+			return List.copyOf(frames);
+		}
+
+		private static void applyAssignment(List<EffectFrameState> frames,
+				SIDScoreIR.EffectAssignmentIR assignment, double sidClockHz) {
+			int tick = assignment.tick();
+			if (tick < 0 || tick >= frames.size()) {
+				return;
+			}
+			if (assignment.parameter() == SIDScoreIR.EffectParameter.RESET) {
+				frames.get(tick).reset = true;
+				return;
+			}
+			for (int i = tick; i < frames.size(); i++) {
+				applyValue(frames.get(i), assignment.parameter(), assignment.value(), sidClockHz);
+			}
+		}
+
+		private static void applyValue(EffectFrameState frame, SIDScoreIR.EffectParameter parameter,
+				SIDScoreIR.EffectValueIR value, double sidClockHz) {
+			switch (parameter) {
+			case WAVE -> frame.waveMask = value.value();
+			case GATE -> frame.gate = value.value() != 0;
+			case SYNC -> frame.sync = value.value() != 0;
+			case RING -> frame.ring = value.value() != 0;
+			case PITCH -> {
+				int midi = clampMidi(value.value());
+				frame.baseMidi = midi;
+				frame.freqReg = freqRegFromMidi(midi, sidClockHz);
+			}
+			case FREQ -> {
+				frame.freqReg = value.value() & 0xFFFF;
+				frame.baseMidi = -1;
+			}
+			case PW -> frame.pw = clampPw(value.value());
+			case HIPULSE -> frame.pw = clampPw((frame.pw & 0x00FF) | ((value.value() & 0x0F) << 8));
+			case LOWPULSE -> frame.pw = clampPw((frame.pw & 0x0F00) | (value.value() & 0xFF));
+			case ADSR -> {
+				SIDScoreIR.AdsrIR adsr = value.adsr().orElse(new SIDScoreIR.AdsrIR(0, 0, 15, 0));
+				frame.attack = clampNibble(adsr.a());
+				frame.decay = clampNibble(adsr.d());
+				frame.sustain = clampNibble(adsr.s());
+				frame.release = clampNibble(adsr.r());
+			}
+			case ATTACK -> frame.attack = clampNibble(value.value());
+			case DECAY -> frame.decay = clampNibble(value.value());
+			case SUSTAIN -> frame.sustain = clampNibble(value.value());
+			case RELEASE -> frame.release = clampNibble(value.value());
+			case FILTER -> frame.filterModeMask = value.value();
+			case FILTERROUTE -> frame.filterRouteMask = clampNibble(value.value());
+			case CUTOFF -> frame.filterCutoff = clampCutoff(value.value());
+			case RES -> frame.filterRes = clampNibble(value.value());
+			case VOLUME -> frame.volume = clampNibble(value.value());
+			case RESET -> frame.reset = true;
+			}
+		}
+
+		private static void applySweep(List<EffectFrameState> frames, SIDScoreIR.EffectSweepIR sweep,
+				double sidClockHz) {
+			int duration = Math.min(Math.max(1, sweep.durationTicks()), frames.size());
+			for (int i = 0; i < duration; i++) {
+				double pos = duration == 1 ? 1.0 : i / (double) (duration - 1);
+				pos = switch (sweep.curve()) {
+				case EXP -> pos * pos;
+				case LOG -> Math.sqrt(pos);
+				case LINEAR, STEP -> pos;
+				};
+				int from = sweep.fromValue().value();
+				int to = sweep.toValue().value();
+				int value = (int) Math.round(from + (to - from) * pos);
+				applySweepValue(frames.get(i), sweep.parameter(), value, sidClockHz);
+			}
+		}
+
+		private static void applySweepValue(EffectFrameState frame, SIDScoreIR.EffectParameter parameter,
+				int value, double sidClockHz) {
+			switch (parameter) {
+			case PITCH -> {
+				int midi = clampMidi(value);
+				frame.baseMidi = midi;
+				frame.freqReg = freqRegFromMidi(midi, sidClockHz);
+			}
+			case FREQ -> {
+				frame.freqReg = Math.max(0, Math.min(0xFFFF, value));
+				frame.baseMidi = -1;
+			}
+			case PW -> frame.pw = clampPw(value);
+			case CUTOFF -> frame.filterCutoff = clampCutoff(value);
+			case VOLUME -> frame.volume = clampNibble(value);
+			default -> {
+				// Parser validation only permits the sweep parameters above.
+			}
+			}
+		}
+
+		private static int freqRegFromMidi(int midi, double sidClockHz) {
+			double hz = 440.0 * Math.pow(2.0, (midi - 69) / 12.0);
+			int reg = (int) Math.round(hz * 16777216.0 / sidClockHz);
+			return Math.max(1, Math.min(0xFFFF, reg));
+		}
+
+		private static double freqRegToHz(int reg, double sidClockHz) {
+			if (reg <= 0)
+				return 0.0;
+			return (reg & 0xFFFF) * sidClockHz / 16777216.0;
+		}
+
+		private static boolean effectControlsVoice(SIDScoreIR.EffectIR effect) {
+			for (SIDScoreIR.EffectStepIR step : effect.steps()) {
+				SIDScoreIR.EffectParameter parameter = null;
+				if (step instanceof SIDScoreIR.EffectAssignmentIR assignment) {
+					parameter = assignment.parameter();
+				} else if (step instanceof SIDScoreIR.EffectSweepIR sweep) {
+					parameter = sweep.parameter();
+				}
+				if (parameter != null && !isGlobalEffectParameter(parameter)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		private static boolean isGlobalEffectParameter(SIDScoreIR.EffectParameter parameter) {
+			return parameter == SIDScoreIR.EffectParameter.FILTER
+					|| parameter == SIDScoreIR.EffectParameter.FILTERROUTE
+					|| parameter == SIDScoreIR.EffectParameter.CUTOFF
+					|| parameter == SIDScoreIR.EffectParameter.RES
+					|| parameter == SIDScoreIR.EffectParameter.VOLUME;
+		}
+
+		private static int clampMidi(int midi) {
+			return Math.max(0, Math.min(127, midi));
+		}
+
+		private static int clampPw(int value) {
+			return Math.max(0, Math.min(0x0FFF, value));
+		}
+
+		private static int clampCutoff(int value) {
+			return Math.max(0, Math.min(0x07FF, value));
+		}
+
+		private static int clampNibble(int value) {
+			return Math.max(0, Math.min(15, value));
+		}
+
+		private static double clamp01(double value) {
+			return Math.max(0.0, Math.min(1.0, value));
+		}
+
+		private static NoteParts noteParts(int midi) {
+			int semitone = Math.floorMod(midi, 12);
+			int octave = midi / 12 - 1;
+			return switch (semitone) {
+			case 0 -> new NoteParts(0, 0, octave);
+			case 1 -> new NoteParts(0, 1, octave);
+			case 2 -> new NoteParts(1, 0, octave);
+			case 3 -> new NoteParts(1, 1, octave);
+			case 4 -> new NoteParts(2, 0, octave);
+			case 5 -> new NoteParts(3, 0, octave);
+			case 6 -> new NoteParts(3, 1, octave);
+			case 7 -> new NoteParts(4, 0, octave);
+			case 8 -> new NoteParts(4, 1, octave);
+			case 9 -> new NoteParts(5, 0, octave);
+			case 10 -> new NoteParts(5, 1, octave);
+			case 11 -> new NoteParts(6, 0, octave);
+			default -> new NoteParts(255, 0, 0);
+			};
+		}
+
+		private static final class EffectFrameState {
+			int waveMask = 0;
+			boolean gate = false;
+			boolean sync = false;
+			boolean ring = false;
+			boolean reset = false;
+			boolean ownsVoice = false;
+			int freqReg = 0;
+			int baseMidi = -1;
+			int pw = 0x0800;
+			int attack = 0;
+			int decay = 0;
+			int sustain = 15;
+			int release = 0;
+			int filterModeMask = 0;
+			int filterRouteMask = -1;
+			int filterCutoff = 0;
+			int filterRes = 0;
+			int volume = -1;
+
+			static EffectFrameState defaults() {
+				return new EffectFrameState();
+			}
+		}
+
+		private static final class NoteParts {
+			final int letter;
+			final int accidental;
+			final int octave;
+
+			NoteParts(int letter, int accidental, int octave) {
+				this.letter = letter;
+				this.accidental = accidental;
+				this.octave = octave;
+			}
+		}
+	}
+
 	// -------- Global filter runtime (approximate SID filter) --------
 	static final class FilterRuntime {
 		private final double frameRate;
 
 		private int modeMask = 0;
+		private int routeMask = 0;
+		private boolean routeMaskExplicit = false;
+		private int volume = 15;
 		private int cutoff = 0;
 		private int resonance = 0;
 		private SIDScoreIR.TableIR table = null;
@@ -1040,6 +1763,29 @@ public final class RealtimeAudioPlayer {
 			if (table != null && !table.steps().isEmpty()) {
 				loadTableStep(sr);
 			}
+		}
+
+		void setRouteMask(int routeMask) {
+			this.routeMask = routeMask & 0x0F;
+			this.routeMaskExplicit = true;
+		}
+
+		boolean routesVoice(int voiceIndex, boolean fallbackRoute) {
+			if (!routeMaskExplicit) {
+				return fallbackRoute;
+			}
+			if (voiceIndex < 1 || voiceIndex > 3) {
+				return false;
+			}
+			return (routeMask & (1 << (voiceIndex - 1))) != 0;
+		}
+
+		void setVolume(int volume) {
+			this.volume = clampNibble(volume);
+		}
+
+		double volumeScale() {
+			return volume / 15.0;
 		}
 
 		double apply(double input, float sr) {
@@ -1134,6 +1880,10 @@ public final class RealtimeAudioPlayer {
 		}
 
 		private static int clampRes(int v) {
+			return clampNibble(v);
+		}
+
+		private static int clampNibble(int v) {
 			return Math.max(0, Math.min(15, v));
 		}
 
