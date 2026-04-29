@@ -489,9 +489,10 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 					return;
 				}
 				int channel = shortMessage.getChannel() + 1;
+				routeShortMessage(shortMessage.getCommand(), channel, shortMessage.getData1(),
+						shortMessage.getData2());
 				emitReceivedMessage(shortMessage.getCommand(), channel, shortMessage.getData1(), shortMessage.getData2(),
 						message.getClass().getName());
-				routeShortMessage(shortMessage.getCommand(), channel, shortMessage.getData1(), shortMessage.getData2());
 			} catch (RuntimeException e) {
 				emit("ERROR routing MIDI message: " + e.getClass().getSimpleName() + ": " + e.getMessage());
 			}
@@ -510,8 +511,8 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			int data1 = length > 1 ? data[1] & 0x7F : 0;
 			int data2 = length > 2 ? data[2] & 0x7F : 0;
 			if (command >= 0x80 && command <= 0xE0 && length >= 3) {
-				emitReceivedMessage(command, channel, data1, data2, message.getClass().getName());
 				routeShortMessage(command, channel, data1, data2);
+				emitReceivedMessage(command, channel, data1, data2, message.getClass().getName());
 				return;
 			}
 			if (!isNoisySystemMessage(status)) {

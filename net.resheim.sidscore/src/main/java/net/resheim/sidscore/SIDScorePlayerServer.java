@@ -25,6 +25,7 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 
 import javax.sound.midi.MidiUnavailableException;
@@ -51,6 +52,7 @@ public final class SIDScorePlayerServer {
 	private static final String MIDI_AWT_EVENT_PUMP_PROPERTY = "sidscore.midi.awtEventPump";
 	private static final int DEFAULT_SCOPE_BUCKETS = 64;
 	private static final int OUTBOUND_QUEUE_SIZE = 512;
+	private static final int MIDI_LOG_QUEUE_SIZE = 1024;
 	private static final int INSTRUMENT_SOURCE_DEFAULT = 0;
 	private static final int INSTRUMENT_SOURCE_SCORE = 1;
 	private static final int INSTRUMENT_SOURCE_OVERRIDE = 2;
@@ -63,6 +65,8 @@ public final class SIDScorePlayerServer {
 					Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
 					0, OptionalInt.empty(), OptionalInt.empty(), Optional.empty(),
 					SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
+	private static final BlockingQueue<String> MIDI_LOGS = new ArrayBlockingQueue<>(MIDI_LOG_QUEUE_SIZE);
+	private static final AtomicBoolean MIDI_LOGGER_STARTED = new AtomicBoolean(false);
 
 	private final int requestedPort;
 	private final BlockingQueue<OutboundFrame> outbound = new ArrayBlockingQueue<>(OUTBOUND_QUEUE_SIZE);
@@ -490,13 +494,8 @@ public final class SIDScorePlayerServer {
 		int assignmentCount = in.u8();
 		in.u16();
 
-		MidiVoiceAssignment[] updated = new MidiVoiceAssignment[] {
-				MidiVoiceAssignment.disabled(1),
-				MidiVoiceAssignment.disabled(2),
-				MidiVoiceAssignment.disabled(3)
-		};
+		MidiVoiceAssignment[] updated = midiAssignmentsSnapshot();
 		boolean[] seen = new boolean[4];
-		boolean hasEnabledAssignment = false;
 		for (int i = 0; i < assignmentCount; i++) {
 			int voiceIndex = in.u8();
 			boolean voiceEnabled = in.u8() != 0;
@@ -519,26 +518,34 @@ public final class SIDScorePlayerServer {
 							"MIDI channel must be 1..16, got " + channel, true);
 					return;
 				}
-				hasEnabledAssignment = true;
 				updated[voiceIndex - 1] = new MidiVoiceAssignment(voiceIndex, true,
 						deviceSelector != null ? deviceSelector.trim() : "", channel);
 			} else {
 				updated[voiceIndex - 1] = MidiVoiceAssignment.disabled(voiceIndex);
 			}
 		}
-		if (enabled && !hasEnabledAssignment) {
+		if (enabled && !hasEnabledMidiAssignment(updated)) {
 			enqueueError(requestId, SrapProtocol.ERR_INVALID_FRAME,
 					"MIDI enabled requires at least one assigned SID voice", true);
 			return;
 		}
 
+		boolean changed;
 		synchronized (midiVoiceAssignments) {
-			System.arraycopy(updated, 0, midiVoiceAssignments, 0, midiVoiceAssignments.length);
-			midiEnabled = enabled;
+			changed = midiSettingsChangedLocked(enabled, updated);
+			if (changed) {
+				System.arraycopy(updated, 0, midiVoiceAssignments, 0, midiVoiceAssignments.length);
+				midiEnabled = enabled;
+			}
 		}
-		logMidi("settings updated by protocol; " + midiStateDescription());
+		logMidi((changed ? "settings updated" : "settings unchanged") + " by protocol; "
+				+ midiStateDescription());
 		sendMidiState(requestId, true);
-		restartRealtimeOutputAfterSettingsChange(requestId);
+		if (changed) {
+			restartRealtimeOutputAfterSettingsChange(requestId);
+		} else {
+			startMidiMonitorIfNeeded(requestId);
+		}
 	}
 
 	private void restartRealtimeOutputAfterSettingsChange(long requestId) {
@@ -916,6 +923,21 @@ public final class SIDScorePlayerServer {
 		return List.copyOf(assignments);
 	}
 
+	private MidiVoiceAssignment[] midiAssignmentsSnapshot() {
+		synchronized (midiVoiceAssignments) {
+			return midiVoiceAssignments.clone();
+		}
+	}
+
+	private static boolean hasEnabledMidiAssignment(MidiVoiceAssignment[] assignments) {
+		for (MidiVoiceAssignment assignment : assignments) {
+			if (assignment.enabled()) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	private boolean autoConnectSingleMidiDevice(List<MidiInputRouter.InputDevice> devices) {
 		if (devices.size() != 1) {
 			return false;
@@ -929,7 +951,7 @@ public final class SIDScorePlayerServer {
 				MidiVoiceAssignment assignment = midiVoiceAssignments[i];
 				if (assignment.enabled()) {
 					hasEnabledAssignment = true;
-					if (!selector.equals(assignment.deviceSelector())) {
+					if (!midiSelectorsEquivalent(assignment.deviceSelector(), selector)) {
 						assignment = new MidiVoiceAssignment(assignment.voiceIndex(), true, selector,
 								assignment.channel());
 						changed = true;
@@ -958,6 +980,24 @@ public final class SIDScorePlayerServer {
 			}
 		}
 		return changed;
+	}
+
+	private boolean midiSettingsChangedLocked(boolean enabled, MidiVoiceAssignment[] updated) {
+		if (midiEnabled != enabled) {
+			return true;
+		}
+		for (int i = 0; i < midiVoiceAssignments.length; i++) {
+			MidiVoiceAssignment current = midiVoiceAssignments[i];
+			MidiVoiceAssignment next = updated[i];
+			if (current.voiceIndex() != next.voiceIndex() || current.enabled() != next.enabled()
+					|| current.channel() != next.channel()) {
+				return true;
+			}
+			if (current.enabled() && !midiSelectorsEquivalent(current.deviceSelector(), next.deviceSelector())) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private String midiStateDescription() {
@@ -1026,6 +1066,41 @@ public final class SIDScorePlayerServer {
 	}
 
 	private static void logMidi(String message) {
+		enqueueMidiLog(message);
+	}
+
+	// Java Sound calls this path from the MIDI callback; keep it independent of stdout back-pressure.
+	private static void logMidiEventAsync(String message) {
+		enqueueMidiLog("event " + message);
+	}
+
+	private static void enqueueMidiLog(String message) {
+		startMidiLogger();
+		if (!MIDI_LOGS.offer(message)) {
+			MIDI_LOGS.poll();
+			MIDI_LOGS.offer(message);
+		}
+	}
+
+	private static void startMidiLogger() {
+		if (!MIDI_LOGGER_STARTED.compareAndSet(false, true)) {
+			return;
+		}
+		Thread thread = new Thread(() -> {
+			while (true) {
+				try {
+					writeMidiLog(MIDI_LOGS.take());
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+					return;
+				}
+			}
+		}, "sidscore-midi-log");
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	private static void writeMidiLog(String message) {
 		System.out.println("[sidscore-midi] " + message);
 		System.out.flush();
 	}
@@ -1103,6 +1178,30 @@ public final class SIDScorePlayerServer {
 				|| device.vendor().toLowerCase(Locale.ROOT).contains(needle)
 				|| device.description().toLowerCase(Locale.ROOT).contains(needle)
 				|| device.version().toLowerCase(Locale.ROOT).contains(needle);
+	}
+
+	private static boolean midiSelectorsEquivalent(String first, String second) {
+		String left = first != null ? first.trim() : "";
+		String right = second != null ? second.trim() : "";
+		if (left.equals(right)) {
+			return true;
+		}
+		String leftKey = midiSelectorDeviceKey(left);
+		String rightKey = midiSelectorDeviceKey(right);
+		return leftKey != null && leftKey.equals(rightKey);
+	}
+
+	private static String midiSelectorDeviceKey(String selector) {
+		List<MidiInputRouter.InputDevice> devices = MidiInputRouter.listInputDevices();
+		if (devices.isEmpty()) {
+			return null;
+		}
+		for (MidiInputRouter.InputDevice device : devices) {
+			if (midiDeviceMatches(device, selector)) {
+				return Integer.toString(device.index());
+			}
+		}
+		return null;
 	}
 
 	private void sendAllInstrumentStates(long requestId, boolean critical) {
@@ -1505,7 +1604,7 @@ public final class SIDScorePlayerServer {
 					logMidi("opening MIDI input selector='" + printableMidiSelector(selector) + "' voices="
 							+ voiceMap);
 					MidiInputRouter router = MidiInputRouter.open(selector, voiceMap,
-							message -> logMidi("event " + message));
+							SIDScorePlayerServer::logMidiEventAsync);
 					routers.add(router);
 					descriptions.add("'" + router.deviceName() + "' voices=" + voiceMap);
 					logMidi("opened MIDI input '" + router.deviceName() + "' selector='"
