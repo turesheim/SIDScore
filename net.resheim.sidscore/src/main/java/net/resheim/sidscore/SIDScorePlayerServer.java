@@ -52,7 +52,7 @@ public final class SIDScorePlayerServer {
 	private static final String MIDI_AWT_EVENT_PUMP_PROPERTY = "sidscore.midi.awtEventPump";
 	private static final int DEFAULT_SCOPE_BUCKETS = 64;
 	private static final int OUTBOUND_QUEUE_SIZE = 512;
-	private static final int MIDI_LOG_QUEUE_SIZE = 1024;
+	private static final int STDOUT_LOG_QUEUE_SIZE = 1024;
 	private static final int INSTRUMENT_SOURCE_DEFAULT = 0;
 	private static final int INSTRUMENT_SOURCE_SCORE = 1;
 	private static final int INSTRUMENT_SOURCE_OVERRIDE = 2;
@@ -65,14 +65,16 @@ public final class SIDScorePlayerServer {
 					Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
 					0, OptionalInt.empty(), OptionalInt.empty(), Optional.empty(),
 					SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
-	private static final BlockingQueue<String> MIDI_LOGS = new ArrayBlockingQueue<>(MIDI_LOG_QUEUE_SIZE);
-	private static final AtomicBoolean MIDI_LOGGER_STARTED = new AtomicBoolean(false);
+	private static final BlockingQueue<String> STDOUT_LOGS = new ArrayBlockingQueue<>(STDOUT_LOG_QUEUE_SIZE);
+	private static final AtomicBoolean STDOUT_LOGGER_STARTED = new AtomicBoolean(false);
 
 	private final int requestedPort;
 	private final BlockingQueue<OutboundFrame> outbound = new ArrayBlockingQueue<>(OUTBOUND_QUEUE_SIZE);
 	private final AtomicLong outboundSequence = new AtomicLong(1);
 	private final AtomicLong scoreIds = new AtomicLong(1);
 	private final SIDScoreIR.InstrumentIR[] instrumentOverrides = new SIDScoreIR.InstrumentIR[3];
+	private final Object midiMonitorRestartLock = new Object();
+	private final Object sharedMidiSourceLock = new Object();
 	private final MidiVoiceAssignment[] midiVoiceAssignments = new MidiVoiceAssignment[] {
 			MidiVoiceAssignment.disabled(1),
 			MidiVoiceAssignment.disabled(2),
@@ -84,9 +86,13 @@ public final class SIDScorePlayerServer {
 	private volatile int clientCapabilities = SrapProtocol.CAP_ALL;
 	private volatile int playbackState = SrapProtocol.STATE_IDLE;
 	private volatile boolean midiEnabled = false;
+	private volatile boolean pendingMidiMonitorRestart = false;
+	private volatile long pendingMidiMonitorRestartRequestId = 0;
 	private volatile long currentScoreId = 0;
 	private volatile ScoreMapExporter.ScoreMap currentScoreMap = null;
 	private volatile LoadedScore currentLoadedScore = null;
+	private volatile ServerMidiSource sharedMidiSource = null;
+	private volatile List<MidiVoiceAssignment> sharedMidiSourceAssignments = List.of();
 	private volatile RealtimeAudioPlayer currentPlayer = null;
 	private volatile Thread currentPlayerThread = null;
 	private volatile boolean currentMidiMonitor = false;
@@ -208,11 +214,12 @@ public final class SIDScorePlayerServer {
 				writer.setDaemon(true);
 				writer.start();
 				try {
-					readerLoop(socket);
-				} finally {
-					running = false;
-					stopCurrent(0, false);
-					outbound.clear();
+						readerLoop(socket);
+					} finally {
+						running = false;
+						stopCurrent(0, false);
+						closeSharedMidiSource();
+						outbound.clear();
 					outbound.offer(OutboundFrame.poisonFrame());
 					writer.join(1000);
 				}
@@ -224,14 +231,15 @@ public final class SIDScorePlayerServer {
 		boolean handshaken = false;
 		while (running) {
 			SrapProtocol.Frame frame;
-			try {
-				frame = SrapProtocol.readFrame(socket.getInputStream());
-			} catch (EOFException eof) {
-				break;
-			}
-			try {
-				if (!handshaken) {
-					if (frame.type() != SrapProtocol.HELLO) {
+				try {
+					frame = SrapProtocol.readFrame(socket.getInputStream());
+				} catch (EOFException eof) {
+					break;
+				}
+				logIncomingSignal(frame);
+				try {
+					if (!handshaken) {
+						if (frame.type() != SrapProtocol.HELLO) {
 						enqueueError(0, SrapProtocol.ERR_INVALID_STATE, "HELLO must be the first frame", true);
 						break;
 					}
@@ -555,9 +563,16 @@ public final class SIDScorePlayerServer {
 		if (currentMidiMonitor) {
 			boolean shouldRestart = !enabledMidiAssignments().isEmpty();
 			logMidi("restarting MIDI monitor after settings change; shouldRestart=" + shouldRestart);
+			if (shouldRestart) {
+				queueMidiMonitorRestart(requestId);
+			}
 			stopRequestedByClient = true;
-			stopCurrent(shouldRestart ? 0 : requestId, !shouldRestart);
+			boolean stopped = stopCurrent(shouldRestart ? 0 : requestId, !shouldRestart);
 			stopRequestedByClient = false;
+			if (shouldRestart && stopped) {
+				startPendingMidiMonitorRestart();
+			}
+			return;
 		}
 		startMidiMonitorIfNeeded(requestId);
 	}
@@ -596,7 +611,7 @@ public final class SIDScorePlayerServer {
 		ServerMidiSource midiSource = null;
 		boolean endedNormally = false;
 		try {
-			midiSource = openMidiSourceIfEnabled();
+				midiSource = openSharedMidiSourceIfEnabled();
 			if (midiSource != null) {
 				logMidi("score playback using MIDI source: " + midiSource.description());
 				sendMidiState(requestId, true);
@@ -620,10 +635,8 @@ public final class SIDScorePlayerServer {
 					true);
 			enqueueError(requestId, SrapProtocol.ERR_PLAYBACK_ERROR, e.getMessage(), true);
 		} finally {
-			if (midiSource != null) {
-				midiSource.close();
-			}
-			if (currentPlayer == player) {
+				closeSharedMidiSourceIfDisabled();
+				if (currentPlayer == player) {
 				currentPlayer = null;
 				currentPlayerThread = null;
 				currentMidiMonitor = false;
@@ -674,7 +687,7 @@ public final class SIDScorePlayerServer {
 	private void runMidiMonitor(long requestId, long scoreId, RealtimeAudioPlayer player, SIDScoreIR.TimedScore timed) {
 		ServerMidiSource midiSource = null;
 		try {
-			midiSource = openMidiSourceIfEnabled();
+				midiSource = openSharedMidiSourceIfEnabled();
 			if (midiSource == null) {
 				logMidi("MIDI monitor stopped before start; no MIDI source available");
 				return;
@@ -706,14 +719,17 @@ public final class SIDScorePlayerServer {
 				playbackState = SrapProtocol.STATE_ERROR;
 			}
 		} finally {
-			if (midiSource != null) {
-				midiSource.close();
-			}
+			closeSharedMidiSourceIfDisabled();
 			logMidi("MIDI monitor stopped scoreId=" + scoreId);
+			boolean clearedCurrentMonitor = false;
 			if (currentPlayer == player) {
 				currentPlayer = null;
 				currentPlayerThread = null;
 				currentMidiMonitor = false;
+				clearedCurrentMonitor = true;
+			}
+			if (clearedCurrentMonitor) {
+				startPendingMidiMonitorRestart();
 			}
 		}
 	}
@@ -779,22 +795,59 @@ public final class SIDScorePlayerServer {
 		}
 	}
 
-	private void stopCurrent(long requestId, boolean emitState) {
+	private void queueMidiMonitorRestart(long requestId) {
+		synchronized (midiMonitorRestartLock) {
+			pendingMidiMonitorRestart = true;
+			pendingMidiMonitorRestartRequestId = requestId;
+		}
+	}
+
+	private void startPendingMidiMonitorRestart() {
+		long requestId;
+		synchronized (midiMonitorRestartLock) {
+			if (!pendingMidiMonitorRestart) {
+				return;
+			}
+			pendingMidiMonitorRestart = false;
+			requestId = pendingMidiMonitorRestartRequestId;
+			pendingMidiMonitorRestartRequestId = 0;
+		}
+		if (!running || enabledMidiAssignments().isEmpty()) {
+			return;
+		}
+		startMidiMonitorIfNeeded(requestId);
+	}
+
+	private boolean stopCurrent(long requestId, boolean emitState) {
 		RealtimeAudioPlayer player = currentPlayer;
 		if (player != null) {
 			player.stop();
 		}
 		Thread thread = currentPlayerThread;
+		boolean stopped = thread == null || thread == Thread.currentThread();
 		if (thread != null && thread != Thread.currentThread()) {
 			try {
-				thread.join(1000);
+				thread.join(3000);
 			} catch (InterruptedException e) {
 				Thread.currentThread().interrupt();
 			}
+			stopped = !thread.isAlive();
+			if (!stopped) {
+				logMidi("current player thread is still stopping; deferred restart will run after close");
+			}
 		}
-		currentPlayer = null;
-		currentPlayerThread = null;
-		currentMidiMonitor = false;
+		if (stopped) {
+			boolean stoppingCurrentPlayer = currentPlayer == player || currentPlayerThread == thread;
+			if (currentPlayer == player) {
+				currentPlayer = null;
+			}
+			if (currentPlayerThread == thread) {
+				currentPlayerThread = null;
+			}
+			if (stoppingCurrentPlayer) {
+				currentMidiMonitor = false;
+			}
+		}
 		resetHighlightIds();
 		if (emitState) {
 			sendSilentVoiceState(currentScoreId, true);
@@ -803,6 +856,7 @@ public final class SIDScorePlayerServer {
 			sendPlaybackState(requestId, SrapProtocol.STATE_STOPPED, SrapProtocol.REASON_CLIENT_REQUEST, currentScoreId,
 					0, 0, true);
 		}
+		return stopped;
 	}
 
 	private ParsedScore parse(Path sourcePath, String sourceText) throws Exception {
@@ -890,12 +944,65 @@ public final class SIDScorePlayerServer {
 				score.tables(), score.effects(), voices, score.subtunes());
 	}
 
-	private ServerMidiSource openMidiSourceIfEnabled() throws MidiUnavailableException {
+	private ServerMidiSource openSharedMidiSourceIfEnabled() throws MidiUnavailableException {
 		List<MidiVoiceAssignment> assignments = enabledMidiAssignments();
 		if (assignments.isEmpty()) {
 			return null;
 		}
-		return ServerMidiSource.open(assignments);
+		synchronized (sharedMidiSourceLock) {
+			ServerMidiSource existing = sharedMidiSource;
+			if (existing != null && existing.isOpen()
+					&& sameMidiAssignments(sharedMidiSourceAssignments, assignments)) {
+				existing.resumeInput();
+				logMidi("reusing MIDI input source: " + existing.description());
+				return existing;
+			}
+			closeSharedMidiSourceLocked();
+			ServerMidiSource opened = ServerMidiSource.open(assignments);
+			sharedMidiSource = opened;
+			sharedMidiSourceAssignments = assignments;
+			return opened;
+		}
+	}
+
+	private void closeSharedMidiSourceIfDisabled() {
+		if (!enabledMidiAssignments().isEmpty()) {
+			return;
+		}
+		closeSharedMidiSource();
+	}
+
+	private void closeSharedMidiSource() {
+		synchronized (sharedMidiSourceLock) {
+			closeSharedMidiSourceLocked();
+		}
+	}
+
+	private void closeSharedMidiSourceLocked() {
+		ServerMidiSource existing = sharedMidiSource;
+		sharedMidiSource = null;
+		sharedMidiSourceAssignments = List.of();
+		if (existing != null) {
+			existing.close();
+		}
+	}
+
+	private static boolean sameMidiAssignments(List<MidiVoiceAssignment> left, List<MidiVoiceAssignment> right) {
+		if (left.size() != right.size()) {
+			return false;
+		}
+		for (int i = 0; i < left.size(); i++) {
+			MidiVoiceAssignment a = left.get(i);
+			MidiVoiceAssignment b = right.get(i);
+			if (a.voiceIndex() != b.voiceIndex() || a.enabled() != b.enabled()
+					|| a.channel() != b.channel()) {
+				return false;
+			}
+			if (!midiSelectorsEquivalent(a.deviceSelector(), b.deviceSelector())) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private List<MidiVoiceAssignment> enabledMidiAssignments() {
@@ -1066,43 +1173,167 @@ public final class SIDScorePlayerServer {
 	}
 
 	private static void logMidi(String message) {
-		enqueueMidiLog(message);
+		enqueueStdoutLog("[sidscore-midi] " + message);
 	}
 
 	// Java Sound calls this path from the MIDI callback; keep it independent of stdout back-pressure.
 	private static void logMidiEventAsync(String message) {
-		enqueueMidiLog("event " + message);
+		enqueueStdoutLog("[sidscore-midi] event " + message);
 	}
 
-	private static void enqueueMidiLog(String message) {
-		startMidiLogger();
-		if (!MIDI_LOGS.offer(message)) {
-			MIDI_LOGS.poll();
-			MIDI_LOGS.offer(message);
+	private static void logIncomingSignal(SrapProtocol.Frame frame) {
+		enqueueStdoutLog("[sidscore-signal] IN " + signalName(frame.type()) + " seq=" + frame.sequence()
+				+ " payloadBytes=" + frame.payload().length + signalSummary(frame));
+	}
+
+	private static void enqueueStdoutLog(String message) {
+		startStdoutLogger();
+		if (!STDOUT_LOGS.offer(message)) {
+			STDOUT_LOGS.poll();
+			STDOUT_LOGS.offer(message);
 		}
 	}
 
-	private static void startMidiLogger() {
-		if (!MIDI_LOGGER_STARTED.compareAndSet(false, true)) {
+	private static void startStdoutLogger() {
+		if (!STDOUT_LOGGER_STARTED.compareAndSet(false, true)) {
 			return;
 		}
 		Thread thread = new Thread(() -> {
 			while (true) {
 				try {
-					writeMidiLog(MIDI_LOGS.take());
+					writeStdoutLog(STDOUT_LOGS.take());
 				} catch (InterruptedException e) {
 					Thread.currentThread().interrupt();
 					return;
 				}
 			}
-		}, "sidscore-midi-log");
+		}, "sidscore-stdout-log");
 		thread.setDaemon(true);
 		thread.start();
 	}
 
-	private static void writeMidiLog(String message) {
-		System.out.println("[sidscore-midi] " + message);
+	private static void writeStdoutLog(String message) {
+		System.out.println(message);
 		System.out.flush();
+	}
+
+	private static String signalSummary(SrapProtocol.Frame frame) {
+		try {
+			SrapProtocol.PayloadReader in = SrapProtocol.reader(frame.payload());
+			return switch (frame.type()) {
+			case SrapProtocol.HELLO -> {
+				String clientName = in.str();
+				int minVersion = in.u16();
+				int maxVersion = in.u16();
+				int caps = (int) in.u32();
+				yield " client='" + clientName + "' versions=" + minVersion + ".." + maxVersion
+						+ " caps=0x" + Integer.toHexString(caps);
+			}
+			case SrapProtocol.PLAY -> {
+				long requestId = in.u32();
+				String sourceUri = in.str();
+				String sourcePath = in.str();
+				int sidModel = in.u8();
+				yield " request=" + requestId + " sourcePath='" + sourcePath + "' sourceUri='"
+						+ sourceUri + "' sidModel=" + sidModel;
+			}
+			case SrapProtocol.PLAY_SOURCE -> {
+				long requestId = in.u32();
+				String sourceUri = in.str();
+				String sourcePath = in.str();
+				int sidModel = in.u8();
+				in.u8();
+				in.u8();
+				in.u8();
+				long sourceLength = in.u32();
+				yield " request=" + requestId + " sourcePath='" + sourcePath + "' sourceUri='"
+						+ sourceUri + "' sidModel=" + sidModel + " sourceBytes=" + sourceLength;
+			}
+			case SrapProtocol.PAUSE, SrapProtocol.CONTINUE, SrapProtocol.STOP,
+					SrapProtocol.SCAN_MIDI_DEVICES -> " request=" + in.u32();
+			case SrapProtocol.SET_INSTRUMENT -> signalInstrumentSummary(in, true);
+			case SrapProtocol.RESET_INSTRUMENT -> signalInstrumentSummary(in, false);
+			case SrapProtocol.SET_MIDI_SETTINGS -> signalMidiSettingsSummary(in);
+			default -> "";
+			};
+		} catch (RuntimeException e) {
+			return " summaryError=" + e.getClass().getSimpleName();
+		}
+	}
+
+	private static String signalInstrumentSummary(SrapProtocol.PayloadReader in, boolean includesInstrument) {
+		long requestId = in.u32();
+		int voiceIndex = in.u8();
+		if (!includesInstrument) {
+			return " request=" + requestId + " voice=" + voiceIndex;
+		}
+		int waveMask = in.u8();
+		int attack = in.u8();
+		int decay = in.u8();
+		int sustain = in.u8();
+		int release = in.u8();
+		in.u16();
+		in.i16();
+		in.u16();
+		in.u16();
+		in.u8();
+		in.u16();
+		in.u8();
+		in.u8();
+		in.u8();
+		in.u8();
+		in.u8();
+		String name = in.str();
+		return " request=" + requestId + " voice=" + voiceIndex + " instrument='" + name
+				+ "' wave=0x" + Integer.toHexString(waveMask) + " adsr=" + attack + "," + decay
+				+ "," + sustain + "," + release;
+	}
+
+	private static String signalMidiSettingsSummary(SrapProtocol.PayloadReader in) {
+		long requestId = in.u32();
+		boolean enabled = in.u8() != 0;
+		int assignmentCount = in.u8();
+		in.u16();
+		StringBuilder sb = new StringBuilder();
+		sb.append(" request=").append(requestId)
+				.append(" enabled=").append(enabled)
+				.append(" assignments=").append(assignmentCount)
+				.append(" [");
+		for (int i = 0; i < assignmentCount; i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			int voiceIndex = in.u8();
+			boolean voiceEnabled = in.u8() != 0;
+			int channel = in.u8();
+			in.u8();
+			String selector = in.str();
+			sb.append("voice ").append(voiceIndex).append('=');
+			if (!voiceEnabled) {
+				sb.append("off");
+			} else {
+				sb.append("ch ").append(channel)
+						.append(" selector='").append(printableMidiSelector(selector)).append('\'');
+			}
+		}
+		sb.append(']');
+		return sb.toString();
+	}
+
+	private static String signalName(int type) {
+		return switch (type) {
+		case SrapProtocol.HELLO -> "HELLO";
+		case SrapProtocol.PLAY -> "PLAY";
+		case SrapProtocol.PAUSE -> "PAUSE";
+		case SrapProtocol.CONTINUE -> "CONTINUE";
+		case SrapProtocol.STOP -> "STOP";
+		case SrapProtocol.PLAY_SOURCE -> "PLAY_SOURCE";
+		case SrapProtocol.SET_INSTRUMENT -> "SET_INSTRUMENT";
+		case SrapProtocol.RESET_INSTRUMENT -> "RESET_INSTRUMENT";
+		case SrapProtocol.SCAN_MIDI_DEVICES -> "SCAN_MIDI_DEVICES";
+		case SrapProtocol.SET_MIDI_SETTINGS -> "SET_MIDI_SETTINGS";
+		default -> "0x" + Integer.toHexString(type);
+		};
 	}
 
 	private void sendMidiState(long requestId, boolean critical) {
@@ -1624,12 +1855,27 @@ public final class SIDScorePlayerServer {
 					descriptions.isEmpty() ? "none" : String.join("; ", descriptions));
 		}
 
-		String description() {
-			return description;
-		}
+			String description() {
+				return description;
+			}
 
-		@Override
-		public boolean controlsVoice(int voiceIndex) {
+			boolean isOpen() {
+				for (MidiInputRouter router : routers) {
+					if (!router.isOpen()) {
+						return false;
+					}
+				}
+				return true;
+			}
+
+			void resumeInput() {
+				for (MidiInputRouter router : routers) {
+					router.resumeInput();
+				}
+			}
+
+			@Override
+			public boolean controlsVoice(int voiceIndex) {
 			MidiInputRouter router = routersByVoice.get(voiceIndex);
 			return router != null && router.controlsVoice(voiceIndex);
 		}
