@@ -87,6 +87,7 @@ public final class RealtimeAudioPlayer {
 	private volatile SourceDataLine activeLine = null;
 	private final SidModel sidModel;
 	private final SidWaveforms.TableSet waveTables;
+	private volatile InstrumentProvider instrumentProvider = null;
 
 	public RealtimeAudioPlayer() {
 		this(SidModel.MOS6581, null);
@@ -117,6 +118,10 @@ public final class RealtimeAudioPlayer {
 		default List<MidiEvent> drainEvents(int voiceIndex) {
 			return List.of();
 		}
+	}
+
+	public interface InstrumentProvider {
+		SIDScoreIR.InstrumentIR instrumentForVoice(int voiceIndex, SIDScoreIR.InstrumentIR fallback);
 	}
 
 	public static final record MidiEvent(int note, int velocity, boolean gate, double pitchBendSemitones, long id) {
@@ -215,6 +220,10 @@ public final class RealtimeAudioPlayer {
 		pauseRequested.set(false);
 	}
 
+	public void setInstrumentProvider(InstrumentProvider provider) {
+		instrumentProvider = provider;
+	}
+
 	private void render(SIDScoreIR.TimedScore score, Path wavOut, boolean playAudio, SampleListener listener,
 			PlaybackListener playbackListener, MidiSource midiSource)
 			throws LineUnavailableException {
@@ -233,6 +242,7 @@ public final class RealtimeAudioPlayer {
 
 			double sidClockHz = score.system() == SIDScoreIR.VideoSystem.NTSC ? SID_CLOCK_NTSC : SID_CLOCK_PAL;
 			double frameRate = score.system() == SIDScoreIR.VideoSystem.NTSC ? RASTER_RATE_NTSC : RASTER_RATE_PAL;
+			InstrumentProvider instruments = instrumentProvider;
 
 			FilterRuntime filter = new FilterRuntime(frameRate);
 			RuntimeVoice[] vr = new RuntimeVoice[3];
@@ -244,16 +254,16 @@ public final class RealtimeAudioPlayer {
 				boolean midiControlsVoice = midiSource != null && midiSource.controlsVoice(voiceIndex);
 				if (midiControlsVoice || tv == null) {
 					List<FrameEventCompiler.FrameEvent> events = FrameEventCompiler.compileVoice(null, score);
-					primary = new VoiceRuntime(SILENT_INSTR, events, sidClockHz, frameRate, score.tables(), filter,
-							waveTables);
+					primary = new VoiceRuntime(voiceIndex, SILENT_INSTR, events, sidClockHz, frameRate, score.tables(),
+							filter, waveTables, instruments);
 				} else {
 					List<FrameEventCompiler.FrameEvent> events = FrameEventCompiler.compileVoice(tv, score);
-					primary = new VoiceRuntime(instrument, events, sidClockHz, frameRate, score.tables(), filter,
-							waveTables);
+					primary = new VoiceRuntime(voiceIndex, instrument, events, sidClockHz, frameRate, score.tables(),
+							filter, waveTables, instruments);
 				}
 				if (midiControlsVoice) {
 					RuntimeVoice midiRuntime = new MidiRuntime(voiceIndex, instrument, midiSource, sidClockHz,
-							frameRate, score.tables(), filter, waveTables);
+							frameRate, score.tables(), filter, waveTables, instruments);
 					vr[i] = new SharedTimelineRuntimeVoice(primary, midiRuntime);
 				} else {
 					vr[i] = primary;
@@ -283,7 +293,7 @@ public final class RealtimeAudioPlayer {
 			int[] modIndex = new int[] { 2, 0, 1 };
 
 			int oversample = OVERSAMPLE_BASE;
-			if (effectsMayUseRing(score.effects())) {
+			if (instruments != null || effectsMayUseRing(score.effects())) {
 				oversample = Math.max(oversample, OVERSAMPLE_RING);
 			}
 			for (int i = 0; i < 3; i++) {
@@ -603,23 +613,26 @@ public final class RealtimeAudioPlayer {
 		private static final double MIN_TRIGGER_SECONDS = 0.025;
 
 		private final int voiceIndex;
-		private final SIDScoreIR.InstrumentIR instr;
+		private final SIDScoreIR.InstrumentIR baseInstr;
+		private SIDScoreIR.InstrumentIR instr;
 		private final MidiSource midiSource;
 		private final double sidClockHz;
 		private final double frameRate;
 		private final Osc osc;
 		private final Env env = new Env();
 		private final FilterRuntime filter;
-		private final int waveMask;
-		private final boolean filterRoute;
-		private final int filterModeMask;
-		private final int filterCutoff;
-		private final int filterRes;
-		private final SIDScoreIR.TableIR filterTable;
-		private final SIDScoreIR.TableIR pwTable;
-		private final SIDScoreIR.TableIR waveTable;
-		private final SIDScoreIR.TableIR gateTable;
-		private final SIDScoreIR.TableIR pitchTable;
+		private final java.util.Map<String, SIDScoreIR.TableIR> tables;
+		private final InstrumentProvider instrumentProvider;
+		private int waveMask;
+		private boolean filterRoute;
+		private int filterModeMask;
+		private int filterCutoff;
+		private int filterRes;
+		private SIDScoreIR.TableIR filterTable;
+		private SIDScoreIR.TableIR pwTable;
+		private SIDScoreIR.TableIR waveTable;
+		private SIDScoreIR.TableIR gateTable;
+		private SIDScoreIR.TableIR pitchTable;
 
 		private boolean gateOn = false;
 		private boolean active = false;
@@ -661,27 +674,17 @@ public final class RealtimeAudioPlayer {
 
 		MidiRuntime(int voiceIndex, SIDScoreIR.InstrumentIR instr, MidiSource midiSource, double sidClockHz,
 				double frameRate, java.util.Map<String, SIDScoreIR.TableIR> tables, FilterRuntime filter,
-				SidWaveforms.TableSet waveTables) {
+				SidWaveforms.TableSet waveTables, InstrumentProvider instrumentProvider) {
 			this.voiceIndex = voiceIndex;
-			this.instr = instr != null ? instr : DEFAULT_MIDI_INSTR;
+			this.baseInstr = instr != null ? instr : DEFAULT_MIDI_INSTR;
 			this.midiSource = midiSource;
 			this.sidClockHz = sidClockHz;
 			this.frameRate = frameRate;
 			this.filter = filter;
+			this.tables = tables != null ? tables : Map.of();
+			this.instrumentProvider = instrumentProvider;
 			this.osc = new Osc(waveTables);
-			this.waveMask = this.instr.waveMask();
-			this.sync = this.instr.sync();
-			this.ring = this.instr.ring();
-			this.filterModeMask = this.instr.filterModeMask();
-			this.filterRoute = filterModeMask != 0;
-			this.filterCutoff = this.instr.filterCutoff().orElse(0);
-			this.filterRes = this.instr.filterRes().orElse(0);
-			this.filterTable = this.instr.filterSeq().isPresent() ? tables.get(this.instr.filterSeq().get()) : null;
-			this.pwTable = this.instr.pwSeq().isPresent() ? tables.get(this.instr.pwSeq().get()) : null;
-			this.waveTable = this.instr.waveSeq().isPresent() ? tables.get(this.instr.waveSeq().get()) : null;
-			this.gateTable = this.instr.gateSeq().isPresent() ? tables.get(this.instr.gateSeq().get()) : null;
-			this.pitchTable = this.instr.pitchSeq().isPresent() ? tables.get(this.instr.pitchSeq().get()) : null;
-			env.setAdsr(this.instr.adsr().a(), this.instr.adsr().d(), this.instr.adsr().s(), this.instr.adsr().r());
+			loadInstrument(resolveInstrument(), 0.0f, false);
 		}
 
 		@Override
@@ -701,6 +704,7 @@ public final class RealtimeAudioPlayer {
 
 		@Override
 		public void prepareSample(float sr) {
+			refreshInstrument(sr);
 			List<MidiEvent> events = midiSource.drainEvents(voiceIndex);
 			for (MidiEvent event : events) {
 				if (event.gate()) {
@@ -842,6 +846,48 @@ public final class RealtimeAudioPlayer {
 			return new VoiceSnapshot(voiceIndex, noteKind, noteLetter, accidental, octave, activeWaveMask, flags,
 					currentFreqReg & 0xFFFF, pw & 0x0FFF, pitchOffset + (int) Math.round(currentBend),
 					(float) clamp01(lastEnvelopeLevel), (float) clamp01(lastOutputLevel / Math.max(0.0001, MIX_GAIN)));
+		}
+
+		private SIDScoreIR.InstrumentIR resolveInstrument() {
+			SIDScoreIR.InstrumentIR resolved = instrumentProvider != null
+					? instrumentProvider.instrumentForVoice(voiceIndex, baseInstr)
+					: null;
+			return resolved != null ? resolved : baseInstr;
+		}
+
+		private void refreshInstrument(float sr) {
+			SIDScoreIR.InstrumentIR resolved = resolveInstrument();
+			if (resolved.equals(instr)) {
+				return;
+			}
+			loadInstrument(resolved, sr, true);
+		}
+
+		private void loadInstrument(SIDScoreIR.InstrumentIR instrument, float sr, boolean live) {
+			instr = instrument;
+			waveMask = instr.waveMask();
+			sync = instr.sync();
+			ring = instr.ring();
+			filterModeMask = instr.filterModeMask();
+			filterRoute = filterModeMask != 0;
+			filterCutoff = instr.filterCutoff().orElse(0);
+			filterRes = instr.filterRes().orElse(0);
+			filterTable = instr.filterSeq().isPresent() ? tables.get(instr.filterSeq().get()) : null;
+			pwTable = instr.pwSeq().isPresent() ? tables.get(instr.pwSeq().get()) : null;
+			waveTable = instr.waveSeq().isPresent() ? tables.get(instr.waveSeq().get()) : null;
+			gateTable = instr.gateSeq().isPresent() ? tables.get(instr.gateSeq().get()) : null;
+			pitchTable = instr.pitchSeq().isPresent() ? tables.get(instr.pitchSeq().get()) : null;
+			env.setAdsr(instr.adsr().a(), instr.adsr().d(), instr.adsr().s(), instr.adsr().r());
+			if (!live || sr <= 0.0f || !ownsVoice()) {
+				return;
+			}
+			resetPwm(sr);
+			resetWaveSeq(sr);
+			resetPitchSeq(sr);
+			osc.setWaveMask(activeWaveMask, OptionalInt.of(pw));
+			if (filterRoute) {
+				filter.activate(filterModeMask, filterCutoff, filterRes, filterTable, sr);
+			}
 		}
 
 		private void startNote(int midi, double bend, float sr) {
@@ -1222,23 +1268,27 @@ public final class RealtimeAudioPlayer {
 	}
 
 	static final class VoiceRuntime implements RuntimeVoice {
-		private final SIDScoreIR.InstrumentIR instr;
+		private final int voiceIndex;
+		private final SIDScoreIR.InstrumentIR baseInstr;
+		private SIDScoreIR.InstrumentIR instr;
 		private final List<FrameEventCompiler.FrameEvent> events;
 		private final double sidClockHz;
 		private final double frameRate;
-		private final int waveMask;
+		private int waveMask;
 		private boolean sync;
 		private boolean ring;
-		private final SIDScoreIR.TableIR pwTable;
-		private final SIDScoreIR.TableIR waveTable;
-		private final SIDScoreIR.TableIR gateTable;
-		private final SIDScoreIR.TableIR pitchTable;
+		private SIDScoreIR.TableIR pwTable;
+		private SIDScoreIR.TableIR waveTable;
+		private SIDScoreIR.TableIR gateTable;
+		private SIDScoreIR.TableIR pitchTable;
 		private final FilterRuntime filter;
-		private final boolean filterRoute;
-		private final int filterModeMask;
-		private final int filterCutoff;
-		private final int filterRes;
-		private final SIDScoreIR.TableIR filterTable;
+		private final java.util.Map<String, SIDScoreIR.TableIR> tables;
+		private final InstrumentProvider instrumentProvider;
+		private boolean filterRoute;
+		private int filterModeMask;
+		private int filterCutoff;
+		private int filterRes;
+		private SIDScoreIR.TableIR filterTable;
 
 		private int ev = 0;
 		private int samplesLeft = 0;
@@ -1277,29 +1327,20 @@ public final class RealtimeAudioPlayer {
 		private double lastEnvelopeLevel = 0.0;
 		private double lastOutputLevel = 0.0;
 
-		VoiceRuntime(SIDScoreIR.InstrumentIR instr, List<FrameEventCompiler.FrameEvent> events,
+		VoiceRuntime(int voiceIndex, SIDScoreIR.InstrumentIR instr, List<FrameEventCompiler.FrameEvent> events,
 				double sidClockHz, double frameRate, java.util.Map<String, SIDScoreIR.TableIR> tables,
-				FilterRuntime filter, SidWaveforms.TableSet waveTables) {
-			this.instr = instr;
+				FilterRuntime filter, SidWaveforms.TableSet waveTables, InstrumentProvider instrumentProvider) {
+			this.voiceIndex = voiceIndex;
+			this.baseInstr = instr != null ? instr : SILENT_INSTR;
 			this.events = events;
 			this.sidClockHz = sidClockHz;
 			this.frameRate = frameRate;
 			this.filter = filter;
+			this.tables = tables != null ? tables : Map.of();
+			this.instrumentProvider = instrumentProvider;
 			this.osc = new Osc(waveTables);
-			this.waveMask = instr.waveMask();
-			this.sync = instr.sync();
-			this.ring = instr.ring();
 			this.done = events.isEmpty();
-			this.pwTable = instr.pwSeq().isPresent() ? tables.get(instr.pwSeq().get()) : null;
-			this.waveTable = instr.waveSeq().isPresent() ? tables.get(instr.waveSeq().get()) : null;
-			this.gateTable = instr.gateSeq().isPresent() ? tables.get(instr.gateSeq().get()) : null;
-			this.pitchTable = instr.pitchSeq().isPresent() ? tables.get(instr.pitchSeq().get()) : null;
-			this.filterModeMask = instr.filterModeMask();
-			this.filterRoute = filterModeMask != 0;
-			this.filterCutoff = instr.filterCutoff().orElse(0);
-			this.filterRes = instr.filterRes().orElse(0);
-			this.filterTable = instr.filterSeq().isPresent() ? tables.get(instr.filterSeq().get()) : null;
-			env.setAdsr(instr.adsr().a(), instr.adsr().d(), instr.adsr().s(), instr.adsr().r());
+			loadInstrument(resolveInstrument(), 0.0f, false);
 		}
 
 		@Override
@@ -1319,6 +1360,7 @@ public final class RealtimeAudioPlayer {
 
 		@Override
 		public void prepareSample(float sr) {
+			refreshInstrument(sr);
 			if (done)
 				return;
 			if (samplesLeft > 0)
@@ -1416,6 +1458,51 @@ public final class RealtimeAudioPlayer {
 					(float) clamp01(lastOutputLevel / Math.max(0.0001, MIX_GAIN)));
 		}
 
+		private SIDScoreIR.InstrumentIR resolveInstrument() {
+			SIDScoreIR.InstrumentIR resolved = instrumentProvider != null
+					? instrumentProvider.instrumentForVoice(voiceIndex, baseInstr)
+					: null;
+			return resolved != null ? resolved : baseInstr;
+		}
+
+		private void refreshInstrument(float sr) {
+			SIDScoreIR.InstrumentIR resolved = resolveInstrument();
+			if (resolved.equals(instr)) {
+				return;
+			}
+			loadInstrument(resolved, sr, true);
+		}
+
+		private void loadInstrument(SIDScoreIR.InstrumentIR instrument, float sr, boolean live) {
+			instr = instrument;
+			waveMask = instr.waveMask();
+			sync = instr.sync();
+			ring = instr.ring();
+			pwTable = instr.pwSeq().isPresent() ? tables.get(instr.pwSeq().get()) : null;
+			waveTable = instr.waveSeq().isPresent() ? tables.get(instr.waveSeq().get()) : null;
+			gateTable = instr.gateSeq().isPresent() ? tables.get(instr.gateSeq().get()) : null;
+			pitchTable = instr.pitchSeq().isPresent() ? tables.get(instr.pitchSeq().get()) : null;
+			filterModeMask = instr.filterModeMask();
+			filterRoute = filterModeMask != 0;
+			filterCutoff = instr.filterCutoff().orElse(0);
+			filterRes = instr.filterRes().orElse(0);
+			filterTable = instr.filterSeq().isPresent() ? tables.get(instr.filterSeq().get()) : null;
+			env.setAdsr(instr.adsr().a(), instr.adsr().d(), instr.adsr().s(), instr.adsr().r());
+			if (!live || sr <= 0.0f || !active) {
+				return;
+			}
+			resetPwm(sr);
+			resetWaveSeq(sr);
+			resetPitchSeq(sr);
+			if (noise) {
+				activeWaveMask = SIDScoreIR.Wave.NOISE.mask;
+			}
+			osc.setWaveMask(activeWaveMask, OptionalInt.of(pw));
+			if (filterRoute) {
+				filter.activate(filterModeMask, filterCutoff, filterRes, filterTable, sr);
+			}
+		}
+
 		private void start(FrameEventCompiler.FrameEvent e, float sr) {
 			if (e.frames() <= 0) {
 				done = true;
@@ -1427,12 +1514,20 @@ public final class RealtimeAudioPlayer {
 			samplesLeft = Math.max(1, (int) Math.round(samplesExact));
 			eventSampleRemainder = samplesExact - samplesLeft;
 
-			int ctrl = e.ctrl() & 0xF7;
+			boolean eventGateBit = (e.ctrl() & 0x01) != 0;
+			boolean eventNoise = (e.baseNote() & 0x80) != 0;
+			boolean eventHasVoice = eventGateBit || e.freq() != 0 || eventNoise;
+			int ctrl = eventHasVoice
+					? ((eventNoise ? 0x80 : waveMaskToCtrl(waveMask))
+							| (sync ? 0x02 : 0x00)
+							| (ring ? 0x04 : 0x00)
+							| (eventGateBit ? 0x01 : 0x00))
+					: (e.ctrl() & 0xF7);
 			boolean gateBit = (ctrl & 0x01) != 0;
 			sync = (ctrl & 0x02) != 0;
 			ring = (ctrl & 0x04) != 0;
 
-			noise = (e.baseNote() & 0x80) != 0;
+			noise = eventNoise;
 			baseMidi = noise ? -1 : (e.baseNote() & 0x7f);
 			noteBaseMidi = baseMidi;
 			pitchOffset = 0;
@@ -1895,6 +1990,19 @@ public final class RealtimeAudioPlayer {
 			if ((waveBits & 0x80) != 0)
 				mask |= SIDScoreIR.Wave.NOISE.mask;
 			return mask;
+		}
+
+		private static int waveMaskToCtrl(int waveMask) {
+			int ctrl = 0;
+			if ((waveMask & SIDScoreIR.Wave.TRI.mask) != 0)
+				ctrl |= 0x10;
+			if ((waveMask & SIDScoreIR.Wave.SAW.mask) != 0)
+				ctrl |= 0x20;
+			if ((waveMask & SIDScoreIR.Wave.PULSE.mask) != 0)
+				ctrl |= 0x40;
+			if ((waveMask & SIDScoreIR.Wave.NOISE.mask) != 0)
+				ctrl |= 0x80;
+			return ctrl;
 		}
 
 		private static double clamp01(double value) {

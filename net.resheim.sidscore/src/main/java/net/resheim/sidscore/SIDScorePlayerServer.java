@@ -27,6 +27,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReferenceArray;
 
 import javax.sound.midi.MidiUnavailableException;
 import javax.sound.sampled.LineUnavailableException;
@@ -72,7 +73,7 @@ public final class SIDScorePlayerServer {
 	private final BlockingQueue<OutboundFrame> outbound = new ArrayBlockingQueue<>(OUTBOUND_QUEUE_SIZE);
 	private final AtomicLong outboundSequence = new AtomicLong(1);
 	private final AtomicLong scoreIds = new AtomicLong(1);
-	private final SIDScoreIR.InstrumentIR[] instrumentOverrides = new SIDScoreIR.InstrumentIR[3];
+	private final AtomicReferenceArray<SIDScoreIR.InstrumentIR> instrumentOverrides = new AtomicReferenceArray<>(3);
 	private final Object midiMonitorRestartLock = new Object();
 	private final Object sharedMidiSourceLock = new Object();
 	private final MidiVoiceAssignment[] midiVoiceAssignments = new MidiVoiceAssignment[] {
@@ -397,6 +398,7 @@ public final class SIDScorePlayerServer {
 		sendSilentVoiceState(scoreId, true);
 
 		RealtimeAudioPlayer player = new RealtimeAudioPlayer(loaded.sidModel());
+		player.setInstrumentProvider(this::effectivePlaybackInstrument);
 		currentPlayer = player;
 		Thread thread = new Thread(() -> runPlayer(requestId, scoreId, player, timed),
 				"sidscore-srap-player");
@@ -458,9 +460,9 @@ public final class SIDScorePlayerServer {
 			return;
 		}
 		SIDScoreIR.InstrumentIR instrument = decodeInstrument(voiceIndex, in);
-		instrumentOverrides[voiceIndex - 1] = instrument;
+		instrumentOverrides.set(voiceIndex - 1, instrument);
 		sendInstrumentState(requestId, voiceIndex, true);
-		restartRealtimeOutputAfterSettingsChange(requestId);
+		applyRealtimeInstrumentChange(requestId, voiceIndex);
 	}
 
 	private void handleResetInstrument(byte[] payload) {
@@ -471,9 +473,9 @@ public final class SIDScorePlayerServer {
 			enqueueError(requestId, SrapProtocol.ERR_INVALID_FRAME, "Instrument voice index must be 1..3", true);
 			return;
 		}
-		instrumentOverrides[voiceIndex - 1] = null;
+		instrumentOverrides.set(voiceIndex - 1, null);
 		sendInstrumentState(requestId, voiceIndex, true);
-		restartRealtimeOutputAfterSettingsChange(requestId);
+		applyRealtimeInstrumentChange(requestId, voiceIndex);
 	}
 
 	private void handleScanMidiDevices(byte[] payload) {
@@ -571,6 +573,21 @@ public final class SIDScorePlayerServer {
 			stopRequestedByClient = false;
 			if (shouldRestart && stopped) {
 				startPendingMidiMonitorRestart();
+			}
+			return;
+		}
+		startMidiMonitorIfNeeded(requestId);
+	}
+
+	private void applyRealtimeInstrumentChange(long requestId, int voiceIndex) {
+		Thread thread = currentPlayerThread;
+		RealtimeAudioPlayer player = currentPlayer;
+		int state = playbackState;
+		if (player != null && thread != null
+				&& (state == SrapProtocol.STATE_PLAYING || state == SrapProtocol.STATE_PAUSED)) {
+			logMidi("applied live instrument change for voice " + voiceIndex + " without restarting realtime output");
+			if (currentMidiMonitor) {
+				sendCurrentMidiMonitorState(requestId);
 			}
 			return;
 		}
@@ -676,6 +693,7 @@ public final class SIDScorePlayerServer {
 				+ "; instruments=" + midiInstrumentDescription(timed));
 		SidModel sidModel = currentLoadedScore != null ? currentLoadedScore.sidModel() : SidModel.MOS6581;
 		RealtimeAudioPlayer player = new RealtimeAudioPlayer(sidModel);
+		player.setInstrumentProvider(this::effectivePlaybackInstrument);
 		currentPlayer = player;
 		currentMidiMonitor = true;
 		Thread thread = new Thread(() -> runMidiMonitor(requestId, scoreId, player, timed),
@@ -920,8 +938,8 @@ public final class SIDScorePlayerServer {
 
 	private SIDScoreIR.TimedScore applyInstrumentOverrides(SIDScoreIR.TimedScore score) {
 		boolean hasOverrides = false;
-		for (SIDScoreIR.InstrumentIR override : instrumentOverrides) {
-			if (override != null) {
+		for (int i = 0; i < instrumentOverrides.length(); i++) {
+			if (instrumentOverrides.get(i) != null) {
 				hasOverrides = true;
 				break;
 			}
@@ -931,7 +949,7 @@ public final class SIDScorePlayerServer {
 		}
 		Map<Integer, SIDScoreIR.TimedVoice> voices = new LinkedHashMap<>(score.voices());
 		for (int voiceIndex = 1; voiceIndex <= 3; voiceIndex++) {
-			SIDScoreIR.InstrumentIR override = instrumentOverrides[voiceIndex - 1];
+			SIDScoreIR.InstrumentIR override = instrumentOverrides.get(voiceIndex - 1);
 			if (override == null) {
 				continue;
 			}
@@ -1451,7 +1469,7 @@ public final class SIDScorePlayerServer {
 	}
 
 	private InstrumentState effectiveInstrumentState(int voiceIndex) {
-		SIDScoreIR.InstrumentIR override = instrumentOverrides[voiceIndex - 1];
+		SIDScoreIR.InstrumentIR override = instrumentOverrides.get(voiceIndex - 1);
 		if (override != null) {
 			return new InstrumentState(INSTRUMENT_SOURCE_OVERRIDE, override);
 		}
@@ -1463,6 +1481,24 @@ public final class SIDScorePlayerServer {
 			}
 		}
 		return new InstrumentState(INSTRUMENT_SOURCE_DEFAULT, DEFAULT_SERVER_INSTRUMENT);
+	}
+
+	private SIDScoreIR.InstrumentIR effectivePlaybackInstrument(int voiceIndex, SIDScoreIR.InstrumentIR fallback) {
+		if (!isValidVoiceIndex(voiceIndex)) {
+			return fallback != null ? fallback : DEFAULT_SERVER_INSTRUMENT;
+		}
+		SIDScoreIR.InstrumentIR override = instrumentOverrides.get(voiceIndex - 1);
+		if (override != null) {
+			return override;
+		}
+		LoadedScore loaded = currentLoadedScore;
+		if (loaded != null) {
+			SIDScoreIR.TimedVoice voice = loaded.timedScore().voices().get(voiceIndex);
+			if (voice != null && voice.instrument() != null) {
+				return voice.instrument();
+			}
+		}
+		return DEFAULT_SERVER_INSTRUMENT;
 	}
 
 	private byte[] encodeInstrumentState(long requestId, int voiceIndex, int source,
