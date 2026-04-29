@@ -1,6 +1,6 @@
 # SIDScore Player Server Specification
 
-Version: **0.5.0 (draft)**
+Version: **0.6.0 (draft)**
 
 ## 1. Purpose
 
@@ -18,12 +18,13 @@ This specification covers:
 - Binary frame protocol
 - Playback commands
 - Live instrument configuration commands
+- Live MIDI configuration commands
 - Voice and waveform telemetry
 - Score source maps for editor highlighting
 - Live highlight state
 
-The protocol does not expose MIDI as a public concept. Pitch is reported as 
-SIDScore note display data and SID frequency register values.
+MIDI is exposed as a realtime input configuration concept. Voice telemetry still
+reports effective SIDScore note display data and SID frequency register values.
 
 ## 2. Process Model
 
@@ -31,6 +32,12 @@ The Commodore Commander backend starts the server as a child process:
 
 ```sh
 java -jar sidscore-cli.jar --player-server --port 0
+```
+
+Live MIDI input can also be enabled as a startup default:
+
+```sh
+java -jar sidscore-cli.jar --player-server --midi --midi-device MicroLab --midi-map 1:1,2:1,3:1 --port 0
 ```
 
 The server binds to `127.0.0.1` only. Port `0` means the operating system chooses a
@@ -45,7 +52,9 @@ stdout:
 
 Commodore Commander reads this line, opens a TCP connection to `127.0.0.1:<port>`,
 and then uses the binary protocol described below. Stdout is only for bootstrap
-and diagnostics.
+and diagnostics. MIDI diagnostic/debug messages, including device selection,
+router open/close events, and incoming MIDI NOTE ON/OFF routing, are written to
+stdout with a `[sidscore-midi]` prefix.
 
 The server is intended to stay running in the background. A client may send
 multiple `PLAY` or `PLAY_SOURCE` commands over the same connection. Each new
@@ -123,6 +132,8 @@ they map directly to Monaco/Theia editor positions.
 0x14 PLAY_SOURCE        client -> server
 0x15 SET_INSTRUMENT     client -> server
 0x16 RESET_INSTRUMENT   client -> server
+0x17 SCAN_MIDI_DEVICES  client -> server
+0x18 SET_MIDI_SETTINGS  client -> server
 
 0x20 PLAYBACK_STATE     server -> client
 0x21 SCORE_MAP          server -> client
@@ -131,6 +142,8 @@ they map directly to Monaco/Theia editor positions.
 0x24 SCOPE_BUCKETS      server -> client
 0x25 SCOPE_SAMPLES      server -> client
 0x26 INSTRUMENT_STATE   server -> client
+0x27 MIDI_DEVICE_LIST   server -> client
+0x28 MIDI_STATE         server -> client
 
 0x7f ERROR              both directions
 ```
@@ -157,6 +170,8 @@ bit 2  wants VOICE_STATE
 bit 3  wants SCOPE_BUCKETS
 bit 4  wants SCOPE_SAMPLES
 bit 5  wants INSTRUMENT_STATE
+bit 6  wants MIDI_DEVICE_LIST
+bit 7  wants MIDI_STATE
 ```
 
 ### HELLO_ACK Payload
@@ -258,9 +273,14 @@ If no score is paused, the server responds with `ERROR` code
 u32 requestId
 ```
 
-`STOP` stops playback, silences all voices, clears active highlight ids, and
-resets the current playback position. The loaded score map MAY remain cached,
-but there is no resumable audio state after stop.
+`STOP` stops score playback, silences score voices, clears active highlight ids,
+and resets the current score playback position. The loaded score map MAY remain
+cached, but there is no resumable score audio state after stop.
+
+When MIDI is enabled, `STOP` does not stop live MIDI input. If a score was
+playing, the server stops the score and starts the MIDI-only monitor so assigned
+instrument keypresses still produce audio and telemetry. If the MIDI-only
+monitor is already active, `STOP` leaves it running.
 
 After `STOP`, the server emits:
 
@@ -379,7 +399,105 @@ The server emits `INSTRUMENT_STATE` for all three voices after `HELLO_ACK` when
 requested, after successful `PLAY`/`PLAY_SOURCE`, and after
 `SET_INSTRUMENT`/`RESET_INSTRUMENT`.
 
-## 10. Playback State
+## 10. MIDI Commands
+
+MIDI settings are server-wide for the current connection and can be sent before
+any score is loaded. They do not change `ASM`/`PRG`/`SID` export semantics.
+
+When MIDI is enabled, playback opens the configured MIDI input devices and
+routes live notes into the assigned SID voices. Assigned voices are controlled
+by MIDI while unassigned voices continue to play the score timeline. Multiple
+voices may use the same MIDI device and channel for simple polyphony. Different
+voices may also use different devices.
+
+When MIDI is enabled and no score playback is active, the server starts a
+MIDI-only SRAP monitor so a keyboard can be played without loading a score. In
+that mode, assigned voices use the effective instrument settings for each voice:
+wired instrument override, loaded score instrument, or server default
+instrument, in that order.
+
+If MIDI settings are changed while playback is active, the server MAY stop and
+restart the loaded score from the beginning with a new `scoreId`, because the
+set of realtime-controlled voices changes the rendered telemetry stream.
+
+### SCAN_MIDI_DEVICES Payload
+
+```text
+u32 requestId
+```
+
+`SCAN_MIDI_DEVICES` asks the server to enumerate currently usable MIDI input
+devices. The server responds with `MIDI_DEVICE_LIST`.
+
+If exactly one usable MIDI input device is found, the server automatically uses
+that device as the current selector. If MIDI has no enabled voice assignment yet,
+the server enables MIDI with the default voice mapping and starts the MIDI-only
+monitor when no score playback is active. The server then emits `MIDI_STATE`.
+
+### MIDI_DEVICE_LIST Payload
+
+```text
+u32 requestId
+u16 deviceCount
+repeated deviceCount times:
+  u16 deviceIndex
+  str selector          stable selector for this scan, currently the index text
+  str displayName
+  str name
+  str vendor
+  str description
+  str version
+```
+
+`selector` is the value a client can send back in `SET_MIDI_SETTINGS`.
+Selectors based on device index are stable for one scan result but can change
+when the host MIDI device list changes, so clients should refresh before
+showing device choices.
+
+### SET_MIDI_SETTINGS Payload
+
+```text
+u32 requestId
+bool8 enabled
+u8  assignmentCount
+u16 reserved
+repeated assignmentCount times:
+  u8  voiceIndex        1..3
+  bool8 voiceEnabled
+  u8  channel           1..16 when voiceEnabled, otherwise ignored
+  u8  reserved
+  str deviceSelector    empty selects the first usable MIDI input
+```
+
+`enabled=false` disables live MIDI input. The server still stores the supplied
+voice assignments so a client can disable and re-enable MIDI without rebuilding
+its routing state.
+
+`enabled=true` requires at least one `voiceEnabled` assignment. If an assigned
+device cannot be opened when playback starts, playback enters `error` and the
+server sends `ERROR` with code `playback_error`.
+
+### MIDI_STATE Payload
+
+```text
+u32 requestId          0 for unsolicited state
+bool8 enabled
+u8  assignmentCount
+u16 reserved
+repeated assignmentCount times:
+  u8  voiceIndex        1..3
+  bool8 voiceEnabled
+  u8  channel
+  u8  reserved
+  str deviceSelector
+  str deviceName        resolved display name, empty if unavailable/off
+```
+
+The server emits `MIDI_STATE` after `HELLO_ACK` when requested and after
+`SET_MIDI_SETTINGS`. It may also be sent when playback starts to confirm the
+current effective routing.
+
+## 11. Playback State
 
 ### PLAYBACK_STATE Payload
 
@@ -418,7 +536,7 @@ Reasons:
 
 `scoreId` is generated by the server for each successful `PLAY`.
 
-## 11. Score Map
+## 12. Score Map
 
 The score map is sent once after a successful parse and before playback starts.
 It maps compiled timeline events to source ranges. The IDE uses this for editor
@@ -478,7 +596,7 @@ to the same source range. Each still gets its own `eventId`.
 
 For imported files, `sourceId` references that imported source URI/path.
 
-## 12. Highlight State
+## 13. Highlight State
 
 Highlight state is sent during playback at frame-event boundaries and MAY also
 be sent once per telemetry block for simplicity.
@@ -501,7 +619,7 @@ The IDE highlights the source ranges for the active event ids in the current
 The Java server is authoritative for highlight timing. The IDE MUST NOT attempt
 to re-expand repeats, tuplets, ties, gate-min behavior, or imports.
 
-## 13. Voice State
+## 14. Voice State
 
 Voice state reports SIDScore/SID playback state for visualizers. It does not
 expose MIDI.
@@ -594,7 +712,7 @@ before each new playback starts. The silent state clears active, gate, waveform,
 frequency, sync/ring, filter-route, envelope, and output state for all three SID
 voices so clients do not carry stale gate or waveform state into the next play.
 
-## 14. Scope Data
+## 15. Scope Data
 
 The server supports two scope data formats:
 
@@ -653,7 +771,7 @@ This frame is larger than `SCOPE_BUCKETS` but still modest on localhost. With
 512 samples per block, 3 voices, and `i16` samples, the payload is roughly 3 KiB
 per block before the frame header.
 
-## 15. Error Frames
+## 16. Error Frames
 
 ### ERROR Payload
 
@@ -679,7 +797,7 @@ Error codes:
 
 Error messages are for diagnostics and logs. Clients should branch on `code`.
 
-## 16. Timing
+## 17. Timing
 
 `frameIndex` means SIDScore player frame, not audio sample. It follows the
 resolved score system:
@@ -692,7 +810,7 @@ resolved score system:
 `timestampNanos` in the frame header is sender-local monotonic time and is only
 for latency estimation. It is not a wall-clock timestamp.
 
-## 17. Implementation Notes
+## 18. Implementation Notes
 
 The Java implementation should introduce a dedicated server entry point, for
 example:
@@ -720,9 +838,9 @@ The server should avoid letting network I/O block the audio thread. Telemetry
 frames should be written through a bounded queue. If the client falls behind,
 the server MAY drop `VOICE_STATE` and `SCOPE_BUCKETS` frames, but MUST preserve
 `PLAYBACK_STATE`, `SCORE_MAP`, `INSTRUMENT_STATE`, `HIGHLIGHT_STATE`, and
-`ERROR` ordering.
+`MIDI_DEVICE_LIST`, `MIDI_STATE`, and `ERROR` ordering.
 
-## 18. Commodore Commander Integration
+## 19. Commodore Commander Integration
 
 Commodore Commander backend responsibilities:
 
@@ -732,6 +850,7 @@ Commodore Commander backend responsibilities:
 - Send `HELLO`.
 - Send playback commands from UI actions.
 - Send instrument commands from live instrument UI actions.
+- Send MIDI scan/settings commands from live MIDI UI actions.
 - Decode binary frames.
 - Forward editor highlight events and visualization data to the frontend.
 
@@ -739,12 +858,13 @@ Commodore Commander frontend responsibilities:
 
 - Render playback controls.
 - Render and edit per-voice instrument settings.
+- Render MIDI input device choices and per-voice MIDI routing.
 - Highlight editor ranges using `SCORE_MAP` and `HIGHLIGHT_STATE`.
 - Render voice state and scope buckets.
 
 The frontend should not parse SIDScore for playback semantics.
 
-## 19. Compatibility and Versioning
+## 20. Compatibility and Versioning
 
 Protocol version 1 is intentionally small. Future versions may add:
 

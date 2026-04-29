@@ -33,6 +33,8 @@ public final class SrapProtocol {
 	public static final int PLAY_SOURCE = 0x14;
 	public static final int SET_INSTRUMENT = 0x15;
 	public static final int RESET_INSTRUMENT = 0x16;
+	public static final int SCAN_MIDI_DEVICES = 0x17;
+	public static final int SET_MIDI_SETTINGS = 0x18;
 
 	public static final int PLAYBACK_STATE = 0x20;
 	public static final int SCORE_MAP = 0x21;
@@ -41,6 +43,8 @@ public final class SrapProtocol {
 	public static final int SCOPE_BUCKETS = 0x24;
 	public static final int SCOPE_SAMPLES = 0x25;
 	public static final int INSTRUMENT_STATE = 0x26;
+	public static final int MIDI_DEVICE_LIST = 0x27;
+	public static final int MIDI_STATE = 0x28;
 
 	public static final int ERROR = 0x7f;
 
@@ -50,8 +54,10 @@ public final class SrapProtocol {
 	public static final int CAP_SCOPE_BUCKETS = 1 << 3;
 	public static final int CAP_SCOPE_SAMPLES = 1 << 4;
 	public static final int CAP_INSTRUMENT_STATE = 1 << 5;
+	public static final int CAP_MIDI_DEVICE_LIST = 1 << 6;
+	public static final int CAP_MIDI_STATE = 1 << 7;
 	public static final int CAP_ALL = CAP_SCORE_MAP | CAP_HIGHLIGHT_STATE | CAP_VOICE_STATE | CAP_SCOPE_BUCKETS
-			| CAP_SCOPE_SAMPLES | CAP_INSTRUMENT_STATE;
+			| CAP_SCOPE_SAMPLES | CAP_INSTRUMENT_STATE | CAP_MIDI_DEVICE_LIST | CAP_MIDI_STATE;
 
 	public static final int STATE_IDLE = 0;
 	public static final int STATE_LOADING = 1;

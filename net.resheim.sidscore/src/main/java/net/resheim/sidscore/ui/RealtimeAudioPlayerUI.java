@@ -641,6 +641,11 @@ public final class RealtimeAudioPlayerUI {
 			onStop(true);
 			return;
 		}
+		if (midiButton.isSelected() && activeRenderer() == PlaybackRenderer.SRAP && input.getText().isBlank()) {
+			stopMidiMonitor();
+			startMidiMonitorIfNeeded(true);
+			return;
+		}
 		stopMidiMonitor();
 		if (!startPlayback(true)) {
 			startMidiMonitorIfNeeded(false);
@@ -1706,6 +1711,27 @@ public final class RealtimeAudioPlayerUI {
 				score.tables(), score.effects(), voices, score.subtunes());
 	}
 
+	private SIDScoreIR.TimedScore applyMidiInstrumentOverrides(SIDScoreIR.TimedScore score,
+			Map<Integer, Integer> voiceChannelMap) {
+		if (score == null || voiceChannelMap == null || voiceChannelMap.isEmpty()) {
+			return score;
+		}
+		saveInstrumentPanelState(activeInstrumentVoice);
+		Map<Integer, SIDScoreIR.TimedVoice> voices = new LinkedHashMap<>(score.voices());
+		for (int voiceIndex : voiceChannelMap.keySet()) {
+			if (voiceIndex < 1 || voiceIndex > 3) {
+				continue;
+			}
+			InstrumentPanelState state = instrumentPanelStates[voiceIndex - 1];
+			SIDScoreIR.TimedVoice original = voices.get(voiceIndex);
+			List<SIDScoreIR.TimedEvent> events = original != null ? original.events() : List.of();
+			voices.put(voiceIndex, new SIDScoreIR.TimedVoice(voiceIndex, state.toInstrument(), events));
+		}
+		return new SIDScoreIR.TimedScore(score.title(), score.author(), score.released(),
+				score.tempoBpm(), score.ticksPerWhole(), score.defaultSwing(), score.system(),
+				score.tables(), score.effects(), voices, score.subtunes());
+	}
+
 	private static String formatHex(int value, int digits) {
 		String format = "$%0" + digits + "X";
 		return String.format(Locale.ROOT, format, value);
@@ -1767,8 +1793,7 @@ public final class RealtimeAudioPlayerUI {
 		if (sourceScore == null) {
 			return;
 		}
-		SIDScoreIR.TimedScore monitorScore =
-				applyLiveInstrumentOverride(liveMidiScore(sourceScore, midiConfig.voiceChannelMap()));
+		SIDScoreIR.TimedScore monitorScore = liveMidiScore(sourceScore, midiConfig.voiceChannelMap());
 		RealtimeAudioPlayer monitorPlayer = new RealtimeAudioPlayer();
 		long generation = ++midiMonitorGeneration;
 		Thread thread = new Thread(() -> runMidiMonitor(monitorPlayer, midiConfig, monitorScore, generation),
@@ -1883,14 +1908,17 @@ public final class RealtimeAudioPlayerUI {
 	}
 
 	private SIDScoreIR.TimedScore selectedSrapScoreForMidiMonitor(boolean showDialogs) {
+		if (input.getText().isBlank()) {
+			return panelOnlyMidiScore();
+		}
 		SIDScoreIR.TimedScore mainTimed = parseScore(input.getText(), showDialogs, false);
 		if (mainTimed == null) {
-			return null;
+			return panelOnlyMidiScore();
 		}
 		SIDScoreIR.ScoreIR mainScore = lastScoreIR;
 		if (mainScore == null) {
 			setMessage("MIDI monitor failed: internal parse state is missing.", MSG_ERROR);
-			return null;
+			return panelOnlyMidiScore();
 		}
 		updateSongSelection(mainScore);
 		int selectedSong = selectedSongNumber();
@@ -1898,28 +1926,37 @@ public final class RealtimeAudioPlayerUI {
 			return mainTimed;
 		}
 		if (mainScore.songs().containsKey(selectedSong)) {
-			return resolveInlineSong(mainScore, selectedSong, showDialogs);
+			SIDScoreIR.TimedScore timed = resolveInlineSong(mainScore, selectedSong, showDialogs);
+			return timed != null ? timed : panelOnlyMidiScore();
 		}
 		Path selectedPath = mainScore.subtunes().get(selectedSong);
 		if (selectedPath == null) {
 			setMessage("MIDI monitor failed: subtune " + selectedSong + " is not defined.", MSG_ERROR);
-			return null;
+			return panelOnlyMidiScore();
 		}
-		return parseScorePath(selectedPath, showDialogs, false);
+		SIDScoreIR.TimedScore timed = parseScorePath(selectedPath, showDialogs, false);
+		return timed != null ? timed : panelOnlyMidiScore();
 	}
 
-	private static SIDScoreIR.TimedScore liveMidiScore(SIDScoreIR.TimedScore source,
+	private SIDScoreIR.TimedScore liveMidiScore(SIDScoreIR.TimedScore source,
 			Map<Integer, Integer> voiceChannelMap) {
+		SIDScoreIR.TimedScore midiSource = applyMidiInstrumentOverrides(source, voiceChannelMap);
 		Map<Integer, SIDScoreIR.TimedVoice> voices = new LinkedHashMap<>();
 		for (int voiceIndex : voiceChannelMap.keySet()) {
-			SIDScoreIR.TimedVoice sourceVoice = source.voices().get(voiceIndex);
+			SIDScoreIR.TimedVoice sourceVoice = midiSource.voices().get(voiceIndex);
 			if (sourceVoice != null) {
 				voices.put(voiceIndex, new SIDScoreIR.TimedVoice(voiceIndex, sourceVoice.instrument(), List.of()));
 			}
 		}
-		return new SIDScoreIR.TimedScore(source.title(), source.author(), source.released(),
-				source.tempoBpm(), source.ticksPerWhole(), source.defaultSwing(), source.system(),
-				source.tables(), Map.of(), voices, Map.of());
+		return new SIDScoreIR.TimedScore(midiSource.title(), midiSource.author(), midiSource.released(),
+				midiSource.tempoBpm(), midiSource.ticksPerWhole(), midiSource.defaultSwing(), midiSource.system(),
+				midiSource.tables(), Map.of(), voices, Map.of());
+	}
+
+	private SIDScoreIR.TimedScore panelOnlyMidiScore() {
+		return new SIDScoreIR.TimedScore(Optional.empty(), Optional.empty(), Optional.empty(),
+				120, SIDScoreIR.Resolver.DEFAULT_TICKS_PER_WHOLE, new SIDScoreIR.SwingOff(), SIDScoreIR.VideoSystem.PAL,
+				Map.of(), Map.of(), Map.of(), Map.of());
 	}
 
 	private static MidiChannelChoice[] midiChannelChoices() {
@@ -2076,6 +2113,9 @@ public final class RealtimeAudioPlayerUI {
 			playbackTimed = bundleTunes.get(selectedSong - 1);
 		}
 
+		if (renderer == PlaybackRenderer.SRAP && midiConfig.enabled()) {
+			playbackTimed = applyMidiInstrumentOverrides(playbackTimed, midiConfig.voiceChannelMap());
+		}
 		if (renderer == PlaybackRenderer.SRAP) {
 			playbackTimed = applyLiveInstrumentOverride(playbackTimed);
 		} else if (instrumentLiveModeCheck.isSelected()) {
@@ -2856,6 +2896,7 @@ public final class RealtimeAudioPlayerUI {
 		if (message == null || message.isBlank()) {
 			return;
 		}
+		logMidi(message);
 		synchronized (pendingMidiMessages) {
 			if (pendingMidiMessages.size() >= MIDI_MESSAGE_QUEUE_MAX) {
 				pendingMidiMessages.remove(0);
@@ -2882,6 +2923,11 @@ public final class RealtimeAudioPlayerUI {
 		if (!batch.isEmpty()) {
 			appendMessage(String.join("\n", batch), MSG_INFO);
 		}
+	}
+
+	private static void logMidi(String message) {
+		System.out.println("[sidscore-midi] event " + message);
+		System.out.flush();
 	}
 
 	private void appendMessage(String message, Color color) {

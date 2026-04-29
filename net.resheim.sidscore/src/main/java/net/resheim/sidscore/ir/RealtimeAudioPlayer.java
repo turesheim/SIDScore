@@ -173,6 +173,11 @@ public final class RealtimeAudioPlayer {
 		render(score, null, true, null, listener, null);
 	}
 
+	public void playWithTelemetry(SIDScoreIR.TimedScore score, PlaybackListener listener, MidiSource midiSource)
+			throws LineUnavailableException {
+		render(score, null, true, null, listener, midiSource);
+	}
+
 	public void renderToWav(SIDScoreIR.TimedScore score, Path wavOut) {
 		renderToWav(score, wavOut, null);
 	}

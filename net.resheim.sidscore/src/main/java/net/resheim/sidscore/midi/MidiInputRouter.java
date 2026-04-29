@@ -22,6 +22,9 @@ import javax.sound.midi.Sequencer;
 import javax.sound.midi.ShortMessage;
 import javax.sound.midi.Synthesizer;
 import javax.sound.midi.Transmitter;
+import java.awt.EventQueue;
+import java.awt.GraphicsEnvironment;
+import java.awt.Toolkit;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -32,6 +35,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Routes live MIDI channel input to SID voices. Multiple voices may share one
@@ -40,6 +44,8 @@ import java.util.Optional;
 public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, AutoCloseable {
 
 	public static final double DEFAULT_PITCH_BEND_RANGE = 2.0;
+	private static final String AWT_EVENT_PUMP_PROPERTY = "sidscore.midi.awtEventPump";
+	private static final AtomicBoolean NATIVE_EVENT_PUMP_INITIALIZED = new AtomicBoolean(false);
 
 	private final MidiDevice device;
 	private final Transmitter transmitter;
@@ -72,7 +78,10 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	public static MidiInputRouter open(String selector, Map<Integer, Integer> voiceChannelMap,
 			EventListener eventListener) throws MidiUnavailableException {
 		Map<Integer, Integer> validatedMap = validateVoiceChannelMap(voiceChannelMap);
+		ensureNativeMidiEventPump(eventListener);
 		List<InputDevice> devices = listInputDevices();
+		emit(eventListener, "input scan before open found " + devices.size() + " device(s): "
+				+ describeInputDevices(devices));
 		if (devices.isEmpty()) {
 			throw new MidiUnavailableException("No MIDI input devices found.");
 		}
@@ -86,6 +95,8 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			transmitter = device.getTransmitter();
 			MidiInputRouter router = new MidiInputRouter(device, transmitter, validatedMap, eventListener);
 			transmitter.setReceiver(router.new RoutingReceiver());
+			router.emit("RECEIVER attached to " + router.deviceName() + " (" + selected.debugDescription()
+					+ ") map " + validatedMap);
 			return router;
 		} catch (MidiUnavailableException | RuntimeException e) {
 			if (transmitter != null) {
@@ -321,6 +332,12 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		}
 	}
 
+	private static void emit(EventListener listener, String message) {
+		if (listener != null) {
+			listener.onMidiEvent(message);
+		}
+	}
+
 	private int findVoicePlaying(List<Integer> voices, int note) {
 		for (int voice : voices) {
 			if (slots[voice].gate && slots[voice].note == note) {
@@ -357,6 +374,22 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		}
 		int maxTransmitters = device.getMaxTransmitters();
 		return maxTransmitters != 0;
+	}
+
+	private static String describeInputDevices(List<InputDevice> devices) {
+		if (devices.isEmpty()) {
+			return "[]";
+		}
+		StringBuilder sb = new StringBuilder("[");
+		for (int i = 0; i < devices.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			InputDevice device = devices.get(i);
+			sb.append(device.debugDescription());
+		}
+		sb.append(']');
+		return sb.toString();
 	}
 
 	private static Optional<InputDevice> selectDevice(List<InputDevice> devices, String selector) {
@@ -416,23 +449,120 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		}
 	}
 
+	private static void ensureNativeMidiEventPump(EventListener eventListener) {
+		if (!Boolean.getBoolean(AWT_EVENT_PUMP_PROPERTY) || !isMacOS()
+				|| !NATIVE_EVENT_PUMP_INITIALIZED.compareAndSet(false, true)) {
+			return;
+		}
+		try {
+			if (System.getProperty("apple.awt.UIElement") == null) {
+				System.setProperty("apple.awt.UIElement", "true");
+			}
+			if (GraphicsEnvironment.isHeadless()) {
+				emit(eventListener, "macOS MIDI event pump skipped; graphics environment is headless");
+				return;
+			}
+			Toolkit.getDefaultToolkit();
+			EventQueue.invokeLater(() -> {
+				// Keep the AWT/AppKit event infrastructure alive for native MIDI callbacks.
+			});
+			emit(eventListener, "macOS MIDI event pump initialized");
+		} catch (Throwable e) {
+			emit(eventListener, "macOS MIDI event pump unavailable: " + e.getClass().getSimpleName()
+					+ ": " + e.getMessage());
+		}
+	}
+
+	private static boolean isMacOS() {
+		return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
+	}
+
 	private final class RoutingReceiver implements Receiver {
 		@Override
 		public void send(MidiMessage message, long timeStamp) {
-			if (closed || suspended || !(message instanceof ShortMessage shortMessage)) {
+			try {
+				if (closed || suspended) {
+					return;
+				}
+				if (!(message instanceof ShortMessage shortMessage)) {
+					routeRawMessage(message);
+					return;
+				}
+				int channel = shortMessage.getChannel() + 1;
+				emitReceivedMessage(shortMessage.getCommand(), channel, shortMessage.getData1(), shortMessage.getData2(),
+						message.getClass().getName());
+				routeShortMessage(shortMessage.getCommand(), channel, shortMessage.getData1(), shortMessage.getData2());
+			} catch (RuntimeException e) {
+				emit("ERROR routing MIDI message: " + e.getClass().getSimpleName() + ": " + e.getMessage());
+			}
+		}
+
+		private void routeRawMessage(MidiMessage message) {
+			byte[] data = message.getMessage();
+			int length = message.getLength();
+			if (length <= 0 || data.length == 0) {
+				emit("RAW empty MIDI message from " + message.getClass().getName());
 				return;
 			}
-			int channel = shortMessage.getChannel() + 1;
-			switch (shortMessage.getCommand()) {
-			case ShortMessage.NOTE_ON -> noteOn(channel, shortMessage.getData1(), shortMessage.getData2());
-			case ShortMessage.NOTE_OFF -> noteOff(channel, shortMessage.getData1());
-			case ShortMessage.PITCH_BEND -> pitchBend(channel, shortMessage.getData1(), shortMessage.getData2());
-			case ShortMessage.CONTROL_CHANGE -> controlChange(channel, shortMessage.getData1(), shortMessage.getData2());
+			int status = data[0] & 0xFF;
+			int command = status & 0xF0;
+			int channel = (status & 0x0F) + 1;
+			int data1 = length > 1 ? data[1] & 0x7F : 0;
+			int data2 = length > 2 ? data[2] & 0x7F : 0;
+			if (command >= 0x80 && command <= 0xE0 && length >= 3) {
+				emitReceivedMessage(command, channel, data1, data2, message.getClass().getName());
+				routeShortMessage(command, channel, data1, data2);
+				return;
+			}
+			if (!isNoisySystemMessage(status)) {
+				emit("RAW status 0x" + Integer.toHexString(status) + " len " + length + " bytes "
+						+ hexBytes(data, length) + " from " + message.getClass().getName());
+			}
+		}
+
+		private void routeShortMessage(int command, int channel, int data1, int data2) {
+			switch (command) {
+			case ShortMessage.NOTE_ON -> noteOn(channel, data1, data2);
+			case ShortMessage.NOTE_OFF -> noteOff(channel, data1);
+			case ShortMessage.PITCH_BEND -> pitchBend(channel, data1, data2);
+			case ShortMessage.CONTROL_CHANGE -> controlChange(channel, data1, data2);
 			default -> {
-				emit("CMD 0x" + Integer.toHexString(shortMessage.getCommand()) + " ch " + channel + " data "
-						+ shortMessage.getData1() + "," + shortMessage.getData2());
+				emit("CMD 0x" + Integer.toHexString(command) + " ch " + channel + " data " + data1 + "," + data2);
 			}
 			}
+		}
+
+		private void emitReceivedMessage(int command, int channel, int data1, int data2, String sourceClass) {
+			emit("RX " + commandName(command) + " ch " + channel + " data " + data1 + "," + data2
+					+ " from " + sourceClass);
+		}
+
+		private String commandName(int command) {
+			return switch (command) {
+			case ShortMessage.NOTE_ON -> "NOTE_ON";
+			case ShortMessage.NOTE_OFF -> "NOTE_OFF";
+			case ShortMessage.PITCH_BEND -> "PITCH_BEND";
+			case ShortMessage.CONTROL_CHANGE -> "CONTROL_CHANGE";
+			case ShortMessage.PROGRAM_CHANGE -> "PROGRAM_CHANGE";
+			case ShortMessage.CHANNEL_PRESSURE -> "CHANNEL_PRESSURE";
+			case ShortMessage.POLY_PRESSURE -> "POLY_PRESSURE";
+			default -> "CMD_0x" + Integer.toHexString(command);
+			};
+		}
+
+		private boolean isNoisySystemMessage(int status) {
+			return status == 0xF8 || status == 0xFE;
+		}
+
+		private String hexBytes(byte[] data, int length) {
+			StringBuilder sb = new StringBuilder();
+			for (int i = 0; i < length && i < data.length; i++) {
+				if (i > 0) {
+					sb.append(' ');
+				}
+				sb.append(String.format(Locale.ROOT, "%02X", data[i] & 0xFF));
+			}
+			return sb.toString();
 		}
 
 		@Override
@@ -557,6 +687,11 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		private String searchText() {
 			return String.join(" ", Arrays.asList(name(), displayName(), vendor(), description(), version()))
 					.toLowerCase(Locale.ROOT);
+		}
+
+		private String debugDescription() {
+			return "index=" + index + ", name='" + name() + "', vendor='" + vendor()
+					+ "', description='" + description() + "', version='" + version() + "'";
 		}
 	}
 

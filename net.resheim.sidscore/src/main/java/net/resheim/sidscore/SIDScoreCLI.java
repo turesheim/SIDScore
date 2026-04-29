@@ -54,7 +54,8 @@ import java.util.stream.Collectors;
       + "[--wav <out.wav>] [--asm <out.asm>] [--prg <out.prg>] [--sid <out.sid>] [--driver <id>] [--list-drivers] "
       + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--midi] [--midi-device <index|name>] "
       + "[--midi-map <voice:channel,...>] [--list-midi-devices] [--no-play]\n"
-      + "       java SIDScoreCLI --player-server [--port <port>]";
+      + "       java SIDScoreCLI --player-server [--port <port>] [--midi] [--midi-device <index|name>] "
+      + "[--midi-map <voice:channel,...>]";
 
   public static void main(String[] args) throws Exception {
     if (args.length > 0 && "--player-server".equals(args[0])) {
@@ -410,13 +411,17 @@ import java.util.stream.Collectors;
 		System.out.println("WAV: " + wavOut);
 	} else if (midiEnabled) {
 		RealtimeAudioPlayer player = new RealtimeAudioPlayer(sidModel, sidWaveforms);
-		try (MidiInputRouter midi = MidiInputRouter.open(midiDeviceSelector, midiVoiceMap)) {
+		logMidi("opening MIDI input selector='" + printableMidiSelector(midiDeviceSelector) + "' map="
+				+ formatMidiMap(midiVoiceMap));
+		try (MidiInputRouter midi = MidiInputRouter.open(midiDeviceSelector, midiVoiceMap,
+				message -> logMidi("event " + message))) {
 			Thread shutdownHook = new Thread(() -> {
 				player.stop();
 				midi.close();
 			}, "sidscore-midi-shutdown");
 			Runtime.getRuntime().addShutdownHook(shutdownHook);
 			try {
+				logMidi("opened MIDI input '" + midi.deviceName() + "' map=" + formatMidiMap(midi.voiceChannelMap()));
 				System.out.println("MIDI Input: " + midi.deviceName());
 				System.out.println("MIDI Map: " + formatMidiMap(midi.voiceChannelMap()));
 				System.out.println("MIDI playback active. Press Ctrl+C to stop.");
@@ -429,6 +434,7 @@ import java.util.stream.Collectors;
 				}
 			}
 		} catch (Exception e) {
+			logMidi("MIDI input failed: " + e.getMessage());
 			System.err.println("MIDI input failed: " + e.getMessage());
 			System.err.println("Use --list-midi-devices to see available MIDI inputs.");
 			System.exit(1);
@@ -593,6 +599,15 @@ import java.util.stream.Collectors;
     return voiceChannelMap.entrySet().stream()
         .map(e -> "voice " + e.getKey() + " <- channel " + e.getValue())
         .collect(Collectors.joining(", "));
+  }
+
+  private static void logMidi(String message) {
+    System.out.println("[sidscore-midi] " + message);
+    System.out.flush();
+  }
+
+  private static String printableMidiSelector(String selector) {
+    return selector == null || selector.isBlank() ? "<default>" : selector;
   }
 
   private static void printProgramStats(SidDriverBackend driver,
