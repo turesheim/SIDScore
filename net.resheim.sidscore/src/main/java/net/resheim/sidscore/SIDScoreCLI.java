@@ -54,6 +54,8 @@ import java.util.stream.Collectors;
       + "[--wav <out.wav>] [--asm <out.asm>] [--prg <out.prg>] [--sid <out.sid>] [--driver <id>] [--list-drivers] "
       + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--midi] [--midi-device <index|name>] "
       + "[--midi-map <voice:channel,...>] [--list-midi-devices] [--no-play]\n"
+      + "       java SIDScoreCLI --midi-probe [--midi-device <index|name>|--all] [--seconds <n>] "
+      + "[--midi-map <voice:channel,...>]\n"
       + "       java SIDScoreCLI --player-server [--port <port>] [--midi] [--midi-device <index|name>] "
       + "[--midi-map <voice:channel,...>]";
 
@@ -61,6 +63,11 @@ import java.util.stream.Collectors;
     if (args.length > 0 && "--player-server".equals(args[0])) {
       String[] serverArgs = java.util.Arrays.copyOfRange(args, 1, args.length);
       SIDScorePlayerServer.main(serverArgs);
+      return;
+    }
+    if (args.length > 0 && "--midi-probe".equals(args[0])) {
+      String[] probeArgs = java.util.Arrays.copyOfRange(args, 1, args.length);
+      runMidiProbe(probeArgs);
       return;
     }
 
@@ -590,8 +597,85 @@ import java.util.stream.Collectors;
     System.out.println("Available MIDI input devices:");
     for (MidiInputRouter.InputDevice device : devices) {
       System.out.println("  [" + device.index() + "] " + device.displayName()
-          + " - " + device.description()
-          + " (" + device.vendor() + " " + device.version() + ")");
+          + " selector='" + device.displayName() + "'"
+          + " (name='" + device.name() + "', vendor='" + device.vendor()
+          + "', description='" + device.description() + "', version='" + device.version() + "')");
+    }
+  }
+
+  private static void runMidiProbe(String[] args) throws Exception {
+    String selector = null;
+    Map<Integer, Integer> midiVoiceMap = MidiInputRouter.defaultVoiceChannelMap();
+    int seconds = 10;
+    boolean all = false;
+    for (int i = 0; i < args.length; i++) {
+      switch (args[i]) {
+        case "--midi-device" -> {
+          if (i + 1 >= args.length) {
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          selector = args[++i];
+        }
+        case "--midi-map" -> {
+          if (i + 1 >= args.length) {
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          midiVoiceMap = MidiInputRouter.parseVoiceChannelMap(args[++i]);
+        }
+        case "--seconds" -> {
+          if (i + 1 >= args.length) {
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          seconds = Math.max(1, Integer.parseInt(args[++i]));
+        }
+        case "--all" -> all = true;
+        default -> {
+          System.err.println(USAGE);
+          System.exit(2);
+        }
+      }
+    }
+    if (all && selector != null) {
+      System.err.println("--midi-probe uses either --all or --midi-device, not both");
+      System.exit(2);
+    }
+    List<String> selectors = new ArrayList<>();
+    if (all) {
+      List<MidiInputRouter.InputDevice> devices = MidiInputRouter.listInputDevices();
+      if (devices.isEmpty()) {
+        System.out.println("No MIDI input devices found.");
+        return;
+      }
+      for (MidiInputRouter.InputDevice device : devices) {
+        selectors.add(Integer.toString(device.index()));
+      }
+    } else {
+      if (selector == null && MidiInputRouter.listInputDevices().isEmpty()) {
+        System.out.println("No MIDI input devices found.");
+        return;
+      }
+      selectors.add(selector);
+    }
+
+    List<MidiInputRouter> routers = new ArrayList<>();
+    try {
+      for (String probeSelector : selectors) {
+        String label = printableMidiSelector(probeSelector);
+        logMidi("probe opening selector='" + label + "' map=" + formatMidiMap(midiVoiceMap));
+        MidiInputRouter router = MidiInputRouter.open(probeSelector, midiVoiceMap,
+            message -> logMidi("probe [" + label + "] " + message));
+        routers.add(router);
+        System.out.println("MIDI Probe Input: " + router.deviceName() + " selector='" + label + "'");
+      }
+      System.out.println("MIDI probe active for " + seconds + "s. Press keys or move controls now.");
+      Thread.sleep(seconds * 1000L);
+    } finally {
+      for (MidiInputRouter router : routers) {
+        router.close();
+      }
     }
   }
 

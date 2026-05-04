@@ -1,16 +1,17 @@
 ![SIDScore](docs/banner.png)
 
-SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound effects for the Commodore 64 SID. It lets you write scores, define instruments, audition them in a realtime player, and export to C64-ready formats including assembly files that can be used in your own projects.
+SIDScore is a Java/ANTLR-based DSL and toolchain for producing music and sound effects for the Commodore 64 SID. It lets you parse and validate scores, define instruments, audition or serve them through SRAP, translate from other sources, read live MIDI input, and export to C64-ready formats including assembly files that can be used in your own projects.
 
-In SIDScore, a **renderer** is used for auditioning during development (for example SRAP or VICE playback), while a **driver** is the generated 6502 playback program that runs your exported score in `ASM/PRG/SID` output. In short: renderer = monitoring path, driver = runtime path for PSID/C64 targets.
+In SIDScore, a **renderer** is used for auditioning during development, while a **driver** is the generated 6502 playback program that runs your exported score in `ASM/PRG/SID` output. In short: renderer = monitoring path, driver = runtime path for PSID/C64 targets.
 
 **What this project includes:**
 
 - A SID-aware [Domain Specific Language (DSL)](SIDScore_Language_Specification.md) with instruments, tables/sequences, and reusable imports.
 - A score renderer with 6581 model support for auditioning while composing masterpieces, the _SIDScore Realtime Audio Player_ (SRAP).
-- A user interface with editor, auto-reload, oscilloscope, and example browser. Playback using the built-in renderer (SRAP) or optionally a reSID based renderer using the `vsid` (VICE) binary.
+- A local SRAP player server for protocol clients that need playback, telemetry, MIDI routing, and score-map data.
+- Live MIDI input routing for CLI playback and SRAP protocol serving.
 - Export pipeline for `ASM`, `PRG`, and `SID` (KickAssembler used for PRG/SID assembly).
-- Example library (SFX and melodies), including MIDI/sheet-derived pieces.
+- Source translation tooling and example libraries, including MIDI/sheet-derived pieces and SID conversion examples.
 
 ## Quick start
 
@@ -83,7 +84,7 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 
 ## Live MIDI input
 
-SRAP can use a USB MIDI keyboard or controller, such as an Arturia MicroLab, as a live input source. MIDI is a realtime audition feature and does not change `ASM/PRG/SID` export.
+SRAP can use a USB MIDI keyboard or controller, such as an Arturia MicroLab, as a live input source. MIDI is a realtime audition and protocol-serving feature and does not change `ASM/PRG/SID` export.
 
 List available MIDI input devices:
 
@@ -91,6 +92,25 @@ List available MIDI input devices:
 java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
   net.resheim.sidscore.SIDScoreCLI --list-midi-devices
 ```
+
+Probe incoming MIDI events without starting score playback:
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.SIDScoreCLI --midi-probe --midi-device MicroLab --seconds 20
+```
+
+If a controller exposes multiple input endpoints, probe all of them and press a
+few keys:
+
+```sh
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  net.resheim.sidscore.SIDScoreCLI --midi-probe --all --seconds 20
+```
+
+`RX NOTE_ON ch N` confirms Java is receiving the keyboard and tells you which
+channel to use in `--midi-map`. If no `RX` lines appear for any endpoint, the
+host Java Sound layer is not delivering MIDI callbacks for that device.
 
 Play a score with live MIDI control:
 
@@ -102,35 +122,16 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 
 `--midi-map` uses `voice:channel` pairs. The example above maps SID voices 1, 2, and 3 to MIDI channel 1 for three-voice polyphony from a single keyboard channel. Use `1:1,2:2,3:3` to control each SID voice from a separate MIDI channel. Live MIDI uses the mapped voice's instrument definition from the loaded score. If omitted, the default map is `1:1`; MIDI output is not supported.
 
-## SIDScore GUI
+## SRAP Player Server
 
-The GUI player lets you edit and audition scores interactively:
-
-- Editor with auto-reload for fast iteration.
-- New/Save/Load file controls plus Play/Continue/Stop.
-- Playback renderer selector: `SRAP` (built-in realtime synth) or `VICE` (external `vsid` direct playback).
-- Tune selector (`1..N`) for choosing which PSID subtune to play.
-- MIDI input controls for SRAP: enable live input, select the input device, and map SID voices 1-3 to MIDI channels. MIDI output is not supported.
-- Examples navigator that loads and plays on activation.
-- Three voice oscilloscope views for quick feedback.
-- `Messages` panel shows `vsid` output during VICE playback.
-- Score note highlighting is accurate when auditioning using SRAP, but only approximate when using the VICE renderer. It is tuned to be fairly correct with the built-in `sidscore` driver.
-- For other driver backends, note highlighting should be considered unsupported and must be disabled (timing semantics are driver-specific).
-
-![](SRAP.png)
-
-Start the realtime player after building the module:
+SIDScore can run as a local SRAP server for external tools. The server accepts score playback commands, source playback commands, instrument overrides, MIDI settings, device scans, and telemetry subscriptions. See [SIDScore_Server_Specification.md](SIDScore_Server_Specification.md) for frame formats and protocol details.
 
 ```sh
 java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
-  net.resheim.sidscore.ui.RealtimeAudioPlayerUI
+  net.resheim.sidscore.SIDScoreCLI --player-server --port 0
 ```
 
-Run it from the repo root so the examples browser and banner image resolve correctly.
-
-If `VICE` playback is selected, SIDScore uses `vsid` from `PATH` (or `SIDSCORE_VICE_BIN` if set) for direct audio playback.
-Optional: set `SIDSCORE_VICE_DATA_DIR` to the VICE data directory if your installation needs explicit sysfile lookup.
-By default, VICE logs are shown in full in `Messages`. To re-enable compact/suppressed log mode, start UI with `--compact-vice-log` (or set `SIDSCORE_VICE_COMPACT_LOG=1` / `-Dsidscore.vice.compactLog=true`). Use `--full-vice-log` to force full logs.
+Use `--midi`, `--midi-device`, and `--midi-map` with `--player-server` to start with live MIDI input enabled.
 
 ## SID Conversion Examples
 

@@ -580,7 +580,7 @@ public final class SIDScorePlayerServer {
 			if (autoConnected) {
 				restartRealtimeOutputAfterSettingsChange(requestId);
 			} else {
-				startMidiMonitorIfNeeded(requestId);
+				refreshMidiMonitorAfterDeviceScan(requestId);
 			}
 		} else if (autoConnected) {
 			sendMidiState(requestId, true);
@@ -645,27 +645,43 @@ public final class SIDScorePlayerServer {
 		if (changed) {
 			restartRealtimeOutputAfterSettingsChange(requestId);
 		} else {
-			startMidiMonitorIfNeeded(requestId);
+			restartRealtimeOutputAfterSettingsRefresh(requestId);
 		}
 	}
 
 	private void restartRealtimeOutputAfterSettingsChange(long requestId) {
-		if (restartLoadedScoreIfActive(requestId)) {
+		restartRealtimeOutputAfterMidiRefresh(requestId, "settings change", true);
+	}
+
+	private void restartRealtimeOutputAfterSettingsRefresh(long requestId) {
+		restartRealtimeOutputAfterMidiRefresh(requestId, "settings refresh", true);
+	}
+
+	private void refreshMidiMonitorAfterDeviceScan(long requestId) {
+		restartRealtimeOutputAfterMidiRefresh(requestId, "device scan", false);
+	}
+
+	private void restartRealtimeOutputAfterMidiRefresh(long requestId, String reason, boolean restartLoadedScore) {
+		if (restartLoadedScore && restartLoadedScoreIfActive(requestId, reason)) {
 			return;
 		}
 		if (currentMidiMonitor) {
 			boolean shouldRestart = !enabledMidiAssignments().isEmpty();
-			logMidi("restarting MIDI monitor after settings change; shouldRestart=" + shouldRestart);
+			logMidi("restarting MIDI monitor after " + reason + "; shouldRestart=" + shouldRestart);
 			if (shouldRestart) {
 				queueMidiMonitorRestart(requestId);
 			}
 			stopRequestedByClient = true;
 			boolean stopped = stopCurrent(shouldRestart ? 0 : requestId, !shouldRestart);
 			stopRequestedByClient = false;
+			closeSharedMidiSource();
 			if (shouldRestart && stopped) {
 				startPendingMidiMonitorRestart();
 			}
 			return;
+		}
+		if (currentPlayerThread == null) {
+			closeSharedMidiSource();
 		}
 		startMidiMonitorIfNeeded(requestId);
 	}
@@ -685,7 +701,7 @@ public final class SIDScorePlayerServer {
 		startMidiMonitorIfNeeded(requestId);
 	}
 
-	private boolean restartLoadedScoreIfActive(long requestId) {
+	private boolean restartLoadedScoreIfActive(long requestId, String reason) {
 		if (currentMidiMonitor) {
 			return false;
 		}
@@ -697,9 +713,10 @@ public final class SIDScorePlayerServer {
 		if (loaded == null) {
 			return false;
 		}
-		logMidi("restarting loaded score after realtime MIDI/instrument change");
+		logMidi("restarting loaded score after " + reason);
 		stopRequestedByClient = true;
 		stopCurrent(0, false);
+		closeSharedMidiSource();
 
 		long scoreId = scoreIds.getAndIncrement();
 		currentScoreId = scoreId;
@@ -719,7 +736,7 @@ public final class SIDScorePlayerServer {
 		ServerMidiSource midiSource = null;
 		boolean endedNormally = false;
 		try {
-				midiSource = openSharedMidiSourceIfEnabled();
+			midiSource = openSharedMidiSourceIfEnabled();
 			if (midiSource != null) {
 				logMidi("score playback using MIDI source: " + midiSource.description());
 				sendMidiState(requestId, true);
@@ -743,8 +760,8 @@ public final class SIDScorePlayerServer {
 					true);
 			enqueueError(requestId, SrapProtocol.ERR_PLAYBACK_ERROR, e.getMessage(), true);
 		} finally {
-				closeSharedMidiSourceIfDisabled();
-				if (currentPlayer == player) {
+			closeSharedMidiSourceIfDisabled();
+			if (currentPlayer == player) {
 				currentPlayer = null;
 				currentPlayerThread = null;
 				currentMidiMonitor = false;
@@ -796,7 +813,7 @@ public final class SIDScorePlayerServer {
 	private void runMidiMonitor(long requestId, long scoreId, RealtimeAudioPlayer player, SIDScoreIR.TimedScore timed) {
 		ServerMidiSource midiSource = null;
 		try {
-				midiSource = openSharedMidiSourceIfEnabled();
+			midiSource = openSharedMidiSourceIfEnabled();
 			if (midiSource == null) {
 				logMidi("MIDI monitor stopped before start; no MIDI source available");
 				return;
@@ -1158,7 +1175,7 @@ public final class SIDScorePlayerServer {
 		if (devices.size() != 1) {
 			return false;
 		}
-		String selector = Integer.toString(devices.get(0).index());
+		String selector = devices.get(0).displayName();
 		boolean changed = false;
 		synchronized (midiVoiceAssignments) {
 			MidiVoiceAssignment[] updated = new MidiVoiceAssignment[midiVoiceAssignments.length];
@@ -1483,7 +1500,7 @@ public final class SIDScorePlayerServer {
 				.u16(devices.size());
 		for (MidiInputRouter.InputDevice device : devices) {
 			out.u16(device.index())
-					.str(Integer.toString(device.index()))
+					.str(device.displayName())
 					.str(device.displayName())
 					.str(device.name())
 					.str(device.vendor())

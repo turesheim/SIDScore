@@ -454,6 +454,9 @@ If exactly one usable MIDI input device is found, the server automatically uses
 that device as the current selector. If MIDI has no enabled voice assignment yet,
 the server enables MIDI with the default voice mapping and starts the MIDI-only
 monitor when no score playback is active. The server then emits `MIDI_STATE`.
+When the MIDI-only monitor is already active, a scan MAY restart the monitor and
+reopen the MIDI input so clients can recover from a stale host MIDI capture
+state without restarting the server.
 
 ### MIDI_DEVICE_LIST Payload
 
@@ -462,7 +465,7 @@ u32 requestId
 u16 deviceCount
 repeated deviceCount times:
   u16 deviceIndex
-  str selector          stable selector for this scan, currently the index text
+  str selector          selector to send back, normally the display name
   str displayName
   str name
   str vendor
@@ -471,9 +474,9 @@ repeated deviceCount times:
 ```
 
 `selector` is the value a client can send back in `SET_MIDI_SETTINGS`.
-Selectors based on device index are stable for one scan result but can change
-when the host MIDI device list changes, so clients should refresh before
-showing device choices.
+Clients should treat `selector` as opaque. Servers prefer a name-based selector
+where possible so a reconnect or host device-list reorder does not silently
+retarget a stale index at a different input.
 
 ### SET_MIDI_SETTINGS Payload
 
@@ -497,6 +500,10 @@ its routing state.
 `enabled=true` requires at least one `voiceEnabled` assignment. If an assigned
 device cannot be opened when playback starts, playback enters `error` and the
 server sends `ERROR` with code `playback_error`.
+
+Servers MAY treat `SET_MIDI_SETTINGS` as a MIDI input refresh even when the
+settings are unchanged. In that case active SRAP output may be restarted and the
+MIDI input device reopened to recover from stale native MIDI capture state.
 
 ### MIDI_STATE Payload
 
@@ -742,9 +749,9 @@ The server supports two scope data formats:
   to match the Java realtime player more closely.
 
 Clients SHOULD request only one scope format unless they explicitly need both.
-`SCOPE_SAMPLES` preserves sample order and is the preferred format for a
-RealtimeAudioPlayerUI-style oscilloscope. `SCOPE_BUCKETS` is still useful for
-filled envelope displays or constrained transports.
+`SCOPE_SAMPLES` preserves sample order and is the preferred format for external
+oscilloscope-style SRAP clients. `SCOPE_BUCKETS` is still useful for filled
+envelope displays or constrained transports.
 
 ### SCOPE_BUCKETS Payload
 

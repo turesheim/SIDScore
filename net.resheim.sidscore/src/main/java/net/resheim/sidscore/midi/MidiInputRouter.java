@@ -450,8 +450,10 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	}
 
 	private static void ensureNativeMidiEventPump(EventListener eventListener) {
-		if (!Boolean.getBoolean(AWT_EVENT_PUMP_PROPERTY) || !isMacOS()
-				|| !NATIVE_EVENT_PUMP_INITIALIZED.compareAndSet(false, true)) {
+		String configured = System.getProperty(AWT_EVENT_PUMP_PROPERTY, "");
+		boolean disabled = "false".equalsIgnoreCase(configured)
+				|| Boolean.getBoolean(AWT_EVENT_PUMP_PROPERTY + ".disabled");
+		if (disabled || !isMacOS()) {
 			return;
 		}
 		try {
@@ -460,6 +462,9 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			}
 			if (GraphicsEnvironment.isHeadless()) {
 				emit(eventListener, "macOS MIDI event pump skipped; graphics environment is headless");
+				return;
+			}
+			if (!NATIVE_EVENT_PUMP_INITIALIZED.compareAndSet(false, true)) {
 				return;
 			}
 			Toolkit.getDefaultToolkit();
