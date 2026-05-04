@@ -1,6 +1,6 @@
 # SIDScore Player Server Specification
 
-Version: **0.6.0 (draft)**
+Version: **0.6.1 (draft)**
 
 ## 1. Purpose
 
@@ -195,10 +195,21 @@ str sourceUri
 str sourcePath
 u8  sidModel          0=default, 1=6581, 2=8580
 u8  reserved[3]
+u16 tuneNumber        optional, defaults to 1 when omitted
 ```
 
 `sourceUri` is the IDE-facing URI. `sourcePath` is the local filesystem path the
 Java process can read.
+
+`tuneNumber` selects which SIDScore tune to play:
+
+- omitted or `1`: play the main score.
+- `2..255`: play the matching inline `TUNE N { ... }` block or imported
+  subtune declared with `IMPORT ... AS N`.
+
+The trailing `tuneNumber` field is optional for version 1 compatibility. Older
+clients that end the payload after `reserved[3]` implicitly request tune `1`.
+If present, it MUST be the final field in the payload.
 
 On successful `PLAY`, the server parses and resolves the score, emits
 `PLAYBACK_STATE` with state `loading`, resets voice state to silence, emits
@@ -212,6 +223,11 @@ Any currently wired instrument settings are applied to the resolved score before
 If another score is already playing, `PLAY` stops the current score and starts
 the new one from the beginning.
 
+If `tuneNumber` is outside `1..255`, the server responds with `ERROR`
+`invalid_frame`. If the requested tune is not declared, the server responds with
+`ERROR` `invalid_frame`. If an imported subtune file cannot be read, the server
+responds with `ERROR` `file_not_found`.
+
 ### PLAY_SOURCE Payload
 
 ```text
@@ -222,6 +238,7 @@ u8  sidModel          0=default, 1=6581, 2=8580
 u8  reserved[3]
 u32 sourceByteLength
 bytes[sourceByteLength] sourceUtf8
+u16 tuneNumber        optional, defaults to 1 when omitted
 ```
 
 `PLAY_SOURCE` loads SIDScore source text sent directly over the protocol. It is
@@ -238,6 +255,10 @@ memory URI when `sourceUri` is also empty.
 `sourceUtf8` MUST be UTF-8 SIDScore source bytes. The maximum frame payload size
 still applies, so version 1 source payloads must fit within the 4 MiB frame
 limit.
+
+`tuneNumber` has the same meaning and validation rules as for `PLAY`. For
+external imported subtunes, `sourcePath` is used as the base path for resolving
+relative imports.
 
 On successful `PLAY_SOURCE`, the server follows the same state sequence as
 `PLAY`: parse/resolve, emit `PLAYBACK_STATE` `loading`, emit `SCORE_MAP` if
@@ -875,5 +896,8 @@ Protocol version 1 is intentionally small. Future versions may add:
 - More detailed filter telemetry
 - Export of table step names/indices
 
-New optional fields should usually be added through new frame types or flags,
-not by changing existing payload layouts within the same protocol version.
+New optional fields should usually be added through new frame types or flags.
+When an existing frame is extended in protocol version 1, the extension MUST be
+trailing-only, have a documented default when absent, and be safely ignorable by
+older receivers. `PLAY.tuneNumber` and `PLAY_SOURCE.tuneNumber` are examples of
+this compatibility pattern.

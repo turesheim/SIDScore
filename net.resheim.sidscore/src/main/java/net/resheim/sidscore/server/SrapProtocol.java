@@ -286,5 +286,9 @@ public final class SrapProtocol {
 			data.get(bytes);
 			return bytes;
 		}
+
+		public int remaining() {
+			return data.remaining();
+		}
 	}
 }

@@ -305,6 +305,7 @@ public final class SIDScorePlayerServer {
 		in.u8();
 		in.u8();
 		in.u8();
+		int tuneNumber = readOptionalTuneNumber(in);
 
 		Path sourcePath = Path.of(sourcePathRaw).toAbsolutePath().normalize();
 		if (!Files.isRegularFile(sourcePath)) {
@@ -322,7 +323,7 @@ public final class SIDScorePlayerServer {
 			enqueueError(requestId, SrapProtocol.ERR_FILE_NOT_FOUND, "Failed to read file: " + sourcePath, true);
 			return;
 		}
-		startPlayback(requestId, sourceUri, sourcePath, sourceText, sidModelRaw);
+		startPlayback(requestId, sourceUri, sourcePath, sourceText, sidModelRaw, tuneNumber);
 	}
 
 	private void handlePlaySource(byte[] payload) {
@@ -336,16 +337,28 @@ public final class SIDScorePlayerServer {
 		in.u8();
 		int sourceLength = (int) in.u32();
 		String sourceText = new String(in.bytes(sourceLength), StandardCharsets.UTF_8);
+		int tuneNumber = readOptionalTuneNumber(in);
 		Path sourcePath = sourcePathFromHint(sourcePathRaw);
 		if (sourceUri == null || sourceUri.isBlank()) {
 			sourceUri = sourcePathRaw == null || sourcePathRaw.isBlank()
 					? "memory://sidscore/current.sidscore"
 					: sourcePath.toUri().toString();
 		}
-		startPlayback(requestId, sourceUri, sourcePath, sourceText, sidModelRaw);
+		startPlayback(requestId, sourceUri, sourcePath, sourceText, sidModelRaw, tuneNumber);
 	}
 
-	private void startPlayback(long requestId, String sourceUri, Path sourcePath, String sourceText, int sidModelRaw) {
+	private static int readOptionalTuneNumber(SrapProtocol.PayloadReader in) {
+		if (in.remaining() == 0) {
+			return 1;
+		}
+		if (in.remaining() != 2) {
+			throw new IllegalArgumentException("PLAY tune number must be a u16");
+		}
+		return in.u16();
+	}
+
+	private void startPlayback(long requestId, String sourceUri, Path sourcePath, String sourceText, int sidModelRaw,
+			int tuneNumber) {
 		stopCurrent(0, false);
 		long scoreId = scoreIds.getAndIncrement();
 		currentScoreId = scoreId;
@@ -381,15 +394,31 @@ public final class SIDScorePlayerServer {
 		case 2 -> SidModel.MOS8580;
 		default -> SidModel.MOS6581;
 		};
-		LoadedScore loaded = new LoadedScore(sourceUri, sourcePath, parsed.tree(), parsed.timedScore(), sidModel);
+		LoadedScore loaded;
+		try {
+			loaded = selectTune(parsed, sourceUri, sourcePath, tuneNumber, sidModel);
+		} catch (IOException e) {
+			sendPlaybackState(requestId, SrapProtocol.STATE_ERROR, SrapProtocol.REASON_PARSE_ERROR, scoreId, 0, 0, true);
+			enqueueError(requestId, SrapProtocol.ERR_FILE_NOT_FOUND, e.getMessage(), true);
+			return;
+		} catch (IllegalArgumentException e) {
+			sendPlaybackState(requestId, SrapProtocol.STATE_ERROR, SrapProtocol.REASON_PARSE_ERROR, scoreId, 0, 0, true);
+			enqueueError(requestId, SrapProtocol.ERR_INVALID_FRAME, e.getMessage(), true);
+			return;
+		} catch (Exception e) {
+			sendPlaybackState(requestId, SrapProtocol.STATE_ERROR, SrapProtocol.REASON_PARSE_ERROR, scoreId, 0, 0, true);
+			enqueueError(requestId, SrapProtocol.ERR_RESOLVE_ERROR, e.getMessage(), true);
+			return;
+		}
 		currentLoadedScore = loaded;
 		startResolvedPlayback(requestId, scoreId, loaded);
 	}
 
 	private void startResolvedPlayback(long requestId, long scoreId, LoadedScore loaded) {
 		SIDScoreIR.TimedScore timed = applyInstrumentOverrides(loaded.timedScore());
-		ScoreMapExporter.ScoreMap scoreMap = ScoreMapExporter.build(scoreId, loaded.tree(), timed,
-				loaded.sourceUri(), loaded.sourcePath());
+		ScoreMapExporter.ScoreMap scoreMap = loaded.tree() != null
+				? ScoreMapExporter.build(scoreId, loaded.tree(), timed, loaded.sourceUri(), loaded.sourcePath())
+				: emptyScoreMap(scoreId, loaded);
 		currentScoreMap = scoreMap;
 		if ((clientCapabilities & SrapProtocol.CAP_SCORE_MAP) != 0) {
 			enqueue(SrapProtocol.SCORE_MAP, encodeScoreMap(scoreMap), true);
@@ -400,10 +429,72 @@ public final class SIDScorePlayerServer {
 		RealtimeAudioPlayer player = new RealtimeAudioPlayer(loaded.sidModel());
 		player.setInstrumentProvider(this::effectivePlaybackInstrument);
 		currentPlayer = player;
+		currentMidiMonitor = false;
 		Thread thread = new Thread(() -> runPlayer(requestId, scoreId, player, timed),
 				"sidscore-srap-player");
 		currentPlayerThread = thread;
 		thread.start();
+	}
+
+	private static ScoreMapExporter.ScoreMap emptyScoreMap(long scoreId, LoadedScore loaded) {
+		return new ScoreMapExporter.ScoreMap(scoreId,
+				List.of(new ScoreMapExporter.SourceEntry(1, loaded.sourceUri(), loaded.sourcePath())),
+				List.of(), Map.of());
+	}
+
+	private LoadedScore selectTune(ParsedScore parsed, String sourceUri, Path sourcePath, int tuneNumber,
+			SidModel sidModel) throws Exception {
+		if (tuneNumber < 1 || tuneNumber > 255) {
+			throw new IllegalArgumentException("Tune number must be in range 1..255, got " + tuneNumber);
+		}
+		if (tuneNumber == 1) {
+			return new LoadedScore(sourceUri, sourcePath, parsed.tree(), parsed.timedScore(), sidModel);
+		}
+
+		SIDScoreIR.ScoreIR score = parsed.scoreIR();
+		SIDScoreIR.SongIR inlineSong = score.songs().get(tuneNumber);
+		if (inlineSong != null) {
+			SIDScoreIR.ScoreIR inlineScore = buildInlineSongScore(score, inlineSong);
+			SIDScoreIR.Resolver.Result resolved = new SIDScoreIR.Resolver().resolve(inlineScore);
+			return new LoadedScore(sourceUri + "#tune=" + tuneNumber, sourcePath, null, resolved.timedScore(), sidModel);
+		}
+
+		Path tunePath = score.subtunes().get(tuneNumber);
+		if (tunePath == null) {
+			throw new IllegalArgumentException("TUNE " + tuneNumber + " is not defined");
+		}
+		Path resolvedPath = tunePath.toAbsolutePath().normalize();
+		if (!Files.isRegularFile(resolvedPath)) {
+			throw new IOException("Subtune file not found: " + resolvedPath);
+		}
+		ParsedScore subtune = parse(resolvedPath, Files.readString(resolvedPath));
+		return new LoadedScore(resolvedPath.toUri().toString(), resolvedPath, subtune.tree(), subtune.timedScore(),
+				sidModel);
+	}
+
+	private static SIDScoreIR.ScoreIR buildInlineSongScore(SIDScoreIR.ScoreIR base, SIDScoreIR.SongIR song) {
+		int tempo = song.tempoBpm().isPresent() ? song.tempoBpm().getAsInt() : base.tempoBpm();
+		Map<String, SIDScoreIR.EffectIR> effects = new LinkedHashMap<>();
+		if (!song.effects().isEmpty()) {
+			effects.putAll(song.effects());
+		} else {
+			effects.putAll(base.effects());
+			effects.putAll(song.effects());
+		}
+		return new SIDScoreIR.ScoreIR(
+				song.title().isPresent() ? song.title() : base.title(),
+				song.author().isPresent() ? song.author() : base.author(),
+				song.released().isPresent() ? song.released() : base.released(),
+				tempo,
+				song.timeSig().isPresent() ? song.timeSig() : base.timeSig(),
+				song.system().isPresent() ? song.system() : base.system(),
+				song.defaultSwing().isPresent() ? song.defaultSwing().get() : base.defaultSwing(),
+				base.tables(),
+				base.instruments(),
+				java.util.Collections.unmodifiableMap(effects),
+				song.voices(),
+				Map.of(),
+				Map.of());
 	}
 
 	private static Path sourcePathFromHint(String sourcePathRaw) {
@@ -889,7 +980,7 @@ public final class SIDScorePlayerServer {
 		ParseTreeWalker.DEFAULT.walk(builder, tree);
 		SIDScoreIR.ScoreIR scoreIR = builder.buildScoreIR();
 		SIDScoreIR.Resolver.Result resolved = new SIDScoreIR.Resolver().resolve(scoreIR);
-		return new ParsedScore(tree, resolved.timedScore());
+		return new ParsedScore(tree, scoreIR, resolved.timedScore());
 	}
 
 	private SIDScoreIR.InstrumentIR decodeInstrument(int voiceIndex, SrapProtocol.PayloadReader in) {
@@ -1252,8 +1343,12 @@ public final class SIDScorePlayerServer {
 				String sourceUri = in.str();
 				String sourcePath = in.str();
 				int sidModel = in.u8();
+				in.u8();
+				in.u8();
+				in.u8();
+				int tuneNumber = readOptionalTuneNumber(in);
 				yield " request=" + requestId + " sourcePath='" + sourcePath + "' sourceUri='"
-						+ sourceUri + "' sidModel=" + sidModel;
+						+ sourceUri + "' sidModel=" + sidModel + " tune=" + tuneNumber;
 			}
 			case SrapProtocol.PLAY_SOURCE -> {
 				long requestId = in.u32();
@@ -1264,8 +1359,11 @@ public final class SIDScorePlayerServer {
 				in.u8();
 				in.u8();
 				long sourceLength = in.u32();
+				in.bytes((int) sourceLength);
+				int tuneNumber = readOptionalTuneNumber(in);
 				yield " request=" + requestId + " sourcePath='" + sourcePath + "' sourceUri='"
-						+ sourceUri + "' sidModel=" + sidModel + " sourceBytes=" + sourceLength;
+						+ sourceUri + "' sidModel=" + sidModel + " sourceBytes=" + sourceLength
+						+ " tune=" + tuneNumber;
 			}
 			case SrapProtocol.PAUSE, SrapProtocol.CONTINUE, SrapProtocol.STOP,
 					SrapProtocol.SCAN_MIDI_DEVICES -> " request=" + in.u32();
@@ -1824,7 +1922,8 @@ public final class SIDScorePlayerServer {
 		return Math.round(clamped * 32767.0f);
 	}
 
-	private record ParsedScore(SIDScoreParser.FileContext tree, SIDScoreIR.TimedScore timedScore) {
+	private record ParsedScore(SIDScoreParser.FileContext tree, SIDScoreIR.ScoreIR scoreIR,
+			SIDScoreIR.TimedScore timedScore) {
 	}
 
 	private record LoadedScore(String sourceUri, Path sourcePath, SIDScoreParser.FileContext tree,
