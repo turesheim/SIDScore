@@ -4,13 +4,9 @@ Version: **0.6.1 (draft)**
 
 ## 1. Purpose
 
-The SIDScore Player Server is a server that plays `.sidscore` files through SRAP
-and streams compact binary playback data to an IDE client, primarily the 
-Commodore Commander.
+The SIDScore Player Server is a server that plays `.sidscore` files through SRAP and streams compact binary playback data to an IDE client, primarily the Commodore Commander.
 
-The server keeps SIDScore parsing, timing, playback, and source mapping in the
-Java implementation. The IDE renderscontrols, voice visualizers, waveform 
-scopes, and editor highlights.
+The server keeps SIDScore parsing, timing, playback, and source mapping in the Java implementation. The IDE renderscontrols, voice visualizers, waveform scopes, and editor highlights.
 
 This specification covers:
 
@@ -23,8 +19,7 @@ This specification covers:
 - Score source maps for editor highlighting
 - Live highlight state
 
-MIDI is exposed as a realtime input configuration concept. Voice telemetry still
-reports effective SIDScore note display data and SID frequency register values.
+MIDI is exposed as a realtime input configuration concept. Voice telemetry still reports effective SIDScore note display data and SID frequency register values.
 
 ## 2. Process Model
 
@@ -40,43 +35,31 @@ Live MIDI input can also be enabled as a startup default:
 java -jar sidscore-cli.jar --player-server --midi --midi-device MicroLab --midi-map 1:1,2:1,3:1 --port 0
 ```
 
-The server binds to `127.0.0.1` only. Port `0` means the operating system chooses a
-free port.
+The server binds to `127.0.0.1` only. Port `0` means the operating system chooses a free port.
 
-After the server socket is ready, the process writes one UTF-8 JSON line to
-stdout:
+After the server socket is ready, the process writes one UTF-8 JSON line to stdout:
 
 ```json
 {"event":"ready","protocol":"srap-server","version":1,"port":51234}
 ```
 
-Commodore Commander reads this line, opens a TCP connection to `127.0.0.1:<port>`,
-and then uses the binary protocol described below. Stdout is only for bootstrap
-and diagnostics. MIDI diagnostic/debug messages, including device selection,
-router open/close events, and incoming MIDI NOTE ON/OFF routing, are written to
-stdout with a `[sidscore-midi]` prefix.
+Commodore Commander reads this line, opens a TCP connection to `127.0.0.1:<port>`, and then uses the binary protocol described below. Stdout is only for bootstrap and diagnostics. MIDI diagnostic/debug messages, including device selection,
+router open/close events, and incoming MIDI NOTE ON/OFF routing, are written to stdout with a `[sidscore-midi]` prefix.
 
-The server is intended to stay running in the background. A client may send
-multiple `PLAY` or `PLAY_SOURCE` commands over the same connection. Each new
-play command stops the current score, assigns a new `scoreId`, emits a new
-`SCORE_MAP`, and starts playback from the beginning.
+The server is intended to stay running in the background. A client may send multiple `PLAY` or `PLAY_SOURCE` commands over the same connection. Each new play command stops the current score, assigns a new `scoreId`, emits a new `SCORE_MAP`, and starts playback from the beginning.
 
-The server exits when stdin closes, the parent process terminates it, or a fatal
-startup error occurs.
+The server exits when stdin closes, the parent process terminates it, or a fatal startup error occurs.
 
 ## 3. Connection Model
 
 The first version uses one full-duplex TCP connection:
 
 - Client to server: playback commands.
-- Server to client: playback state, score maps, instrument state, voice state,
-  scope buckets, highlight state, and errors.
+- Server to client: playback state, score maps, instrument state, voice state, scope buckets, highlight state, and errors.
 
-Only one client connection is required. A server MAY reject additional clients
-with an error frame or by closing the connection.
+Only one client connection is required. A server MAY reject additional clients with an error frame or by closing the connection.
 
-All TCP sockets MUST bind to loopback (`127.0.0.1`). The server MUST NOT bind to
-`0.0.0.0` unless a future explicit remote mode is added.
+All TCP sockets MUST bind to loopback (`127.0.0.1`). The server MUST NOT bind to `0.0.0.0` unless a future explicit remote mode is added.
 
 ## 4. Framing
 
@@ -116,8 +99,7 @@ bytes[n]     exactly n uninterpreted bytes
 
 Strings are UTF-8 and are not null-terminated.
 
-Line and column positions are 1-based. Columns are UTF-16 code-unit columns so
-they map directly to Monaco/Theia editor positions.
+Line and column positions are 1-based. Columns are UTF-16 code-unit columns so they map directly to Monaco/Theia editor positions.
 
 ## 6. Frame Types
 
@@ -198,35 +180,22 @@ u8  reserved[3]
 u16 tuneNumber        optional, defaults to 1 when omitted
 ```
 
-`sourceUri` is the IDE-facing URI. `sourcePath` is the local filesystem path the
-Java process can read.
+`sourceUri` is the IDE-facing URI. `sourcePath` is the local filesystem path the Java process can read.
 
 `tuneNumber` selects which SIDScore tune to play:
 
 - omitted or `1`: play the main score.
-- `2..255`: play the matching inline `TUNE N { ... }` block or imported
-  subtune declared with `IMPORT ... AS N`.
+- `2..255`: play the matching inline `TUNE N { ... }` block or imported subtune declared with `IMPORT ... AS N`.
 
-The trailing `tuneNumber` field is optional for version 1 compatibility. Older
-clients that end the payload after `reserved[3]` implicitly request tune `1`.
-If present, it MUST be the final field in the payload.
+The trailing `tuneNumber` field is optional for version 1 compatibility. Olde clients that end the payload after `reserved[3]` implicitly request tune `1`. If present, it MUST be the final field in the payload.
 
-On successful `PLAY`, the server parses and resolves the score, emits
-`PLAYBACK_STATE` with state `loading`, resets voice state to silence, emits
-`SCORE_MAP` if requested, emits `INSTRUMENT_STATE` if requested, resets voice
-state to silence again for clients that initialize visual state from the map,
-then starts playback and emits `PLAYBACK_STATE` with state `playing`.
+On successful `PLAY`, the server parses and resolves the score, emits `PLAYBACK_STATE` with state `loading`, resets voice state to silence, emits `SCORE_MAP` if requested, emits `INSTRUMENT_STATE` if requested, resets voice state to silence again for clients that initialize visual state from the map, then starts playback and emits `PLAYBACK_STATE` with state `playing`.
 
-Any currently wired instrument settings are applied to the resolved score before
-`SCORE_MAP` is built and before playback starts.
+Any currently wired instrument settings are applied to the resolved score before `SCORE_MAP` is built and before playback starts.
 
-If another score is already playing, `PLAY` stops the current score and starts
-the new one from the beginning.
+If another score is already playing, `PLAY` stops the current score and starts the new one from the beginning.
 
-If `tuneNumber` is outside `1..255`, the server responds with `ERROR`
-`invalid_frame`. If the requested tune is not declared, the server responds with
-`ERROR` `invalid_frame`. If an imported subtune file cannot be read, the server
-responds with `ERROR` `file_not_found`.
+If `tuneNumber` is outside `1..255`, the server responds with `ERROR` `invalid_frame`. If the requested tune is not declared, the server responds with `ERROR` `invalid_frame`. If an imported subtune file cannot be read, the server responds with `ERROR` `file_not_found`.
 
 ### PLAY_SOURCE Payload
 
@@ -241,32 +210,19 @@ bytes[sourceByteLength] sourceUtf8
 u16 tuneNumber        optional, defaults to 1 when omitted
 ```
 
-`PLAY_SOURCE` loads SIDScore source text sent directly over the protocol. It is
-the preferred command for IDE playback of modified editor buffers because it does
-not require the file on disk to be saved first.
+`PLAY_SOURCE` loads SIDScore source text sent directly over the protocol. It is the preferred command for IDE playback of modified editor buffers because it does not require the file on disk to be saved first.
 
 `sourceUri` is the IDE-facing document URI used in `SCORE_MAP`.
 
-`sourcePath` is optional but strongly recommended. It is used as the local path
-hint for import resolution and diagnostics. If it is empty, imports resolve
-relative to the server process working directory and the source map uses a
-memory URI when `sourceUri` is also empty.
+`sourcePath` is optional but strongly recommended. It is used as the local path hint for import resolution and diagnostics. If it is empty, imports resolve relative to the server process working directory and the source map uses a memory URI when `sourceUri` is also empty.
 
-`sourceUtf8` MUST be UTF-8 SIDScore source bytes. The maximum frame payload size
-still applies, so version 1 source payloads must fit within the 4 MiB frame
-limit.
+`sourceUtf8` MUST be UTF-8 SIDScore source bytes. The maximum frame payload size still applies, so version 1 source payloads must fit within the 4 MiB frame limit.
 
-`tuneNumber` has the same meaning and validation rules as for `PLAY`. For
-external imported subtunes, `sourcePath` is used as the base path for resolving
-relative imports.
+`tuneNumber` has the same meaning and validation rules as for `PLAY`. For external imported subtunes, `sourcePath` is used as the base path for resolving relative imports.
 
-On successful `PLAY_SOURCE`, the server follows the same state sequence as
-`PLAY`: parse/resolve, emit `PLAYBACK_STATE` `loading`, emit `SCORE_MAP` if
-requested, emit `INSTRUMENT_STATE` if requested, start playback, and emit
-`PLAYBACK_STATE` `playing`.
+On successful `PLAY_SOURCE`, the server follows the same state sequence as `PLAY`: parse/resolve, emit `PLAYBACK_STATE` `loading`, emit `SCORE_MAP` if requested, emit `INSTRUMENT_STATE` if requested, start playback, and emit `PLAYBACK_STATE` `playing`.
 
-If another score is already playing, `PLAY_SOURCE` stops the current score and
-starts the sent source from the beginning.
+If another score is already playing, `PLAY_SOURCE` stops the current score and starts the sent source from the beginning.
 
 ### PAUSE Payload
 
@@ -274,8 +230,7 @@ starts the sent source from the beginning.
 u32 requestId
 ```
 
-`PAUSE` pauses audio and telemetry progression without discarding player state.
-The server responds with `PLAYBACK_STATE` state `paused`.
+`PAUSE` pauses audio and telemetry progression without discarding player state. The server responds with `PLAYBACK_STATE` state `paused`.
 
 ### CONTINUE Payload
 
@@ -285,8 +240,7 @@ u32 requestId
 
 `CONTINUE` resumes from `paused`. It does not restart a stopped score.
 
-If no score is paused, the server responds with `ERROR` code
-`invalid_state`.
+If no score is paused, the server responds with `ERROR` code `invalid_state`.
 
 ### STOP Payload
 
@@ -294,14 +248,9 @@ If no score is paused, the server responds with `ERROR` code
 u32 requestId
 ```
 
-`STOP` stops score playback, silences score voices, clears active highlight ids,
-and resets the current score playback position. The loaded score map MAY remain
-cached, but there is no resumable score audio state after stop.
+`STOP` stops score playback, silences score voices, clears active highlight ids, and resets the current score playback position. The loaded score map MAY remain cached, but there is no resumable score audio state after stop.
 
-When MIDI is enabled, `STOP` does not stop live MIDI input. If a score was
-playing, the server stops the score and starts the MIDI-only monitor so assigned
-instrument keypresses still produce audio and telemetry. If the MIDI-only
-monitor is already active, `STOP` leaves it running.
+When MIDI is enabled, `STOP` does not stop live MIDI input. If a score was playing, the server stops the score and starts the MIDI-only monitor so assigned instrument keypresses still produce audio and telemetry. If the MIDI-only monitor is already active, `STOP` leaves it running.
 
 After `STOP`, the server emits:
 
@@ -310,14 +259,9 @@ After `STOP`, the server emits:
 
 ## 9. Instrument Commands
 
-Instrument commands are per voice and can be sent before any score is loaded.
-The server stores them as wired overrides for the selected voice. If a score is
-loaded, wired overrides replace the resolved score instrument for that voice,
-including any instrument table references from the score.
+Instrument commands are per voice and can be sent before any score is loaded. The server stores them as wired overrides for the selected voice. If a score is loaded, wired overrides replace the resolved score instrument for that voice, including any instrument table references from the score.
 
-If playback is active when an instrument command changes the effective
-instrument, the server MAY stop and restart the loaded score from the beginning
-with a new `scoreId`. Restarting is allowed because gate settings can change
+If playback is active when an instrument command changes the effective instrument, the server MAY stop and restart the loaded score from the beginning with a new `scoreId`. Restarting is allowed because gate settings can change
 frame-event timing and therefore require a new `SCORE_MAP`.
 
 ### SET_INSTRUMENT Payload
@@ -344,8 +288,7 @@ bool8 ring
 str instrumentName
 ```
 
-`SET_INSTRUMENT` stores a complete wired instrument for `voiceIndex`. The server
-responds with `INSTRUMENT_STATE` when the client advertises that capability.
+`SET_INSTRUMENT` stores a complete wired instrument for `voiceIndex`. The server responds with `INSTRUMENT_STATE` when the client advertises that capability.
 
 Wave bits:
 
@@ -361,17 +304,12 @@ Legal waveform rules:
 - `TRI`, `SAW`, and `PULSE` may be combined.
 - `NOISE` is exclusive; if set, the server treats the waveform as noise-only.
 - A zero waveform mask is normalized to `PULSE`.
-- Ring modulation requires `TRI`; if `ring` is true for a non-noise waveform
-  without `TRI`, the server adds `TRI`.
+- Ring modulation requires `TRI`; if `ring` is true for a non-noise waveform without `TRI`, the server adds `TRI`.
 - Ring modulation is disabled for `NOISE`.
 
-`filterModeMask` uses the same bits as SIDScore filter modes: bit 0 low-pass,
-bit 1 band-pass, bit 2 high-pass. When the mask is zero, cutoff and resonance
-are ignored.
+`filterModeMask` uses the same bits as SIDScore filter modes: bit 0 low-pass, bit 1 band-pass, bit 2 high-pass. When the mask is zero, cutoff and resonance are ignored.
 
-Wired instruments do not carry score table sequence names. A wired override
-therefore replaces `WAVESEQ`, `PWSEQ`, `GATESEQ`, `PITCHSEQ`, and `FILTERSEQ`
-from the score instrument for that voice while the override is active.
+Wired instruments do not carry score table sequence names. A wired override therefore replaces `WAVESEQ`, `PWSEQ`, `GATESEQ`, `PITCHSEQ`, and `FILTERSEQ` from the score instrument for that voice while the override is active.
 
 ### RESET_INSTRUMENT Payload
 
@@ -380,15 +318,12 @@ u32 requestId
 u8  voiceIndex        1..3
 ```
 
-`RESET_INSTRUMENT` clears the wired override for `voiceIndex`. The effective
-instrument becomes:
+`RESET_INSTRUMENT` clears the wired override for `voiceIndex`. The effective instrument becomes:
 
-1. the instrument resolved from the currently loaded score, if one exists for
-   that voice;
+1. the instrument resolved from the currently loaded score, if one exists for that voice;
 2. otherwise the server default instrument.
 
-The server responds with `INSTRUMENT_STATE` when the client advertises that
-capability.
+The server responds with `INSTRUMENT_STATE` when the client advertises that capability.
 
 ### INSTRUMENT_STATE Payload
 
@@ -416,30 +351,15 @@ bool8 ring
 str instrumentName
 ```
 
-The server emits `INSTRUMENT_STATE` for all three voices after `HELLO_ACK` when
-requested, after successful `PLAY`/`PLAY_SOURCE`, and after
-`SET_INSTRUMENT`/`RESET_INSTRUMENT`.
+The server emits `INSTRUMENT_STATE` for all three voices after `HELLO_ACK` when requested, after successful `PLAY`/`PLAY_SOURCE`, and after `SET_INSTRUMENT`/`RESET_INSTRUMENT`.
 
 ## 10. MIDI Commands
 
-MIDI settings are server-wide for the current connection and can be sent before
-any score is loaded. They do not change `ASM`/`PRG`/`SID` export semantics.
+MIDI settings are server-wide for the current connection and can be sent before any score is loaded. They do not change `ASM`/`PRG`/`SID` export semantics. When MIDI is enabled, playback opens the configured MIDI input devices and routes live notes into the assigned SID voices. Assigned voices are controlled by MIDI while unassigned voices continue to play the score timeline. Multiple voices may use the same MIDI device and channel for simple polyphony. Different voices may also use different devices.
 
-When MIDI is enabled, playback opens the configured MIDI input devices and
-routes live notes into the assigned SID voices. Assigned voices are controlled
-by MIDI while unassigned voices continue to play the score timeline. Multiple
-voices may use the same MIDI device and channel for simple polyphony. Different
-voices may also use different devices.
+When MIDI is enabled and no score playback is active, the server starts a MIDI-only SRAP monitor so a keyboard can be played without loading a score. In that mode, assigned voices use the effective instrument settings for each voice: wired instrument override, loaded score instrument, or server default instrument, in that order.
 
-When MIDI is enabled and no score playback is active, the server starts a
-MIDI-only SRAP monitor so a keyboard can be played without loading a score. In
-that mode, assigned voices use the effective instrument settings for each voice:
-wired instrument override, loaded score instrument, or server default
-instrument, in that order.
-
-If MIDI settings are changed while playback is active, the server MAY stop and
-restart the loaded score from the beginning with a new `scoreId`, because the
-set of realtime-controlled voices changes the rendered telemetry stream.
+If MIDI settings are changed while playback is active, the server MAY stop and restart the loaded score from the beginning with a new `scoreId`, because the set of realtime-controlled voices changes the rendered telemetry stream.
 
 ### SCAN_MIDI_DEVICES Payload
 
@@ -447,16 +367,9 @@ set of realtime-controlled voices changes the rendered telemetry stream.
 u32 requestId
 ```
 
-`SCAN_MIDI_DEVICES` asks the server to enumerate currently usable MIDI input
-devices. The server responds with `MIDI_DEVICE_LIST`.
+`SCAN_MIDI_DEVICES` asks the server to enumerate currently usable MIDI input devices. The server responds with `MIDI_DEVICE_LIST`.
 
-If exactly one usable MIDI input device is found, the server automatically uses
-that device as the current selector. If MIDI has no enabled voice assignment yet,
-the server enables MIDI with the default voice mapping and starts the MIDI-only
-monitor when no score playback is active. The server then emits `MIDI_STATE`.
-When the MIDI-only monitor is already active, a scan MAY restart the monitor and
-reopen the MIDI input so clients can recover from a stale host MIDI capture
-state without restarting the server.
+If exactly one usable MIDI input device is found, the server automatically uses that device as the current selector. If MIDI has no enabled voice assignment yet, the server enables MIDI with the default voice mapping and starts the MIDI-only monitor when no score playback is active. The server then emits `MIDI_STATE`. When the MIDI-only monitor is already active, a scan MAY restart the monitor and reopen the MIDI input so clients can recover from a stale host MIDI capture state without restarting the server.
 
 ### MIDI_DEVICE_LIST Payload
 
@@ -473,10 +386,7 @@ repeated deviceCount times:
   str version
 ```
 
-`selector` is the value a client can send back in `SET_MIDI_SETTINGS`.
-Clients should treat `selector` as opaque. Servers prefer a name-based selector
-where possible so a reconnect or host device-list reorder does not silently
-retarget a stale index at a different input.
+`selector` is the value a client can send back in `SET_MIDI_SETTINGS`. Clients should treat `selector` as opaque. Servers prefer a name-based selector where possible so a reconnect or host device-list reorder does not silently retarget a stale index at a different input.
 
 ### SET_MIDI_SETTINGS Payload
 
@@ -493,17 +403,11 @@ repeated assignmentCount times:
   str deviceSelector    empty selects the first usable MIDI input
 ```
 
-`enabled=false` disables live MIDI input. The server still stores the supplied
-voice assignments so a client can disable and re-enable MIDI without rebuilding
-its routing state.
+`enabled=false` disables live MIDI input. The server still stores the supplied voice assignments so a client can disable and re-enable MIDI without rebuilding its routing state.
 
-`enabled=true` requires at least one `voiceEnabled` assignment. If an assigned
-device cannot be opened when playback starts, playback enters `error` and the
-server sends `ERROR` with code `playback_error`.
+`enabled=true` requires at least one `voiceEnabled` assignment. If an assigned device cannot be opened when playback starts, playback enters `error` and the server sends `ERROR` with code `playback_error`.
 
-Servers MAY treat `SET_MIDI_SETTINGS` as a MIDI input refresh even when the
-settings are unchanged. In that case active SRAP output may be restarted and the
-MIDI input device reopened to recover from stale native MIDI capture state.
+Servers MAY treat `SET_MIDI_SETTINGS` as a MIDI input refresh even when the settings are unchanged. In that case active SRAP output may be restarted and the MIDI input device reopened to recover from stale native MIDI capture state.
 
 ### MIDI_STATE Payload
 
@@ -521,9 +425,7 @@ repeated assignmentCount times:
   str deviceName        resolved display name, empty if unavailable/off
 ```
 
-The server emits `MIDI_STATE` after `HELLO_ACK` when requested and after
-`SET_MIDI_SETTINGS`. It may also be sent when playback starts to confirm the
-current effective routing.
+The server emits `MIDI_STATE` after `HELLO_ACK` when requested and after `SET_MIDI_SETTINGS`. It may also be sent when playback starts to confirm the current effective routing.
 
 ## 11. Playback State
 
@@ -566,9 +468,7 @@ Reasons:
 
 ## 12. Score Map
 
-The score map is sent once after a successful parse and before playback starts.
-It maps compiled timeline events to source ranges. The IDE uses this for editor
-highlighting.
+The score map is sent once after a successful parse and before playback starts. It maps compiled timeline events to source ranges. The IDE uses this for editor highlighting.
 
 A score map is static for one `scoreId`. Live highlight frames only reference
 event ids from this map.
@@ -619,15 +519,13 @@ bit 3 generated from repeated source range
 bit 4 source range is approximate
 ```
 
-For repeats, tuplets, and expanded structures, several timeline events MAY point
-to the same source range. Each still gets its own `eventId`.
+For repeats, tuplets, and expanded structures, several timeline events MAY point to the same source range. Each still gets its own `eventId`.
 
 For imported files, `sourceId` references that imported source URI/path.
 
 ## 13. Highlight State
 
-Highlight state is sent during playback at frame-event boundaries and MAY also
-be sent once per telemetry block for simplicity.
+Highlight state is sent during playback at frame-event boundaries and MAY also be sent once per telemetry block for simplicity.
 
 ### HIGHLIGHT_STATE Payload
 
@@ -641,16 +539,13 @@ i32 activeEventVoice3
 
 `-1` means no active highlight for that voice.
 
-The IDE highlights the source ranges for the active event ids in the current
-`SCORE_MAP`.
+The IDE highlights the source ranges for the active event ids in the current `SCORE_MAP`.
 
-The Java server is authoritative for highlight timing. The IDE MUST NOT attempt
-to re-expand repeats, tuplets, ties, gate-min behavior, or imports.
+The Java server is authoritative for highlight timing. The IDE MUST NOT attempt to re-expand repeats, tuplets, ties, gate-min behavior, or imports.
 
 ## 14. Voice State
 
-Voice state reports SIDScore/SID playback state for visualizers. It does not
-expose MIDI.
+Voice state reports SIDScore/SID playback state for visualizers. It does not expose MIDI.
 
 ### VOICE_STATE Payload
 
@@ -729,16 +624,11 @@ bit 8 pitch controlled by table
 bit 9 gate controlled by table
 ```
 
-`freqReg` is the effective SID frequency register after pitch table effects.
-`pulseWidth` is the current 12-bit SID pulse width value.
+`freqReg` is the effective SID frequency register after pitch table effects. `pulseWidth` is the current 12-bit SID pulse width value.
 
-`envelopeLevel` and `outputLevel` are normalized `0.0..1.0` values intended for
-visualization, not sample-accurate synthesis.
+`envelopeLevel` and `outputLevel` are normalized `0.0..1.0` values intended for visualization, not sample-accurate synthesis.
 
-The server emits a critical all-silent `VOICE_STATE` on stop, end-of-score, and
-before each new playback starts. The silent state clears active, gate, waveform,
-frequency, sync/ring, filter-route, envelope, and output state for all three SID
-voices so clients do not carry stale gate or waveform state into the next play.
+The server emits a critical all-silent `VOICE_STATE` on stop, end-of-score, and before each new playback starts. The silent state clears active, gate, waveform, frequency, sync/ring, filter-route, envelope, and output state for all three SID voices so clients do not carry stale gate or waveform state into the next play.
 
 ## 15. Scope Data
 
@@ -748,10 +638,7 @@ The server supports two scope data formats:
 - `SCOPE_SAMPLES`: ordered per-voice samples from SRAP for line scopes that need
   to match the Java realtime player more closely.
 
-Clients SHOULD request only one scope format unless they explicitly need both.
-`SCOPE_SAMPLES` preserves sample order and is the preferred format for external
-oscilloscope-style SRAP clients. `SCOPE_BUCKETS` is still useful for filled
-envelope displays or constrained transports.
+Clients SHOULD request only one scope format unless they explicitly need both. `SCOPE_SAMPLES` preserves sample order and is the preferred format for external oscilloscope-style SRAP clients. `SCOPE_BUCKETS` is still useful for filled envelope displays or constrained transports.
 
 ### SCOPE_BUCKETS Payload
 
@@ -772,8 +659,7 @@ repeat 3 voices:
 
 Samples are signed normalized PCM values scaled to `i16`.
 
-The server SHOULD choose bucket sizes based on the SRAP audio block size and the
-client capability. A typical first implementation can use 64 buckets per block.
+The server SHOULD choose bucket sizes based on the SRAP audio block size and the client capability. A typical first implementation can use 64 buckets per block.
 
 ### SCOPE_SAMPLES Payload
 
@@ -791,13 +677,9 @@ repeat 3 voices:
     i16 sample
 ```
 
-Samples are signed normalized PCM values scaled to `i16`, in playback order.
-Version 1 servers emit one `SCOPE_SAMPLES` frame per SRAP audio block when the
-client advertises the `SCOPE_SAMPLES` capability.
+Samples are signed normalized PCM values scaled to `i16`, in playback order. Version 1 servers emit one `SCOPE_SAMPLES` frame per SRAP audio block when the client advertises the `SCOPE_SAMPLES` capability.
 
-This frame is larger than `SCOPE_BUCKETS` but still modest on localhost. With
-512 samples per block, 3 voices, and `i16` samples, the payload is roughly 3 KiB
-per block before the frame header.
+This frame is larger than `SCOPE_BUCKETS` but still modest on localhost. With 512 samples per block, 3 voices, and `i16` samples, the payload is roughly 3 KiB per block before the frame header.
 
 ## 16. Error Frames
 
@@ -835,8 +717,7 @@ resolved score system:
 
 `blockIndex` increments for each emitted telemetry block.
 
-`timestampNanos` in the frame header is sender-local monotonic time and is only
-for latency estimation. It is not a wall-clock timestamp.
+`timestampNanos` in the frame header is sender-local monotonic time and is only for latency estimation. It is not a wall-clock timestamp.
 
 ## 18. Implementation Notes
 
@@ -854,19 +735,12 @@ Recommended Java components:
 - `SIDScorePlayerServer`: process mode, TCP server, command dispatch
 - `SrapProtocol`: frame constants, encoder, decoder
 - `PlaybackTelemetry`: immutable telemetry records
-- `ScoreMapExporter`: builds `SCORE_MAP` from parse tree, resolved score, and
-  frame event timing
-- SRAP listener extension: emits `VOICE_STATE`, `SCOPE_BUCKETS`, and
-  `HIGHLIGHT_STATE`
+- `ScoreMapExporter`: builds `SCORE_MAP` from parse tree, resolved score, and frame event timing
+- SRAP listener extension: emits `VOICE_STATE`, `SCOPE_BUCKETS`, and `HIGHLIGHT_STATE`
 
-`RealtimeAudioPlayer` already supports `stop()`, `pause()`, and `resume()`. The
-server should call these for `STOP`, `PAUSE`, and `CONTINUE`.
+`RealtimeAudioPlayer` already supports `stop()`, `pause()`, and `resume()`. The server should call these for `STOP`, `PAUSE`, and `CONTINUE`.
 
-The server should avoid letting network I/O block the audio thread. Telemetry
-frames should be written through a bounded queue. If the client falls behind,
-the server MAY drop `VOICE_STATE` and `SCOPE_BUCKETS` frames, but MUST preserve
-`PLAYBACK_STATE`, `SCORE_MAP`, `INSTRUMENT_STATE`, `HIGHLIGHT_STATE`, and
-`MIDI_DEVICE_LIST`, `MIDI_STATE`, and `ERROR` ordering.
+The server should avoid letting network I/O block the audio thread. Telemetry frames should be written through a bounded queue. If the client falls behind, the server MAY drop `VOICE_STATE` and `SCOPE_BUCKETS` frames, but MUST preserve `PLAYBACK_STATE`, `SCORE_MAP`, `INSTRUMENT_STATE`, `HIGHLIGHT_STATE`, and `MIDI_DEVICE_LIST`, `MIDI_STATE`, and `ERROR` ordering.
 
 ## 19. Commodore Commander Integration
 
@@ -903,8 +777,4 @@ Protocol version 1 is intentionally small. Future versions may add:
 - More detailed filter telemetry
 - Export of table step names/indices
 
-New optional fields should usually be added through new frame types or flags.
-When an existing frame is extended in protocol version 1, the extension MUST be
-trailing-only, have a documented default when absent, and be safely ignorable by
-older receivers. `PLAY.tuneNumber` and `PLAY_SOURCE.tuneNumber` are examples of
-this compatibility pattern.
+New optional fields should usually be added through new frame types or flags. When an existing frame is extended in protocol version 1, the extension MUST be trailing-only, have a documented default when absent, and be safely ignorable by older receivers. `PLAY.tuneNumber` and `PLAY_SOURCE.tuneNumber` are examples of this compatibility pattern.

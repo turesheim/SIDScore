@@ -25,16 +25,16 @@ import javax.sound.midi.Transmitter;
 import java.awt.EventQueue;
 import java.awt.GraphicsEnvironment;
 import java.awt.Toolkit;
-import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Queue;
+import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -46,12 +46,24 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	public static final double DEFAULT_PITCH_BEND_RANGE = 2.0;
 	private static final String AWT_EVENT_PUMP_PROPERTY = "sidscore.midi.awtEventPump";
 	private static final AtomicBoolean NATIVE_EVENT_PUMP_INITIALIZED = new AtomicBoolean(false);
+	private static final DeviceProvider SYSTEM_DEVICE_PROVIDER = new DeviceProvider() {
+		@Override
+		public MidiDevice.Info[] getMidiDeviceInfo() {
+			return MidiSystem.getMidiDeviceInfo();
+		}
+
+		@Override
+		public MidiDevice getMidiDevice(MidiDevice.Info info) throws MidiUnavailableException {
+			return MidiSystem.getMidiDevice(info);
+		}
+	};
+	private static volatile DeviceProvider deviceProvider = SYSTEM_DEVICE_PROVIDER;
 
 	private final MidiDevice device;
 	private final Transmitter transmitter;
 	private final EventListener eventListener;
-	private final Map<Integer, List<Integer>> voicesByChannel;
-	private final Map<Integer, Integer> voiceChannelMap;
+	private volatile Map<Integer, List<Integer>> voicesByChannel;
+	private volatile Map<Integer, Integer> voiceChannelMap;
 	private final VoiceSlot[] slots = new VoiceSlot[4];
 	private final double[] pitchBendByChannel = new double[17];
 	private long sequence = 0;
@@ -88,7 +100,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 
 		InputDevice selected = selectDevice(devices, selector)
 				.orElseThrow(() -> new MidiUnavailableException("No MIDI input device matches: " + selector));
-		MidiDevice device = MidiSystem.getMidiDevice(selected.info());
+		MidiDevice device = deviceProvider.getMidiDevice(selected.info());
 		device.open();
 		Transmitter transmitter = null;
 		try {
@@ -97,6 +109,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			transmitter.setReceiver(router.new RoutingReceiver());
 			router.emit("RECEIVER attached to " + router.deviceName() + " (" + selected.debugDescription()
 					+ ") map " + validatedMap);
+			router.emit("input open complete on thread '" + Thread.currentThread().getName() + "'");
 			return router;
 		} catch (MidiUnavailableException | RuntimeException e) {
 			if (transmitter != null) {
@@ -109,10 +122,10 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 
 	public static List<InputDevice> listInputDevices() {
 		List<InputDevice> devices = new ArrayList<>();
-		MidiDevice.Info[] infos = MidiSystem.getMidiDeviceInfo();
+		MidiDevice.Info[] infos = deviceProvider.getMidiDeviceInfo();
 		for (MidiDevice.Info info : infos) {
 			try {
-				MidiDevice device = MidiSystem.getMidiDevice(info);
+				MidiDevice device = deviceProvider.getMidiDevice(info);
 				if (isUsableInput(device)) {
 					devices.add(new InputDevice(devices.size(), info));
 				}
@@ -121,6 +134,20 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			}
 		}
 		return List.copyOf(devices);
+	}
+
+	/**
+	 * Installs a deterministic Java Sound device provider for tests.
+	 * <p>
+	 * Production code always uses {@link MidiSystem}; tests need this seam because
+	 * build machines usually have no physical MIDI input attached. The returned
+	 * closeable restores the previous provider, so each test can keep its mocked
+	 * instrument isolated from the next one.
+	 */
+	static AutoCloseable useDeviceProviderForTesting(DeviceProvider provider) {
+		DeviceProvider previous = deviceProvider;
+		deviceProvider = provider != null ? provider : SYSTEM_DEVICE_PROVIDER;
+		return () -> deviceProvider = previous;
 	}
 
 	public static Map<Integer, Integer> defaultVoiceChannelMap() {
@@ -161,6 +188,20 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		return Collections.unmodifiableMap(map);
 	}
 
+	public static void initializeNativeMidiEventPump(EventListener eventListener) {
+		ensureNativeMidiEventPump(eventListener);
+	}
+
+	public static String nativeMidiEventPumpState() {
+		return "os='" + System.getProperty("os.name", "") + "'"
+				+ ", awtPump='" + System.getProperty(AWT_EVENT_PUMP_PROPERTY, "") + "'"
+				+ ", awtPumpDisabled='" + System.getProperty(AWT_EVENT_PUMP_PROPERTY + ".disabled", "") + "'"
+				+ ", java.awt.headless='" + System.getProperty("java.awt.headless", "") + "'"
+				+ ", graphicsHeadless=" + GraphicsEnvironment.isHeadless()
+				+ ", apple.awt.UIElement='" + System.getProperty("apple.awt.UIElement", "") + "'"
+				+ ", initialized=" + NATIVE_EVENT_PUMP_INITIALIZED.get();
+	}
+
 	public Map<Integer, Integer> voiceChannelMap() {
 		return voiceChannelMap;
 	}
@@ -188,8 +229,39 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			if (closed) {
 				return;
 			}
+			if (!suspended) {
+				return;
+			}
 			clearState();
 			suspended = false;
+		}
+	}
+
+	/**
+	 * Updates the voice-to-channel routing without closing the Java Sound device.
+	 * <p>
+	 * macOS/CoreMIDI can report a reopened input device as active before callbacks
+	 * are actually delivered again. Server-side MIDI settings changes therefore
+	 * remap an already-open router when the selected device is unchanged. Existing
+	 * voice state is preserved for voices that keep the same channel so a held key
+	 * is still visible after the audio monitor restarts.
+	 */
+	public void remapVoiceChannels(Map<Integer, Integer> updatedVoiceChannelMap) {
+		Map<Integer, Integer> validatedMap = validateVoiceChannelMap(updatedVoiceChannelMap);
+		synchronized (this) {
+			if (closed) {
+				return;
+			}
+			Map<Integer, Integer> previousMap = voiceChannelMap;
+			for (int voiceIndex = 1; voiceIndex <= 3; voiceIndex++) {
+				Integer previousChannel = previousMap.get(voiceIndex);
+				Integer updatedChannel = validatedMap.get(voiceIndex);
+				if (previousChannel == null ? updatedChannel != null : !previousChannel.equals(updatedChannel)) {
+					slots[voiceIndex].clear();
+				}
+			}
+			voiceChannelMap = validatedMap;
+			voicesByChannel = groupVoicesByChannel(validatedMap);
 		}
 	}
 
@@ -199,7 +271,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	}
 
 	@Override
-	public synchronized RealtimeAudioPlayer.MidiSnapshot snapshot(int voiceIndex) {
+	public RealtimeAudioPlayer.MidiSnapshot snapshot(int voiceIndex) {
 		if (voiceIndex < 1 || voiceIndex > 3 || !controlsVoice(voiceIndex)) {
 			return RealtimeAudioPlayer.MidiSnapshot.off();
 		}
@@ -207,7 +279,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	}
 
 	@Override
-	public synchronized List<RealtimeAudioPlayer.MidiEvent> drainEvents(int voiceIndex) {
+	public List<RealtimeAudioPlayer.MidiEvent> drainEvents(int voiceIndex) {
 		if (voiceIndex < 1 || voiceIndex > 3 || !controlsVoice(voiceIndex)) {
 			return List.of();
 		}
@@ -453,7 +525,11 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		String configured = System.getProperty(AWT_EVENT_PUMP_PROPERTY, "");
 		boolean disabled = "false".equalsIgnoreCase(configured)
 				|| Boolean.getBoolean(AWT_EVENT_PUMP_PROPERTY + ".disabled");
-		if (disabled || !isMacOS()) {
+		if (disabled) {
+			emit(eventListener, "macOS MIDI event pump disabled; " + nativeMidiEventPumpState());
+			return;
+		}
+		if (!isMacOS()) {
 			return;
 		}
 		try {
@@ -461,20 +537,21 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 				System.setProperty("apple.awt.UIElement", "true");
 			}
 			if (GraphicsEnvironment.isHeadless()) {
-				emit(eventListener, "macOS MIDI event pump skipped; graphics environment is headless");
+				emit(eventListener, "macOS MIDI event pump skipped; " + nativeMidiEventPumpState());
 				return;
 			}
 			if (!NATIVE_EVENT_PUMP_INITIALIZED.compareAndSet(false, true)) {
+				emit(eventListener, "macOS MIDI event pump already initialized; " + nativeMidiEventPumpState());
 				return;
 			}
 			Toolkit.getDefaultToolkit();
 			EventQueue.invokeLater(() -> {
 				// Keep the AWT/AppKit event infrastructure alive for native MIDI callbacks.
 			});
-			emit(eventListener, "macOS MIDI event pump initialized");
+			emit(eventListener, "macOS MIDI event pump initialized; " + nativeMidiEventPumpState());
 		} catch (Throwable e) {
 			emit(eventListener, "macOS MIDI event pump unavailable: " + e.getClass().getSimpleName()
-					+ ": " + e.getMessage());
+					+ ": " + e.getMessage() + "; " + nativeMidiEventPumpState());
 		}
 	}
 
@@ -494,10 +571,10 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 					return;
 				}
 				int channel = shortMessage.getChannel() + 1;
-				routeShortMessage(shortMessage.getCommand(), channel, shortMessage.getData1(),
-						shortMessage.getData2());
 				emitReceivedMessage(shortMessage.getCommand(), channel, shortMessage.getData1(), shortMessage.getData2(),
 						message.getClass().getName());
+				routeShortMessage(shortMessage.getCommand(), channel, shortMessage.getData1(),
+						shortMessage.getData2());
 			} catch (RuntimeException e) {
 				emit("ERROR routing MIDI message: " + e.getClass().getSimpleName() + ": " + e.getMessage());
 			}
@@ -516,8 +593,8 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			int data1 = length > 1 ? data[1] & 0x7F : 0;
 			int data2 = length > 2 ? data[2] & 0x7F : 0;
 			if (command >= 0x80 && command <= 0xE0 && length >= 3) {
-				routeShortMessage(command, channel, data1, data2);
 				emitReceivedMessage(command, channel, data1, data2, message.getClass().getName());
+				routeShortMessage(command, channel, data1, data2);
 				return;
 			}
 			if (!isNoisySystemMessage(status)) {
@@ -578,16 +655,16 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	}
 
 	private static final class VoiceSlot {
-		int note = -1;
-		int velocity = 0;
-		boolean gate = false;
-		double pitchBendSemitones = 0.0;
-		long sequence = 0;
-		long noteOnId = 0;
-		long noteOffId = 0;
-		int lastNote = -1;
-		int lastVelocity = 0;
-		final Deque<RealtimeAudioPlayer.MidiEvent> events = new ArrayDeque<>();
+		volatile int note = -1;
+		volatile int velocity = 0;
+		volatile boolean gate = false;
+		volatile double pitchBendSemitones = 0.0;
+		volatile long sequence = 0;
+		volatile long noteOnId = 0;
+		volatile long noteOffId = 0;
+		volatile int lastNote = -1;
+		volatile int lastVelocity = 0;
+		final Queue<RealtimeAudioPlayer.MidiEvent> events = new ConcurrentLinkedDeque<>();
 
 		void start(int note, int velocity, double pitchBendSemitones, long sequence) {
 			this.note = Math.max(0, Math.min(127, note));
@@ -598,7 +675,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			this.lastNote = this.note;
 			this.lastVelocity = this.velocity;
 			this.gate = true;
-			events.addLast(new RealtimeAudioPlayer.MidiEvent(this.note, this.velocity, true, pitchBendSemitones,
+			events.offer(new RealtimeAudioPlayer.MidiEvent(this.note, this.velocity, true, pitchBendSemitones,
 					sequence));
 		}
 
@@ -614,7 +691,7 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 			if (velocity > 0) {
 				this.lastVelocity = velocity;
 			}
-			events.addLast(new RealtimeAudioPlayer.MidiEvent(this.lastNote, this.lastVelocity, false,
+			events.offer(new RealtimeAudioPlayer.MidiEvent(this.lastNote, this.lastVelocity, false,
 					pitchBendSemitones, sequence));
 			this.velocity = 0;
 			this.gate = false;
@@ -634,21 +711,32 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 		}
 
 		RealtimeAudioPlayer.MidiSnapshot snapshot() {
-			if (noteOnId == 0 || (note < 0 && lastNote < 0)) {
+			long onId = noteOnId;
+			long offId = noteOffId;
+			boolean snapshotGate = gate;
+			int currentNote = note;
+			int previousNote = lastNote;
+			int currentVelocity = velocity;
+			int previousVelocity = lastVelocity;
+			double bend = pitchBendSemitones;
+			if (onId == 0 || (currentNote < 0 && previousNote < 0)) {
 				return RealtimeAudioPlayer.MidiSnapshot.off();
 			}
-			int snapshotNote = gate ? note : lastNote;
-			int snapshotVelocity = gate ? velocity : lastVelocity;
-			return new RealtimeAudioPlayer.MidiSnapshot(snapshotNote, snapshotVelocity, gate, pitchBendSemitones,
-					noteOnId, noteOffId);
+			int snapshotNote = snapshotGate ? currentNote : previousNote;
+			int snapshotVelocity = snapshotGate ? currentVelocity : previousVelocity;
+			return new RealtimeAudioPlayer.MidiSnapshot(snapshotNote, Math.max(0, snapshotVelocity), snapshotGate, bend,
+					onId, offId);
 		}
 
 		List<RealtimeAudioPlayer.MidiEvent> drainEvents() {
 			if (events.isEmpty()) {
 				return List.of();
 			}
-			List<RealtimeAudioPlayer.MidiEvent> drained = new ArrayList<>(events);
-			events.clear();
+			List<RealtimeAudioPlayer.MidiEvent> drained = new ArrayList<>();
+			RealtimeAudioPlayer.MidiEvent event;
+			while ((event = events.poll()) != null) {
+				drained.add(event);
+			}
 			return drained;
 		}
 	}
@@ -720,5 +808,11 @@ public final class MidiInputRouter implements RealtimeAudioPlayer.MidiSource, Au
 	@FunctionalInterface
 	public interface EventListener {
 		void onMidiEvent(String message);
+	}
+
+	interface DeviceProvider {
+		MidiDevice.Info[] getMidiDeviceInfo();
+
+		MidiDevice getMidiDevice(MidiDevice.Info info) throws MidiUnavailableException;
 	}
 }

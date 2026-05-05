@@ -25,6 +25,11 @@ import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -51,6 +56,9 @@ import net.resheim.sidscore.sid.SidModel;
 
 public final class SIDScorePlayerServer {
 	private static final String MIDI_AWT_EVENT_PUMP_PROPERTY = "sidscore.midi.awtEventPump";
+	private static final boolean MIDI_MONITOR_START_ON_INPUT =
+			Boolean.parseBoolean(System.getProperty("sidscore.midi.monitor.startOnInput", "true"));
+	private static final long MIDI_SOURCE_WARMUP_MS = Long.getLong("sidscore.midi.warmupMs", 200L);
 	private static final int DEFAULT_SCOPE_BUCKETS = 64;
 	private static final int OUTBOUND_QUEUE_SIZE = 512;
 	private static final int STDOUT_LOG_QUEUE_SIZE = 1024;
@@ -154,9 +162,22 @@ public final class SIDScorePlayerServer {
 	}
 
 	private static void enableProtocolMidiEventPump() {
-		if (System.getProperty(MIDI_AWT_EVENT_PUMP_PROPERTY) == null) {
-			System.setProperty(MIDI_AWT_EVENT_PUMP_PROPERTY, "true");
+		if (System.getProperty(MIDI_AWT_EVENT_PUMP_PROPERTY + ".disabled") != null) {
+			logMidi("protocol MIDI event pump disabled by property; " + MidiInputRouter.nativeMidiEventPumpState());
+			return;
 		}
+		if (isMacOS()) {
+			System.setProperty(MIDI_AWT_EVENT_PUMP_PROPERTY, "true");
+			System.setProperty("apple.awt.UIElement", "true");
+			System.setProperty("java.awt.headless", "false");
+		}
+		logMidi("protocol MIDI event pump configuring; " + MidiInputRouter.nativeMidiEventPumpState());
+		MidiInputRouter.initializeNativeMidiEventPump(SIDScorePlayerServer::logMidiEventAsync);
+		logMidi("protocol MIDI event pump configured; " + MidiInputRouter.nativeMidiEventPumpState());
+	}
+
+	private static boolean isMacOS() {
+		return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("mac");
 	}
 
 	private void configureInitialMidiSettings(boolean enabled, String deviceSelector,
@@ -425,6 +446,11 @@ public final class SIDScorePlayerServer {
 		}
 		sendAllInstrumentStates(requestId, true);
 		sendSilentVoiceState(scoreId, true);
+		if (!prepareSharedMidiSourceIfEnabled(requestId, "score playback")) {
+			sendPlaybackState(requestId, SrapProtocol.STATE_ERROR, SrapProtocol.REASON_PLAYBACK_ERROR, scoreId, 0, 0,
+					true);
+			return;
+		}
 
 		RealtimeAudioPlayer player = new RealtimeAudioPlayer(loaded.sidModel());
 		player.setInstrumentProvider(this::effectivePlaybackInstrument);
@@ -668,20 +694,25 @@ public final class SIDScorePlayerServer {
 		if (currentMidiMonitor) {
 			boolean shouldRestart = !enabledMidiAssignments().isEmpty();
 			logMidi("restarting MIDI monitor after " + reason + "; shouldRestart=" + shouldRestart);
-			if (shouldRestart) {
-				queueMidiMonitorRestart(requestId);
-			}
 			stopRequestedByClient = true;
 			boolean stopped = stopCurrent(shouldRestart ? 0 : requestId, !shouldRestart);
 			stopRequestedByClient = false;
-			closeSharedMidiSource();
-			if (shouldRestart && stopped) {
-				startPendingMidiMonitorRestart();
+			if (!shouldRestart) {
+				parkSharedMidiSourceIfDisabled();
+			}
+			if (shouldRestart && stopped
+					&& prepareSharedMidiSourceIfEnabled(requestId, "MIDI monitor restart after " + reason)) {
+				startMidiMonitorIfNeeded(requestId);
+			} else if (shouldRestart && !stopped) {
+				queueMidiMonitorRestart(requestId);
 			}
 			return;
 		}
-		if (currentPlayerThread == null) {
-			closeSharedMidiSource();
+		if (enabledMidiAssignments().isEmpty()) {
+			parkSharedMidiSourceIfDisabled();
+		} else if (currentPlayerThread == null
+				&& !prepareSharedMidiSourceIfEnabled(requestId, "MIDI monitor start after " + reason)) {
+			return;
 		}
 		startMidiMonitorIfNeeded(requestId);
 	}
@@ -716,7 +747,6 @@ public final class SIDScorePlayerServer {
 		logMidi("restarting loaded score after " + reason);
 		stopRequestedByClient = true;
 		stopCurrent(0, false);
-		closeSharedMidiSource();
 
 		long scoreId = scoreIds.getAndIncrement();
 		currentScoreId = scoreId;
@@ -760,7 +790,7 @@ public final class SIDScorePlayerServer {
 					true);
 			enqueueError(requestId, SrapProtocol.ERR_PLAYBACK_ERROR, e.getMessage(), true);
 		} finally {
-			closeSharedMidiSourceIfDisabled();
+			parkSharedMidiSourceIfDisabled();
 			if (currentPlayer == player) {
 				currentPlayer = null;
 				currentPlayerThread = null;
@@ -826,6 +856,10 @@ public final class SIDScorePlayerServer {
 			} else {
 				playbackState = SrapProtocol.STATE_PLAYING;
 			}
+			if (!waitForMidiMonitorInput(scoreId, midiSource)) {
+				logMidi("MIDI monitor stopped before opening audio scoreId=" + scoreId);
+				return;
+			}
 			player.playWithTelemetry(timed, block -> handlePlaybackBlock(scoreId, block), midiSource);
 		} catch (MidiUnavailableException e) {
 			logMidi("MIDI input failed during monitor playback: " + e.getMessage());
@@ -845,7 +879,7 @@ public final class SIDScorePlayerServer {
 				playbackState = SrapProtocol.STATE_ERROR;
 			}
 		} finally {
-			closeSharedMidiSourceIfDisabled();
+			parkSharedMidiSourceIfDisabled();
 			logMidi("MIDI monitor stopped scoreId=" + scoreId);
 			boolean clearedCurrentMonitor = false;
 			if (currentPlayer == player) {
@@ -890,6 +924,27 @@ public final class SIDScorePlayerServer {
 				base != null ? base.system() : SIDScoreIR.VideoSystem.PAL,
 				base != null ? base.tables() : Map.of(),
 				Map.of(), voices, Map.of());
+	}
+
+	private boolean waitForMidiMonitorInput(long scoreId, ServerMidiSource midiSource) {
+		if (!MIDI_MONITOR_START_ON_INPUT) {
+			return true;
+		}
+		logMidi("MIDI monitor armed scoreId=" + scoreId + "; waiting for MIDI input before opening audio");
+		while (running && !stopRequestedByClient && currentScoreId == scoreId && currentMidiMonitor
+				&& !enabledMidiAssignments().isEmpty()) {
+			if (midiSource.hasActivity()) {
+				logMidi("MIDI monitor input detected scoreId=" + scoreId + "; opening audio");
+				return true;
+			}
+			try {
+				Thread.sleep(5);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+				return false;
+			}
+		}
+		return false;
 	}
 
 	private void handlePlaybackBlock(long scoreId, RealtimeAudioPlayer.PlaybackBlock block) {
@@ -1083,6 +1138,13 @@ public final class SIDScorePlayerServer {
 				logMidi("reusing MIDI input source: " + existing.description());
 				return existing;
 			}
+			if (existing != null && existing.isOpen() && existing.canRemapTo(assignments)) {
+				existing.remap(assignments);
+				sharedMidiSourceAssignments = assignments;
+				existing.resumeInput();
+				logMidi("remapped MIDI input source without reopening: " + existing.description());
+				return existing;
+			}
 			closeSharedMidiSourceLocked();
 			ServerMidiSource opened = ServerMidiSource.open(assignments);
 			sharedMidiSource = opened;
@@ -1091,11 +1153,57 @@ public final class SIDScorePlayerServer {
 		}
 	}
 
-	private void closeSharedMidiSourceIfDisabled() {
+	private boolean prepareSharedMidiSourceIfEnabled(long requestId, String reason) {
+		try {
+			ServerMidiSource source = openSharedMidiSourceIfEnabled();
+			if (source != null) {
+				logMidi("prepared MIDI source for " + reason + ": " + source.description());
+				source.warmUp(reason);
+				if (protocolReady) {
+					sendMidiState(requestId, true);
+				}
+			}
+			return true;
+		} catch (MidiUnavailableException | RuntimeException e) {
+			logMidi("MIDI input failed while preparing " + reason + ": " + e.getMessage());
+			closeSharedMidiSource();
+			if (protocolReady) {
+				enqueueError(requestId, SrapProtocol.ERR_PLAYBACK_ERROR, "MIDI input failed: " + e.getMessage(),
+						true);
+			}
+			return false;
+		}
+	}
+
+	private void parkSharedMidiSourceIfDisabled() {
 		if (!enabledMidiAssignments().isEmpty()) {
 			return;
 		}
-		closeSharedMidiSource();
+		List<MidiVoiceAssignment> retainedAssignments = assignedMidiRoutes();
+		if (retainedAssignments.isEmpty()) {
+			closeSharedMidiSource();
+			return;
+		}
+		synchronized (sharedMidiSourceLock) {
+			ServerMidiSource existing = sharedMidiSource;
+			if (existing == null) {
+				return;
+			}
+			if (!existing.isOpen()) {
+				closeSharedMidiSourceLocked();
+				return;
+			}
+			if (!existing.canRemapTo(retainedAssignments)) {
+				closeSharedMidiSourceLocked();
+				return;
+			}
+			if (!sameMidiAssignments(sharedMidiSourceAssignments, retainedAssignments)) {
+				existing.remap(retainedAssignments);
+				sharedMidiSourceAssignments = retainedAssignments;
+			}
+			existing.suspendInput();
+			logMidi("suspended MIDI input source while MIDI is disabled: " + existing.description());
+		}
 	}
 
 	private void closeSharedMidiSource() {
@@ -1156,6 +1264,18 @@ public final class SIDScorePlayerServer {
 		return List.copyOf(assignments);
 	}
 
+	private List<MidiVoiceAssignment> assignedMidiRoutes() {
+		List<MidiVoiceAssignment> assignments = new ArrayList<>();
+		synchronized (midiVoiceAssignments) {
+			for (MidiVoiceAssignment assignment : midiVoiceAssignments) {
+				if (assignment.enabled()) {
+					assignments.add(assignment);
+				}
+			}
+		}
+		return List.copyOf(assignments);
+	}
+
 	private MidiVoiceAssignment[] midiAssignmentsSnapshot() {
 		synchronized (midiVoiceAssignments) {
 			return midiVoiceAssignments.clone();
@@ -1199,13 +1319,9 @@ public final class SIDScorePlayerServer {
 				}
 				changed = true;
 			}
-			if (!midiEnabled) {
-				midiEnabled = true;
-				changed = true;
-			}
 			if (changed) {
 				System.arraycopy(updated, 0, midiVoiceAssignments, 0, midiVoiceAssignments.length);
-				logMidi("auto-connected single MIDI device: selector=" + selector + " name='"
+				logMidi("auto-selected single MIDI device: selector=" + selector + " name='"
 						+ devices.get(0).displayName() + "'; " + midiStateDescription());
 			} else {
 				logMidi("single MIDI device already connected: selector=" + selector + " name='"
@@ -1957,38 +2073,35 @@ public final class SIDScorePlayerServer {
 	}
 
 	private static final class ServerMidiSource implements RealtimeAudioPlayer.MidiSource, AutoCloseable {
-		private final List<MidiInputRouter> routers;
-		private final Map<Integer, MidiInputRouter> routersByVoice;
-		private final String description;
+		private final List<OwnedMidiRouter> routers;
+		private final Map<String, OwnedMidiRouter> routersBySelector;
+		private volatile Map<Integer, OwnedMidiRouter> routersByVoice;
+		private volatile String description;
 
-		private ServerMidiSource(List<MidiInputRouter> routers, Map<Integer, MidiInputRouter> routersByVoice,
-				String description) {
+		private ServerMidiSource(List<OwnedMidiRouter> routers, Map<Integer, OwnedMidiRouter> routersByVoice,
+				Map<String, OwnedMidiRouter> routersBySelector, String description) {
 			this.routers = List.copyOf(routers);
+			this.routersBySelector = Map.copyOf(routersBySelector);
 			this.routersByVoice = Map.copyOf(routersByVoice);
 			this.description = description;
 		}
 
 		static ServerMidiSource open(List<MidiVoiceAssignment> assignments) throws MidiUnavailableException {
-			Map<String, Map<Integer, Integer>> channelsByDevice = new LinkedHashMap<>();
-			for (MidiVoiceAssignment assignment : assignments) {
-				if (!assignment.enabled()) {
-					continue;
-				}
-				channelsByDevice.computeIfAbsent(assignment.deviceSelector(), ignored -> new LinkedHashMap<>())
-						.put(assignment.voiceIndex(), assignment.channel());
-			}
-			List<MidiInputRouter> routers = new ArrayList<>();
-			Map<Integer, MidiInputRouter> routersByVoice = new LinkedHashMap<>();
+			Map<String, Map<Integer, Integer>> channelsByDevice = channelsByDevice(assignments);
+			List<OwnedMidiRouter> routers = new ArrayList<>();
+			Map<Integer, OwnedMidiRouter> routersByVoice = new LinkedHashMap<>();
+			Map<String, OwnedMidiRouter> routersBySelector = new LinkedHashMap<>();
 			List<String> descriptions = new ArrayList<>();
 			try {
 				for (var entry : channelsByDevice.entrySet()) {
 					String selector = entry.getKey();
 					Map<Integer, Integer> voiceMap = entry.getValue();
 					logMidi("opening MIDI input selector='" + printableMidiSelector(selector) + "' voices="
-							+ voiceMap);
-					MidiInputRouter router = MidiInputRouter.open(selector, voiceMap,
+							+ voiceMap + " thread=" + Thread.currentThread().getName());
+					OwnedMidiRouter router = OwnedMidiRouter.open(selector, voiceMap,
 							SIDScorePlayerServer::logMidiEventAsync);
 					routers.add(router);
+					routersBySelector.put(selector, router);
 					descriptions.add("'" + router.deviceName() + "' voices=" + voiceMap);
 					logMidi("opened MIDI input '" + router.deviceName() + "' selector='"
 							+ printableMidiSelector(selector) + "' voices=" + voiceMap);
@@ -1998,57 +2111,277 @@ public final class SIDScorePlayerServer {
 				}
 			} catch (MidiUnavailableException | RuntimeException e) {
 				logMidi("failed to open MIDI input: " + e.getMessage());
-				for (MidiInputRouter router : routers) {
+				for (OwnedMidiRouter router : routers) {
 					router.close();
 				}
 				throw e;
 			}
 			return new ServerMidiSource(routers, routersByVoice,
+					routersBySelector,
 					descriptions.isEmpty() ? "none" : String.join("; ", descriptions));
 		}
 
-			String description() {
-				return description;
+		boolean canRemapTo(List<MidiVoiceAssignment> assignments) {
+			Map<String, Map<Integer, Integer>> channelsByDevice = channelsByDevice(assignments);
+			if (channelsByDevice.size() != routersBySelector.size()) {
+				return false;
 			}
-
-			boolean isOpen() {
-				for (MidiInputRouter router : routers) {
-					if (!router.isOpen()) {
-						return false;
-					}
-				}
-				return true;
-			}
-
-			void resumeInput() {
-				for (MidiInputRouter router : routers) {
-					router.resumeInput();
+			for (String selector : channelsByDevice.keySet()) {
+				if (routerForSelector(selector) == null) {
+					return false;
 				}
 			}
+			return true;
+		}
 
-			@Override
-			public boolean controlsVoice(int voiceIndex) {
-			MidiInputRouter router = routersByVoice.get(voiceIndex);
+		void remap(List<MidiVoiceAssignment> assignments) {
+			Map<String, Map<Integer, Integer>> channelsByDevice = channelsByDevice(assignments);
+			Map<Integer, OwnedMidiRouter> remappedRoutersByVoice = new LinkedHashMap<>();
+			List<String> descriptions = new ArrayList<>();
+			for (var entry : channelsByDevice.entrySet()) {
+				String selector = entry.getKey();
+				Map<Integer, Integer> voiceMap = entry.getValue();
+				OwnedMidiRouter router = routerForSelector(selector);
+				if (router == null) {
+					throw new IllegalStateException("Cannot remap unopened MIDI input selector: "
+							+ printableMidiSelector(selector));
+				}
+				router.remapVoiceChannels(voiceMap);
+				descriptions.add("'" + router.deviceName() + "' voices=" + voiceMap);
+				for (int voiceIndex : voiceMap.keySet()) {
+					remappedRoutersByVoice.put(voiceIndex, router);
+				}
+			}
+			routersByVoice = Map.copyOf(remappedRoutersByVoice);
+			description = descriptions.isEmpty() ? "none" : String.join("; ", descriptions);
+		}
+
+		private OwnedMidiRouter routerForSelector(String selector) {
+			for (var entry : routersBySelector.entrySet()) {
+				if (midiSelectorsEquivalent(entry.getKey(), selector)) {
+					return entry.getValue();
+				}
+			}
+			return null;
+		}
+
+		private static Map<String, Map<Integer, Integer>> channelsByDevice(List<MidiVoiceAssignment> assignments) {
+			Map<String, Map<Integer, Integer>> channelsByDevice = new LinkedHashMap<>();
+			for (MidiVoiceAssignment assignment : assignments) {
+				if (!assignment.enabled()) {
+					continue;
+				}
+				channelsByDevice.computeIfAbsent(assignment.deviceSelector(), ignored -> new LinkedHashMap<>())
+						.put(assignment.voiceIndex(), assignment.channel());
+			}
+			return channelsByDevice;
+		}
+
+		String description() {
+			return description;
+		}
+
+		boolean isOpen() {
+			for (OwnedMidiRouter router : routers) {
+				if (!router.isOpen()) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		void resumeInput() {
+			for (OwnedMidiRouter router : routers) {
+				router.resumeInput();
+			}
+		}
+
+		void suspendInput() {
+			for (OwnedMidiRouter router : routers) {
+				router.suspendInput();
+			}
+		}
+
+		void warmUp(String reason) {
+			if (MIDI_SOURCE_WARMUP_MS <= 0) {
+				return;
+			}
+			try {
+				logMidi("warming MIDI source for " + reason + " for " + MIDI_SOURCE_WARMUP_MS + " ms");
+				Thread.sleep(MIDI_SOURCE_WARMUP_MS);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			}
+		}
+
+		boolean hasActivity() {
+			for (int voiceIndex : routersByVoice.keySet()) {
+				RealtimeAudioPlayer.MidiSnapshot snapshot = snapshot(voiceIndex);
+				if (snapshot.noteOnId() > 0) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		@Override
+		public boolean controlsVoice(int voiceIndex) {
+			OwnedMidiRouter router = routersByVoice.get(voiceIndex);
 			return router != null && router.controlsVoice(voiceIndex);
 		}
 
 		@Override
 		public RealtimeAudioPlayer.MidiSnapshot snapshot(int voiceIndex) {
-			MidiInputRouter router = routersByVoice.get(voiceIndex);
+			OwnedMidiRouter router = routersByVoice.get(voiceIndex);
 			return router != null ? router.snapshot(voiceIndex) : RealtimeAudioPlayer.MidiSnapshot.off();
 		}
 
 		@Override
 		public List<RealtimeAudioPlayer.MidiEvent> drainEvents(int voiceIndex) {
-			MidiInputRouter router = routersByVoice.get(voiceIndex);
-			return router != null ? router.drainEvents(voiceIndex) : List.of();
+			OwnedMidiRouter router = routersByVoice.get(voiceIndex);
+			if (router == null) {
+				return List.of();
+			}
+			List<RealtimeAudioPlayer.MidiEvent> events = router.drainEvents(voiceIndex);
+			if (!events.isEmpty()) {
+				logMidiEventAsync("DRAIN voice " + voiceIndex + " events=" + events.size()
+						+ " last=" + describeMidiEvent(events.get(events.size() - 1)));
+			}
+			return events;
 		}
 
 		@Override
 		public void close() {
-			for (MidiInputRouter router : routers) {
+			for (OwnedMidiRouter router : routers) {
 				logMidi("closing MIDI input '" + router.deviceName() + "'");
 				router.close();
+			}
+		}
+
+		private static String describeMidiEvent(RealtimeAudioPlayer.MidiEvent event) {
+			return (event.gate() ? "on" : "off") + " note=" + event.note()
+					+ " velocity=" + event.velocity() + " id=" + event.id();
+		}
+	}
+
+	private static final class OwnedMidiRouter implements RealtimeAudioPlayer.MidiSource, AutoCloseable {
+		private static final long OPEN_TIMEOUT_MS = 5_000L;
+		private static final long CLOSE_JOIN_MS = 1_000L;
+
+		private final MidiInputRouter router;
+		private final CountDownLatch closeRequested;
+		private final Thread ownerThread;
+
+		private OwnedMidiRouter(MidiInputRouter router, CountDownLatch closeRequested, Thread ownerThread) {
+			this.router = router;
+			this.closeRequested = closeRequested;
+			this.ownerThread = ownerThread;
+		}
+
+		static OwnedMidiRouter open(String selector, Map<Integer, Integer> voiceMap,
+				MidiInputRouter.EventListener eventListener) throws MidiUnavailableException {
+			CompletableFuture<MidiInputRouter> opened = new CompletableFuture<>();
+			CountDownLatch closeRequested = new CountDownLatch(1);
+			String threadName = "sidscore-midi-input-"
+					+ printableMidiSelector(selector).replaceAll("[^A-Za-z0-9._-]+", "_");
+			Thread ownerThread = new Thread(() -> {
+				MidiInputRouter router = null;
+				try {
+					router = MidiInputRouter.open(selector, voiceMap, eventListener);
+					opened.complete(router);
+					closeRequested.await();
+				} catch (InterruptedException e) {
+					Thread.currentThread().interrupt();
+					if (router == null) {
+						opened.completeExceptionally(e);
+					}
+				} catch (Throwable e) {
+					if (router == null) {
+						opened.completeExceptionally(e);
+					} else {
+						logMidi("MIDI input owner thread failed for '" + router.deviceName() + "': "
+								+ e.getClass().getSimpleName() + ": " + e.getMessage());
+					}
+				} finally {
+					if (router != null) {
+						router.close();
+					}
+				}
+			}, threadName);
+			ownerThread.setDaemon(true);
+			ownerThread.start();
+
+			MidiInputRouter router;
+			try {
+				router = opened.get(OPEN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+			} catch (InterruptedException e) {
+				closeRequested.countDown();
+				Thread.currentThread().interrupt();
+				throw new MidiUnavailableException("Interrupted while opening MIDI input");
+			} catch (TimeoutException e) {
+				closeRequested.countDown();
+				throw new MidiUnavailableException("Timed out opening MIDI input");
+			} catch (ExecutionException e) {
+				closeRequested.countDown();
+				Throwable cause = e.getCause();
+				if (cause instanceof MidiUnavailableException midiUnavailable) {
+					throw midiUnavailable;
+				}
+				if (cause instanceof RuntimeException runtime) {
+					throw runtime;
+				}
+				throw new MidiUnavailableException(cause != null ? cause.getMessage() : e.getMessage());
+			}
+			logMidi("MIDI input owner thread active for '" + router.deviceName() + "': " + ownerThread.getName());
+			return new OwnedMidiRouter(router, closeRequested, ownerThread);
+		}
+
+		String deviceName() {
+			return router.deviceName();
+		}
+
+		boolean isOpen() {
+			return router.isOpen();
+		}
+
+		void resumeInput() {
+			router.resumeInput();
+		}
+
+		void suspendInput() {
+			router.suspendInput();
+		}
+
+		void remapVoiceChannels(Map<Integer, Integer> voiceMap) {
+			router.remapVoiceChannels(voiceMap);
+		}
+
+		@Override
+		public boolean controlsVoice(int voiceIndex) {
+			return router.controlsVoice(voiceIndex);
+		}
+
+		@Override
+		public RealtimeAudioPlayer.MidiSnapshot snapshot(int voiceIndex) {
+			return router.snapshot(voiceIndex);
+		}
+
+		@Override
+		public List<RealtimeAudioPlayer.MidiEvent> drainEvents(int voiceIndex) {
+			return router.drainEvents(voiceIndex);
+		}
+
+		@Override
+		public void close() {
+			closeRequested.countDown();
+			router.close();
+			if (Thread.currentThread() == ownerThread) {
+				return;
+			}
+			try {
+				ownerThread.join(CLOSE_JOIN_MS);
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
 			}
 		}
 	}
