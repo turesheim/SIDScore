@@ -35,6 +35,7 @@ public final class SrapProtocol {
 	public static final int RESET_INSTRUMENT = 0x16;
 	public static final int SCAN_MIDI_DEVICES = 0x17;
 	public static final int SET_MIDI_SETTINGS = 0x18;
+	public static final int EXPORT_SOURCE = 0x19;
 
 	public static final int PLAYBACK_STATE = 0x20;
 	public static final int SCORE_MAP = 0x21;
@@ -45,6 +46,7 @@ public final class SrapProtocol {
 	public static final int INSTRUMENT_STATE = 0x26;
 	public static final int MIDI_DEVICE_LIST = 0x27;
 	public static final int MIDI_STATE = 0x28;
+	public static final int EXPORT_RESULT = 0x29;
 
 	public static final int ERROR = 0x7f;
 
@@ -56,8 +58,9 @@ public final class SrapProtocol {
 	public static final int CAP_INSTRUMENT_STATE = 1 << 5;
 	public static final int CAP_MIDI_DEVICE_LIST = 1 << 6;
 	public static final int CAP_MIDI_STATE = 1 << 7;
+	public static final int CAP_EXPORT = 1 << 8;
 	public static final int CAP_ALL = CAP_SCORE_MAP | CAP_HIGHLIGHT_STATE | CAP_VOICE_STATE | CAP_SCOPE_BUCKETS
-			| CAP_SCOPE_SAMPLES | CAP_INSTRUMENT_STATE | CAP_MIDI_DEVICE_LIST | CAP_MIDI_STATE;
+			| CAP_SCOPE_SAMPLES | CAP_INSTRUMENT_STATE | CAP_MIDI_DEVICE_LIST | CAP_MIDI_STATE | CAP_EXPORT;
 
 	public static final int STATE_IDLE = 0;
 	public static final int STATE_LOADING = 1;
@@ -82,6 +85,7 @@ public final class SrapProtocol {
 	public static final int ERR_RESOLVE_ERROR = 6;
 	public static final int ERR_PLAYBACK_ERROR = 7;
 	public static final int ERR_INTERNAL_ERROR = 8;
+	public static final int ERR_EXPORT_ERROR = 9;
 
 	private SrapProtocol() {
 	}

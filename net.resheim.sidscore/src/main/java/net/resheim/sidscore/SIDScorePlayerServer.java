@@ -47,6 +47,9 @@ import org.antlr.v4.runtime.tree.ParseTreeWalker;
 import net.resheim.sidscore.ir.RealtimeAudioPlayer;
 import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.ir.ScoreBuildingListener;
+import net.resheim.sidscore.export.SIDScoreExporter;
+import net.resheim.sidscore.export.driver.SidDriverBackend;
+import net.resheim.sidscore.export.driver.SidDriverRegistry;
 import net.resheim.sidscore.midi.MidiInputRouter;
 import net.resheim.sidscore.parser.SIDScoreLexer;
 import net.resheim.sidscore.parser.SIDScoreParser;
@@ -62,6 +65,7 @@ public final class SIDScorePlayerServer {
 	private static final int DEFAULT_SCOPE_BUCKETS = 64;
 	private static final int OUTBOUND_QUEUE_SIZE = 512;
 	private static final int STDOUT_LOG_QUEUE_SIZE = 1024;
+	private static final String DEFAULT_DRIVER = "sidscore";
 	private static final int INSTRUMENT_SOURCE_DEFAULT = 0;
 	private static final int INSTRUMENT_SOURCE_SCORE = 1;
 	private static final int INSTRUMENT_SOURCE_OVERRIDE = 2;
@@ -313,6 +317,7 @@ public final class SIDScorePlayerServer {
 		case SrapProtocol.RESET_INSTRUMENT -> handleResetInstrument(frame.payload());
 		case SrapProtocol.SCAN_MIDI_DEVICES -> handleScanMidiDevices(frame.payload());
 		case SrapProtocol.SET_MIDI_SETTINGS -> handleSetMidiSettings(frame.payload());
+		case SrapProtocol.EXPORT_SOURCE -> handleExportSource(frame.payload());
 		default -> enqueueError(0, SrapProtocol.ERR_INVALID_FRAME, "Unsupported frame type: " + frame.type(), true);
 		}
 	}
@@ -366,6 +371,41 @@ public final class SIDScorePlayerServer {
 					: sourcePath.toUri().toString();
 		}
 		startPlayback(requestId, sourceUri, sourcePath, sourceText, sidModelRaw, tuneNumber);
+	}
+
+	private void handleExportSource(byte[] payload) {
+		SrapProtocol.PayloadReader in = SrapProtocol.reader(payload);
+		long requestId = in.u32();
+		String sourceUri = in.str();
+		String sourcePathRaw = in.str();
+		int sidModelRaw = in.u8();
+		ExportFormat format;
+		try {
+			format = ExportFormat.fromProtocolId(in.u8());
+		} catch (IllegalArgumentException e) {
+			enqueueError(requestId, SrapProtocol.ERR_INVALID_FRAME, e.getMessage(), true);
+			return;
+		}
+		in.u8();
+		in.u8();
+		String outputPathRaw = in.str();
+		int sourceLength = (int) in.u32();
+		String sourceText = new String(in.bytes(sourceLength), StandardCharsets.UTF_8);
+		int tuneNumber = readOptionalTuneNumber(in);
+		Path sourcePath = sourcePathFromHint(sourcePathRaw);
+		if (sourceUri == null || sourceUri.isBlank()) {
+			sourceUri = sourcePathRaw == null || sourcePathRaw.isBlank()
+					? "memory://sidscore/current.sidscore"
+					: sourcePath.toUri().toString();
+		}
+		Path outputPath;
+		try {
+			outputPath = requireExportOutputPath(outputPathRaw);
+		} catch (IllegalArgumentException e) {
+			enqueueError(requestId, SrapProtocol.ERR_INVALID_FRAME, e.getMessage(), true);
+			return;
+		}
+		exportSource(requestId, sourceUri, sourcePath, sourceText, sidModelRaw, tuneNumber, format, outputPath);
 	}
 
 	private static int readOptionalTuneNumber(SrapProtocol.PayloadReader in) {
@@ -433,6 +473,103 @@ public final class SIDScorePlayerServer {
 		}
 		currentLoadedScore = loaded;
 		startResolvedPlayback(requestId, scoreId, loaded);
+	}
+
+	private void exportSource(long requestId, String sourceUri, Path sourcePath, String sourceText, int sidModelRaw,
+			int tuneNumber, ExportFormat format, Path outputPath) {
+		ParsedScore parsed;
+		try {
+			parsed = parse(sourcePath, sourceText);
+		} catch (ScoreBuildingListener.ValidationException e) {
+			enqueueError(requestId, SrapProtocol.ERR_PARSE_ERROR, e.getMessage(), true);
+			return;
+		} catch (IllegalStateException e) {
+			enqueueError(requestId, SrapProtocol.ERR_RESOLVE_ERROR, e.getMessage(), true);
+			return;
+		} catch (Exception e) {
+			enqueueError(requestId, SrapProtocol.ERR_PARSE_ERROR, e.getMessage(), true);
+			return;
+		}
+
+		SidModel sidModel = switch (sidModelRaw) {
+		case 2 -> SidModel.MOS8580;
+		default -> SidModel.MOS6581;
+		};
+		LoadedScore loaded;
+		try {
+			loaded = selectTune(parsed, sourceUri, sourcePath, tuneNumber, sidModel);
+		} catch (IOException e) {
+			enqueueError(requestId, SrapProtocol.ERR_FILE_NOT_FOUND, e.getMessage(), true);
+			return;
+		} catch (IllegalArgumentException e) {
+			enqueueError(requestId, SrapProtocol.ERR_INVALID_FRAME, e.getMessage(), true);
+			return;
+		} catch (Exception e) {
+			enqueueError(requestId, SrapProtocol.ERR_RESOLVE_ERROR, e.getMessage(), true);
+			return;
+		}
+
+		try {
+			writeExport(loaded.timedScore(), loaded.sidModel(), format, outputPath);
+			enqueue(SrapProtocol.EXPORT_RESULT, encodeExportResult(requestId, format, outputPath), true);
+		} catch (Exception e) {
+			enqueueError(requestId, SrapProtocol.ERR_EXPORT_ERROR, e.getMessage(), true);
+		}
+	}
+
+	private static void writeExport(SIDScoreIR.TimedScore timed, SidModel sidModel, ExportFormat format,
+			Path outputPath) throws Exception {
+		Path parent = outputPath.getParent();
+		if (parent != null) {
+			Files.createDirectories(parent);
+		}
+		deleteIfExists(outputPath);
+
+		switch (format) {
+		case ASM -> defaultDriver().writeAsm(timed, outputPath, true);
+		case PRG -> writePrgExport(timed, outputPath);
+		case WAV -> new RealtimeAudioPlayer(sidModel).renderToWav(timed, outputPath);
+		}
+	}
+
+	private static void writePrgExport(SIDScoreIR.TimedScore timed, Path outputPath) throws Exception {
+		Path workDir = Files.createTempDirectory("sidscore-srap-export-");
+		try {
+			Path asmPath = workDir.resolve("export.asm");
+			defaultDriver().writeAsm(timed, asmPath, true);
+			new SIDScoreExporter().assemble(asmPath, outputPath);
+		} finally {
+			deleteRecursively(workDir);
+		}
+	}
+
+	private static SidDriverBackend defaultDriver() throws Exception {
+		return SidDriverRegistry.load()
+				.find(DEFAULT_DRIVER)
+				.orElseThrow(() -> new IllegalStateException("Driver backend not found: " + DEFAULT_DRIVER));
+	}
+
+	private static void deleteIfExists(Path path) throws IOException {
+		if (path == null || !Files.exists(path)) {
+			return;
+		}
+		if (Files.isDirectory(path)) {
+			throw new IOException("Output path is a directory: " + path);
+		}
+		Files.delete(path);
+	}
+
+	private static void deleteRecursively(Path path) throws IOException {
+		if (path == null || !Files.exists(path)) {
+			return;
+		}
+		try (var stream = Files.walk(path)) {
+			for (Path item : stream
+					.sorted((left, right) -> Integer.compare(right.getNameCount(), left.getNameCount()))
+					.toList()) {
+				Files.deleteIfExists(item);
+			}
+		}
 	}
 
 	private void startResolvedPlayback(long requestId, long scoreId, LoadedScore loaded) {
@@ -528,6 +665,13 @@ public final class SIDScorePlayerServer {
 			return Path.of("").toAbsolutePath().normalize();
 		}
 		return Path.of(sourcePathRaw).toAbsolutePath().normalize();
+	}
+
+	private static Path requireExportOutputPath(String outputPathRaw) {
+		if (outputPathRaw == null || outputPathRaw.isBlank()) {
+			throw new IllegalArgumentException("EXPORT_SOURCE requires an output path");
+		}
+		return Path.of(outputPathRaw).toAbsolutePath().normalize();
 	}
 
 	private void handlePause(byte[] payload) {
@@ -1498,6 +1642,23 @@ public final class SIDScorePlayerServer {
 						+ sourceUri + "' sidModel=" + sidModel + " sourceBytes=" + sourceLength
 						+ " tune=" + tuneNumber;
 			}
+			case SrapProtocol.EXPORT_SOURCE -> {
+				long requestId = in.u32();
+				String sourceUri = in.str();
+				String sourcePath = in.str();
+				int sidModel = in.u8();
+				int format = in.u8();
+				in.u8();
+				in.u8();
+				String outputPath = in.str();
+				long sourceLength = in.u32();
+				in.bytes((int) sourceLength);
+				int tuneNumber = readOptionalTuneNumber(in);
+				yield " request=" + requestId + " sourcePath='" + sourcePath + "' sourceUri='"
+						+ sourceUri + "' sidModel=" + sidModel + " format=" + format
+						+ " outputPath='" + outputPath + "' sourceBytes=" + sourceLength
+						+ " tune=" + tuneNumber;
+			}
 			case SrapProtocol.PAUSE, SrapProtocol.CONTINUE, SrapProtocol.STOP,
 					SrapProtocol.SCAN_MIDI_DEVICES -> " request=" + in.u32();
 			case SrapProtocol.SET_INSTRUMENT -> signalInstrumentSummary(in, true);
@@ -1581,6 +1742,7 @@ public final class SIDScorePlayerServer {
 		case SrapProtocol.RESET_INSTRUMENT -> "RESET_INSTRUMENT";
 		case SrapProtocol.SCAN_MIDI_DEVICES -> "SCAN_MIDI_DEVICES";
 		case SrapProtocol.SET_MIDI_SETTINGS -> "SET_MIDI_SETTINGS";
+		case SrapProtocol.EXPORT_SOURCE -> "EXPORT_SOURCE";
 		default -> "0x" + Integer.toHexString(type);
 		};
 	}
@@ -1989,6 +2151,18 @@ public final class SIDScorePlayerServer {
 		enqueue(SrapProtocol.HIGHLIGHT_STATE, payload, critical);
 	}
 
+	private byte[] encodeExportResult(long requestId, ExportFormat format, Path outputPath) throws IOException {
+		return SrapProtocol.payload()
+				.u32(requestId)
+				.u8(format.protocolId())
+				.u8(0)
+				.u8(0)
+				.u8(0)
+				.str(outputPath.toString())
+				.u64(Files.size(outputPath))
+				.toByteArray();
+	}
+
 	private void enqueueError(long requestId, int code, String message, boolean critical) {
 		byte[] payload = SrapProtocol.payload()
 				.u32(requestId)
@@ -2069,6 +2243,31 @@ public final class SIDScorePlayerServer {
 	private record MidiVoiceAssignment(int voiceIndex, boolean enabled, String deviceSelector, int channel) {
 		static MidiVoiceAssignment disabled(int voiceIndex) {
 			return new MidiVoiceAssignment(voiceIndex, false, "", 1);
+		}
+	}
+
+	private enum ExportFormat {
+		ASM(1),
+		PRG(2),
+		WAV(3);
+
+		private final int protocolId;
+
+		ExportFormat(int protocolId) {
+			this.protocolId = protocolId;
+		}
+
+		int protocolId() {
+			return protocolId;
+		}
+
+		static ExportFormat fromProtocolId(int protocolId) {
+			for (ExportFormat format : values()) {
+				if (format.protocolId == protocolId) {
+					return format;
+				}
+			}
+			throw new IllegalArgumentException("Unsupported export format: " + protocolId);
 		}
 	}
 
