@@ -31,6 +31,7 @@ public final class SIDScoreExporter {
 	public static final int PLAY_ADDR = 0x1400;
 	public static final int NOTE_FREQ_TABLE_BYTES = 128 * 2;
 
+	private static final String KICKASS_JAR_PROPERTY = "sidscore.kickass.jar";
 	private static final Path KICKASS_JAR = Path.of("lib/KickAss.jar");
 	private static final double SID_CLOCK_NTSC = 1022727.0;
 	private static final double SID_CLOCK_PAL = 985248.0;
@@ -619,7 +620,8 @@ public final class SIDScoreExporter {
 	public void assemble(Path asm, Path outPrg) throws IOException, InterruptedException {
 		Path kickAssJar = resolveKickAssJar();
 		if (kickAssJar == null) {
-			throw new IOException("KickAssembler jar not found. Tried: " + KICKASS_JAR + " and "
+			throw new IOException("KickAssembler jar not found. Set -D" + KICKASS_JAR_PROPERTY
+					+ "=<path> or place it at " + KICKASS_JAR + " or "
 					+ Path.of("net.resheim.sidscore/lib/KickAss.jar"));
 		}
 		List<String> cmd = List.of(
@@ -641,6 +643,13 @@ public final class SIDScoreExporter {
 	}
 
 	private Path resolveKickAssJar() {
+		String configured = System.getProperty(KICKASS_JAR_PROPERTY, "").trim();
+		if (!configured.isBlank()) {
+			Path path = Path.of(configured);
+			if (Files.isRegularFile(path)) {
+				return path;
+			}
+		}
 		if (Files.isRegularFile(KICKASS_JAR)) {
 			return KICKASS_JAR;
 		}

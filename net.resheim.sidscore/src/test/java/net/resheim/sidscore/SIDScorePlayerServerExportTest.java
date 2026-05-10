@@ -43,7 +43,7 @@ public class SIDScorePlayerServerExportTest {
 			""";
 
 	@Test
-	public void exportSourceWritesAsmPrgAndWavOverSrap() throws Exception {
+	public void exportSourceWritesAsmPrgSidAndWavOverSrap() throws Exception {
 		Path workDir = Files.createTempDirectory("sidscore-srap-export-test-");
 		try {
 			Path sourcePath = workDir.resolve("export-test.sidscore");
@@ -53,6 +53,10 @@ public class SIDScorePlayerServerExportTest {
 				server.hello();
 				assertExport(server, sourcePath, sourcePath.toUri().toString(), workDir.resolve("export-test.asm"), 1);
 				assertExport(server, sourcePath, sourcePath.toUri().toString(), workDir.resolve("export-test.prg"), 2);
+				Path sidPath = workDir.resolve("export-test.sid");
+				assertExport(server, sourcePath, sourcePath.toUri().toString(), sidPath, 4);
+				assertArrayEquals(new byte[] { 'P', 'S', 'I', 'D' },
+						java.util.Arrays.copyOf(Files.readAllBytes(sidPath), 4));
 				Path wavPath = workDir.resolve("export-test.wav");
 				assertExport(server, sourcePath, sourcePath.toUri().toString(), wavPath, 3);
 				assertArrayEquals(new byte[] { 'R', 'I', 'F', 'F' },

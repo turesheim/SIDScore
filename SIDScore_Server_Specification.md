@@ -270,7 +270,7 @@ u32 requestId
 str sourceUri
 str sourcePath
 u8  sidModel          0=default, 1=6581, 2=8580
-u8  exportFormat      1=ASM, 2=PRG, 3=WAV
+u8  exportFormat      1=ASM, 2=PRG, 3=WAV, 4=SID
 u8  reserved[2]
 str outputPath
 u32 sourceByteLength
@@ -286,8 +286,9 @@ the server process can write.
 
 ASM and PRG exports use the SIDScore reference driver in standalone PRG mode.
 PRG export may create temporary intermediate ASM internally, but the protocol
-result reports the requested PRG output path. WAV export renders offline and
-does not open realtime audio playback.
+result reports the requested PRG output path. SID export emits a PSID file using
+the SIDScore reference driver in PSID callback mode. WAV export renders offline
+and does not open realtime audio playback.
 
 `tuneNumber` has the same meaning and validation rules as for `PLAY_SOURCE`.
 Live MIDI settings and live instrument overrides do not change export
@@ -300,7 +301,7 @@ the matching `requestId`.
 
 ```text
 u32 requestId
-u8  exportFormat      1=ASM, 2=PRG, 3=WAV
+u8  exportFormat      1=ASM, 2=PRG, 3=WAV, 4=SID
 u8  reserved[3]
 str outputPath
 u64 outputByteLength

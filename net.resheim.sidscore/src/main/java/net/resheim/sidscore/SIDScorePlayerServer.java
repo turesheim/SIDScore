@@ -528,6 +528,7 @@ public final class SIDScorePlayerServer {
 		switch (format) {
 		case ASM -> defaultDriver().writeAsm(timed, outputPath, true);
 		case PRG -> writePrgExport(timed, outputPath);
+		case SID -> writeSidExport(timed, sidModel, outputPath);
 		case WAV -> new RealtimeAudioPlayer(sidModel).renderToWav(timed, outputPath);
 		}
 	}
@@ -538,6 +539,25 @@ public final class SIDScorePlayerServer {
 			Path asmPath = workDir.resolve("export.asm");
 			defaultDriver().writeAsm(timed, asmPath, true);
 			new SIDScoreExporter().assemble(asmPath, outputPath);
+		} finally {
+			deleteRecursively(workDir);
+		}
+	}
+
+	private static void writeSidExport(SIDScoreIR.TimedScore timed, SidModel sidModel, Path outputPath)
+			throws Exception {
+		SidDriverBackend driver = defaultDriver();
+		if (!driver.supportsSidExport()) {
+			throw new IllegalStateException("Driver backend does not support SID export: " + driver.id());
+		}
+		Path workDir = Files.createTempDirectory("sidscore-srap-export-");
+		try {
+			Path asmPath = workDir.resolve("export.asm");
+			Path prgPath = workDir.resolve("export.prg");
+			driver.writeAsm(timed, asmPath, false);
+			SIDScoreExporter exporter = new SIDScoreExporter();
+			exporter.assemble(asmPath, prgPath);
+			exporter.writeSid(prgPath, timed, outputPath, sidModel, driver.psidAddresses());
 		} finally {
 			deleteRecursively(workDir);
 		}
@@ -2249,7 +2269,8 @@ public final class SIDScorePlayerServer {
 	private enum ExportFormat {
 		ASM(1),
 		PRG(2),
-		WAV(3);
+		WAV(3),
+		SID(4);
 
 		private final int protocolId;
 
