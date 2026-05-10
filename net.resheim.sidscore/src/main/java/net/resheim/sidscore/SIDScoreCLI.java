@@ -322,6 +322,10 @@ import java.util.stream.Collectors;
           asmForPrg = asmOut != null ? asmOut : withExtension(prgOut, ".asm");
         }
       }
+      if (sidOut != null && prgOut != null && asmForSid != null && asmForPrg != null
+          && asmForSid.equals(asmForPrg)) {
+        asmForSid = withExtension(sidOut, ".sid.asm");
+      }
       if (asmOut != null && prgOut == null && sidOut == null) {
         asmForPrg = asmOut;
       }
@@ -360,6 +364,10 @@ import java.util.stream.Collectors;
           Path prgForSid = (prgForPrg != null && asmForSid != null && asmForSid.equals(asmForPrg))
               ? prgForPrg
               : withExtension(sidOut, ".prg");
+          if (prgForPrg != null && prgForSid.equals(prgForPrg)
+              && asmForSid != null && asmForPrg != null && !asmForSid.equals(asmForPrg)) {
+            prgForSid = withExtension(sidOut, ".sid.prg");
+          }
           if (asmForSid == null) {
             asmForSid = withExtension(sidOut, ".asm");
             deleteIfExists(asmForSid);
@@ -709,7 +717,8 @@ import java.util.stream.Collectors;
       long scoreBytes = stats.scoreBytes();
       long driverBytes = Math.max(0L, imageBytes - scoreBytes);
       System.out.println("Size Split: driver~" + driverBytes + " bytes, score~" + scoreBytes + " bytes");
-      System.out.println("Score Data: voice-events=" + stats.voiceEventBytes() + " bytes, tables="
+      System.out.println("Score Data: voice-events=" + stats.voiceEventBytes() + " bytes (raw "
+          + stats.rawVoiceEventBytes() + ", saved " + stats.voiceEventBytesSaved() + "), tables="
           + stats.tableBytes() + " bytes");
       System.out.println("Driver Data: note-freq-table=" + stats.noteFreqTableBytes() + " bytes");
     } else {
