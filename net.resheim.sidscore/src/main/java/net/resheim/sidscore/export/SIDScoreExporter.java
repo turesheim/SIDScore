@@ -40,6 +40,10 @@ public final class SIDScoreExporter {
 	private static final int BUNDLE_MIN_INIT_ADDR = 0x3000;
 	private static final int BUNDLE_INIT_GUARD_BYTES = 0x0100;
 	private static final int BUNDLE_MAX_RAM_END = 0xA000;
+	private static final int PRG_SELECTOR_MIN_ADDR = 0x2000;
+	private static final int PRG_SELECTOR_GUARD_BYTES = 0x0100;
+	private static final int PRG_SELECTOR_MAX_RAM_END = 0xFF00;
+	private static final int PRG_SELECTOR_MAX_TUNES = 35;
 	private static final int VOICE_SHORT_MAX_FRAMES = 0x3F;
 	private static final int VOICE_CMD_NOTE_ON = 0x40;
 	private static final int VOICE_CMD_NOTE_OFF = 0x80;
@@ -63,6 +67,12 @@ public final class SIDScoreExporter {
 		public int voiceEventBytesSaved() {
 			return Math.max(0, rawVoiceEventBytes - voiceEventBytes);
 		}
+	}
+
+	private static final record SelectorPayload(byte[] packedBytes, int unpackedBytes) {
+	}
+
+	private static final record SelectorMatch(int offset, int length) {
 	}
 
 	public void writeAsm(SIDScoreIR.TimedScore score, Path outAsm) throws IOException {
@@ -821,6 +831,15 @@ public final class SIDScoreExporter {
 			Path outSid,
 			SidModel model,
 			DriverAddresses addresses) throws IOException, InterruptedException {
+		writeSidBundle(tunePrgs, tunes, outSid, model, addresses, 1);
+	}
+
+	public void writeSidBundle(List<Path> tunePrgs,
+			List<SIDScoreIR.TimedScore> tunes,
+			Path outSid,
+			SidModel model,
+			DriverAddresses addresses,
+			int startSong) throws IOException, InterruptedException {
 		if (tunePrgs == null || tunePrgs.isEmpty()) {
 			throw new IOException("SID bundle requires at least one PRG input");
 		}
@@ -832,7 +851,7 @@ public final class SIDScoreExporter {
 					+ ") does not match score count (" + tunes.size() + ")");
 		}
 		if (tunePrgs.size() == 1) {
-			writeSid(tunePrgs.get(0), tunes.get(0), outSid, model, addresses);
+			writeSid(tunePrgs.get(0), tunes.get(0), outSid, model, addresses, 1, startSong);
 			return;
 		}
 		if (tunePrgs.size() > 255) {
@@ -885,11 +904,92 @@ public final class SIDScoreExporter {
 					effective.loadAddress(),
 					bundleInit,
 					effective.playAddress());
-			writeSid(tmpPrg, tunes.get(0), outSid, model, bundleAddresses, tunes.size(), 1);
+			writeSid(tmpPrg, tunes.get(0), outSid, model, bundleAddresses, tunes.size(), startSong);
 		} finally {
 			deleteIfExists(tmpAsm);
 			deleteIfExists(tmpPrg);
 		}
+	}
+
+	public void writePrgBundle(List<Path> tunePrgs,
+			List<SIDScoreIR.TimedScore> tunes,
+			Path outPrg,
+			DriverAddresses addresses) throws IOException, InterruptedException {
+		writePrgBundle(tunePrgs, tunes, null, outPrg, addresses);
+	}
+
+	public void writePrgBundle(List<Path> tunePrgs,
+			List<SIDScoreIR.TimedScore> tunes,
+			Path outAsm,
+			Path outPrg,
+			DriverAddresses addresses) throws IOException, InterruptedException {
+		if (outPrg == null) {
+			throw new IOException("PRG bundle requires an output PRG path");
+		}
+		Path asmPath = outAsm != null ? outAsm : Files.createTempFile("sidscore-prg-selector-", ".asm");
+		try {
+			writePrgBundleAsm(tunePrgs, tunes, asmPath, addresses);
+			assemble(asmPath, outPrg);
+			int bundleEnd = prgEndExclusive(outPrg);
+			if (bundleEnd > PRG_SELECTOR_MAX_RAM_END) {
+				throw new IOException("PRG selector image ends at $" + hex4(bundleEnd - 1)
+						+ " (>= $FF00). Reduce tune size/count.");
+			}
+		} finally {
+			if (outAsm == null) {
+				deleteIfExists(asmPath);
+			}
+		}
+	}
+
+	public void writePrgBundleAsm(List<Path> tunePrgs,
+			List<SIDScoreIR.TimedScore> tunes,
+			Path outAsm,
+			DriverAddresses addresses) throws IOException {
+		if (tunePrgs == null || tunePrgs.isEmpty()) {
+			throw new IOException("PRG selector requires at least one PRG input");
+		}
+		if (tunes == null || tunes.isEmpty()) {
+			throw new IOException("PRG selector requires score metadata");
+		}
+		if (tunePrgs.size() != tunes.size()) {
+			throw new IOException("PRG selector PRG count (" + tunePrgs.size()
+					+ ") does not match score count (" + tunes.size() + ")");
+		}
+		if (tunePrgs.size() > PRG_SELECTOR_MAX_TUNES) {
+			throw new IOException("PRG selector supports at most " + PRG_SELECTOR_MAX_TUNES + " tunes");
+		}
+
+		DriverAddresses effective = addresses != null ? addresses : new DriverAddresses(BASIC_LOAD_ADDR, LOAD_ADDR, PLAY_ADDR);
+		int copyAddress = effective.initAddress();
+		List<SelectorPayload> payloads = new ArrayList<>(tunePrgs.size());
+		int maxImageBytes = 0;
+		int totalPayloadBytes = 0;
+		for (Path prgPath : tunePrgs) {
+			byte[] rawPayload = selectorPayload(prgPath, effective);
+			SelectorPayload payload = new SelectorPayload(compressSelectorPayload(rawPayload), rawPayload.length);
+			payloads.add(payload);
+			maxImageBytes = Math.max(maxImageBytes, payload.unpackedBytes());
+			totalPayloadBytes += payload.packedBytes().length;
+		}
+
+		int copyEndExclusive = copyAddress + maxImageBytes;
+		if (copyEndExclusive > 0x10000) {
+			throw new IOException("PRG selector payload exceeds C64 address space");
+		}
+
+		int selectorAddress = alignPage(Math.max(PRG_SELECTOR_MIN_ADDR, copyEndExclusive + PRG_SELECTOR_GUARD_BYTES));
+		if (selectorAddress >= PRG_SELECTOR_MAX_RAM_END) {
+			throw new IOException("PRG selector address $" + hex4(selectorAddress)
+					+ " is outside safe RAM (<$FF00). Reduce tune size/count.");
+		}
+		int estimatedEnd = selectorAddress + 0x0800 + totalPayloadBytes;
+		if (estimatedEnd > PRG_SELECTOR_MAX_RAM_END) {
+			throw new IOException("PRG selector payloads are too large for safe RAM (<$FF00). Reduce tune size/count.");
+		}
+
+		String asm = buildPrgSelectorAsm(payloads, tunes, effective, selectorAddress, copyAddress);
+		Files.writeString(outAsm, asm, StandardCharsets.US_ASCII);
 	}
 
 	private void appendRawVoiceUpdate(StringBuilder sb, String label, int voiceIndex) {
@@ -2470,6 +2570,440 @@ public final class SIDScoreExporter {
 			case 3 -> 0xD40E;
 			default -> 0xD400;
 		};
+	}
+
+	private byte[] selectorPayload(Path prgPath, DriverAddresses addresses) throws IOException {
+		byte[] prgBytes = Files.readAllBytes(prgPath);
+		if (prgBytes.length < 2) {
+			throw new IOException("PRG too small: " + prgPath);
+		}
+		int load = (prgBytes[0] & 0xFF) | ((prgBytes[1] & 0xFF) << 8);
+		if (load != addresses.loadAddress()) {
+			throw new IOException("PRG load address $" + hex4(load) + " in " + prgPath
+					+ " does not match backend load address $" + hex4(addresses.loadAddress()));
+		}
+		int copyAddress = addresses.initAddress();
+		int offset = copyAddress - load;
+		if (offset < 0 || offset >= prgBytes.length - 2) {
+			throw new IOException("Cannot strip PRG image " + prgPath + " to init address $" + hex4(copyAddress));
+		}
+		return Arrays.copyOfRange(prgBytes, 2 + offset, prgBytes.length);
+	}
+
+	private byte[] compressSelectorPayload(byte[] raw) {
+		List<Integer> out = new ArrayList<>();
+		int pos = 0;
+		int controlIndex = -1;
+		int control = 0;
+		int bit = 0;
+		while (pos < raw.length) {
+			if (bit == 0) {
+				controlIndex = out.size();
+				out.add(0);
+				control = 0;
+			}
+
+			SelectorMatch match = findSelectorMatch(raw, pos);
+			if (match.length() >= 3) {
+				control |= (1 << bit);
+				out.add(match.offset() & 0xFF);
+				out.add(((match.offset() >> 8) << 4) | ((match.length() - 3) & 0x0F));
+				pos += match.length();
+			} else {
+				out.add(raw[pos] & 0xFF);
+				pos++;
+			}
+
+			bit++;
+			if (bit == 8) {
+				out.set(controlIndex, control & 0xFF);
+				bit = 0;
+			}
+		}
+		if (bit != 0 && controlIndex >= 0) {
+			out.set(controlIndex, control & 0xFF);
+		}
+		byte[] packed = new byte[out.size()];
+		for (int i = 0; i < out.size(); i++) {
+			packed[i] = (byte) (out.get(i) & 0xFF);
+		}
+		return packed;
+	}
+
+	private SelectorMatch findSelectorMatch(byte[] raw, int pos) {
+		if (pos + 3 > raw.length) {
+			return new SelectorMatch(0, 0);
+		}
+		int bestOffset = 0;
+		int bestLength = 0;
+		int start = Math.max(0, pos - 0x0FFF);
+		for (int candidate = pos - 1; candidate >= start; candidate--) {
+			if (raw[candidate] != raw[pos]) {
+				continue;
+			}
+			int length = 1;
+			while (length < 18
+					&& pos + length < raw.length
+					&& raw[candidate + length] == raw[pos + length]) {
+				length++;
+			}
+			if (length > bestLength && length >= 3) {
+				bestLength = length;
+				bestOffset = pos - candidate;
+				if (bestLength == 18) {
+					break;
+				}
+			}
+		}
+		return new SelectorMatch(bestOffset, bestLength);
+	}
+
+	private String buildPrgSelectorAsm(List<SelectorPayload> payloads,
+			List<SIDScoreIR.TimedScore> tunes,
+			DriverAddresses addresses,
+			int selectorAddress,
+			int copyAddress) throws IOException {
+		StringBuilder sb = new StringBuilder();
+		sb.append("// Generated by SIDScore\n");
+		sb.append("// PRG subtune selector bundle\n\n");
+		sb.append(".const SCREEN_RAM = $0400\n");
+		sb.append(".const COLOR_RAM = $d800\n");
+		sb.append(".const BORDER_COLOR = $d020\n");
+		sb.append(".const BACKGROUND_COLOR = $d021\n");
+		sb.append(".const SELECTOR_MATCH = $f9\n");
+		sb.append(".const SELECTOR_SRC = $fb\n");
+		sb.append(".const SELECTOR_DST = $fd\n\n");
+
+		sb.append("*=$0801 \"BASIC\"\n");
+		appendBasicSysStub(sb, selectorAddress);
+		sb.append("\n");
+
+		sb.append("*=$").append(hex4(selectorAddress)).append(" \"SIDSCORE_PRG_SELECTOR\"\n");
+		sb.append("sidscore_selector_start:\n");
+		sb.append("  cli\n");
+		sb.append("  jsr sidscore_selector_screen\n");
+		sb.append("sidscore_selector_wait:\n");
+		sb.append("  jsr $ffe4\n");
+		sb.append("  beq sidscore_selector_wait\n");
+		sb.append("  jsr sidscore_selector_key_to_index\n");
+		sb.append("  bcs sidscore_selector_wait\n");
+		sb.append("  sta sidscore_selector_selected\n");
+		sb.append("  jsr sidscore_selector_load\n");
+		sb.append("  jsr $").append(hex4(addresses.initAddress())).append("\n");
+		sb.append("sidscore_selector_running:\n");
+		sb.append("  jsr $ffe4\n");
+		sb.append("  beq sidscore_selector_running\n");
+		sb.append("  jsr sidscore_selector_key_to_index\n");
+		sb.append("  bcs sidscore_selector_running\n");
+		sb.append("  sta sidscore_selector_selected\n");
+		sb.append("  jsr sidscore_selector_load\n");
+		sb.append("  jsr $").append(hex4(addresses.initAddress())).append("\n");
+		sb.append("  jmp sidscore_selector_running\n\n");
+
+		sb.append("sidscore_selector_key_to_index:\n");
+		sb.append("  cmp #$31\n");
+		sb.append("  bcc sidscore_selector_key_letter\n");
+		sb.append("  cmp #$3a\n");
+		sb.append("  bcs sidscore_selector_key_letter\n");
+		sb.append("  sec\n");
+		sb.append("  sbc #$31\n");
+		sb.append("  cmp #$").append(hex2(payloads.size())).append("\n");
+		sb.append("  bcs sidscore_selector_key_invalid\n");
+		sb.append("  clc\n");
+		sb.append("  rts\n");
+		sb.append("sidscore_selector_key_letter:\n");
+		sb.append("  cmp #$41\n");
+		sb.append("  bcc sidscore_selector_key_invalid\n");
+		sb.append("  cmp #$5b\n");
+		sb.append("  bcs sidscore_selector_key_invalid\n");
+		sb.append("  sec\n");
+		sb.append("  sbc #$38\n");
+		sb.append("  cmp #$").append(hex2(payloads.size())).append("\n");
+		sb.append("  bcs sidscore_selector_key_invalid\n");
+		sb.append("  clc\n");
+		sb.append("  rts\n");
+		sb.append("sidscore_selector_key_invalid:\n");
+		sb.append("  sec\n");
+		sb.append("  rts\n\n");
+
+		sb.append("sidscore_selector_load:\n");
+		sb.append("  sei\n");
+		sb.append("  lda #$00\n");
+		sb.append("  sta $d01a\n");
+		sb.append("  lda #$01\n");
+		sb.append("  sta $d019\n");
+		sb.append("  lda #<$ea31\n");
+		sb.append("  sta $0314\n");
+		sb.append("  lda #>$ea31\n");
+		sb.append("  sta $0315\n");
+		sb.append("  lda $01\n");
+		sb.append("  sta sidscore_selector_memcfg\n");
+		sb.append("  lda #$30\n");
+		sb.append("  sta $01\n");
+		sb.append("  ldy sidscore_selector_selected\n");
+		sb.append("  lda sidscore_selector_src_lo,y\n");
+		sb.append("  sta SELECTOR_SRC\n");
+		sb.append("  lda sidscore_selector_src_hi,y\n");
+		sb.append("  sta SELECTOR_SRC+1\n");
+		sb.append("  lda #$").append(hex2(copyAddress & 0xFF)).append("\n");
+		sb.append("  sta SELECTOR_DST\n");
+		sb.append("  lda #$").append(hex2((copyAddress >> 8) & 0xFF)).append("\n");
+		sb.append("  sta SELECTOR_DST+1\n");
+		sb.append("  lda sidscore_selector_unpacked_len_lo,y\n");
+		sb.append("  sta sidscore_selector_remaining\n");
+		sb.append("  lda sidscore_selector_unpacked_len_hi,y\n");
+		sb.append("  sta sidscore_selector_remaining+1\n");
+		sb.append("  lda #$00\n");
+		sb.append("  sta sidscore_selector_bits\n");
+		sb.append("sidscore_selector_unpack_loop:\n");
+		sb.append("  lda sidscore_selector_remaining\n");
+		sb.append("  ora sidscore_selector_remaining+1\n");
+		sb.append("  bne sidscore_selector_unpack_continue\n");
+		sb.append("  jmp sidscore_selector_copy_done\n");
+		sb.append("sidscore_selector_unpack_continue:\n");
+		sb.append("  lda sidscore_selector_bits\n");
+		sb.append("  bne sidscore_selector_have_control\n");
+		sb.append("  jsr sidscore_selector_read_byte\n");
+		sb.append("  sta sidscore_selector_control\n");
+		sb.append("  lda #$08\n");
+		sb.append("  sta sidscore_selector_bits\n");
+		sb.append("sidscore_selector_have_control:\n");
+		sb.append("  lsr sidscore_selector_control\n");
+		sb.append("  dec sidscore_selector_bits\n");
+		sb.append("  bcs sidscore_selector_match\n");
+		sb.append("  jsr sidscore_selector_read_byte\n");
+		sb.append("  jsr sidscore_selector_store_byte\n");
+		sb.append("  jmp sidscore_selector_unpack_loop\n");
+		sb.append("sidscore_selector_match:\n");
+		sb.append("  jsr sidscore_selector_read_byte\n");
+		sb.append("  sta sidscore_selector_match_off\n");
+		sb.append("  jsr sidscore_selector_read_byte\n");
+		sb.append("  sta sidscore_selector_match_tmp\n");
+		sb.append("  and #$0f\n");
+		sb.append("  clc\n");
+		sb.append("  adc #$03\n");
+		sb.append("  sta sidscore_selector_match_len\n");
+		sb.append("  lda sidscore_selector_match_tmp\n");
+		sb.append("  lsr\n");
+		sb.append("  lsr\n");
+		sb.append("  lsr\n");
+		sb.append("  lsr\n");
+		sb.append("  sta sidscore_selector_match_off+1\n");
+		sb.append("  lda SELECTOR_DST\n");
+		sb.append("  sec\n");
+		sb.append("  sbc sidscore_selector_match_off\n");
+		sb.append("  sta SELECTOR_MATCH\n");
+		sb.append("  lda SELECTOR_DST+1\n");
+		sb.append("  sbc sidscore_selector_match_off+1\n");
+		sb.append("  sta SELECTOR_MATCH+1\n");
+		sb.append("sidscore_selector_match_loop:\n");
+		sb.append("  ldy #$00\n");
+		sb.append("  lda (SELECTOR_MATCH),y\n");
+		sb.append("  jsr sidscore_selector_store_byte\n");
+		sb.append("  inc SELECTOR_MATCH\n");
+		sb.append("  bne sidscore_selector_match_ptr_ok\n");
+		sb.append("  inc SELECTOR_MATCH+1\n");
+		sb.append("sidscore_selector_match_ptr_ok:\n");
+		sb.append("  dec sidscore_selector_match_len\n");
+		sb.append("  bne sidscore_selector_match_loop\n");
+		sb.append("  jmp sidscore_selector_unpack_loop\n");
+		sb.append("sidscore_selector_read_byte:\n");
+		sb.append("  ldy #$00\n");
+		sb.append("  lda (SELECTOR_SRC),y\n");
+		sb.append("  inc SELECTOR_SRC\n");
+		sb.append("  bne sidscore_selector_read_done\n");
+		sb.append("  inc SELECTOR_SRC+1\n");
+		sb.append("sidscore_selector_read_done:\n");
+		sb.append("  rts\n");
+		sb.append("sidscore_selector_store_byte:\n");
+		sb.append("  ldy #$00\n");
+		sb.append("  sta (SELECTOR_DST),y\n");
+		sb.append("  inc SELECTOR_DST\n");
+		sb.append("  bne sidscore_selector_store_dst_ok\n");
+		sb.append("  inc SELECTOR_DST+1\n");
+		sb.append("sidscore_selector_store_dst_ok:\n");
+		sb.append("  lda sidscore_selector_remaining\n");
+		sb.append("  bne sidscore_selector_remaining_dec_lo\n");
+		sb.append("  dec sidscore_selector_remaining+1\n");
+		sb.append("  lda #$ff\n");
+		sb.append("  sta sidscore_selector_remaining\n");
+		sb.append("  rts\n");
+		sb.append("sidscore_selector_remaining_dec_lo:\n");
+		sb.append("  dec sidscore_selector_remaining\n");
+		sb.append("  rts\n");
+		sb.append("sidscore_selector_copy_done:\n");
+		sb.append("  lda sidscore_selector_memcfg\n");
+		sb.append("  sta $01\n");
+		sb.append("  rts\n\n");
+
+		sb.append("sidscore_selector_screen:\n");
+		sb.append("  lda #$06\n");
+		sb.append("  sta BORDER_COLOR\n");
+		sb.append("  lda #$00\n");
+		sb.append("  sta BACKGROUND_COLOR\n");
+		sb.append("  ldx #$00\n");
+		sb.append("sidscore_selector_clear_loop:\n");
+		sb.append("  lda #$20\n");
+		for (int page = 0; page < 4; page++) {
+			sb.append("  sta $").append(hex4(0x0400 + page * 0x0100)).append(",x\n");
+		}
+		sb.append("  lda #$0e\n");
+		for (int page = 0; page < 4; page++) {
+			sb.append("  sta $").append(hex4(0xD800 + page * 0x0100)).append(",x\n");
+		}
+		sb.append("  inx\n");
+		sb.append("  bne sidscore_selector_clear_loop\n");
+		List<PrgScreenLine> lines = prgSelectorLines(tunes);
+		for (int i = 0; i < lines.size(); i++) {
+			sb.append("  jsr sidscore_selector_line_").append(i).append("\n");
+		}
+		sb.append("  rts\n\n");
+		for (int i = 0; i < lines.size(); i++) {
+			appendSelectorScreenLine(sb, i, lines.get(i));
+		}
+
+		sb.append("sidscore_selector_selected:\n");
+		sb.append("  .byte $00\n");
+		sb.append("sidscore_selector_memcfg:\n");
+		sb.append("  .byte $37\n");
+		sb.append("sidscore_selector_remaining:\n");
+		sb.append("  .word 0\n\n");
+		sb.append("sidscore_selector_control:\n");
+		sb.append("  .byte $00\n");
+		sb.append("sidscore_selector_bits:\n");
+		sb.append("  .byte $00\n");
+		sb.append("sidscore_selector_match_off:\n");
+		sb.append("  .word 0\n");
+		sb.append("sidscore_selector_match_tmp:\n");
+		sb.append("  .byte $00\n");
+		sb.append("sidscore_selector_match_len:\n");
+		sb.append("  .byte $00\n\n");
+		sb.append("sidscore_selector_src_lo:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < payloads.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			sb.append("<sidscore_selector_tune_").append(i + 1).append("_data");
+		}
+		sb.append("\n");
+		sb.append("sidscore_selector_src_hi:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < payloads.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			sb.append(">sidscore_selector_tune_").append(i + 1).append("_data");
+		}
+		sb.append("\n");
+		sb.append("sidscore_selector_unpacked_len_lo:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < payloads.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			int length = payloads.get(i).unpackedBytes();
+			if (length < 1 || length > 0xFFFF) {
+				throw new IOException("Tune payload length out of range: " + length + " bytes");
+			}
+			sb.append("$").append(hex2(length & 0xFF));
+		}
+		sb.append("\n");
+		sb.append("sidscore_selector_unpacked_len_hi:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < payloads.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			sb.append("$").append(hex2((payloads.get(i).unpackedBytes() >> 8) & 0xFF));
+		}
+		sb.append("\n\n");
+		for (int i = 0; i < payloads.size(); i++) {
+			sb.append("sidscore_selector_tune_").append(i + 1).append("_data:\n");
+			appendAsmByteData(sb, payloads.get(i).packedBytes());
+			sb.append("\n");
+		}
+		return sb.toString();
+	}
+
+	private void appendBasicSysStub(StringBuilder sb, int sysAddress) {
+		String sys = Integer.toString(sysAddress);
+		int nextLine = BASIC_LOAD_ADDR + 4 + 2 + sys.length() + 1;
+		List<Integer> bytes = new ArrayList<>();
+		bytes.add(nextLine & 0xFF);
+		bytes.add((nextLine >> 8) & 0xFF);
+		bytes.add(0x0A);
+		bytes.add(0x00);
+		bytes.add(0x9E);
+		bytes.add(0x20);
+		for (int i = 0; i < sys.length(); i++) {
+			bytes.add((int) sys.charAt(i));
+		}
+		bytes.add(0x00);
+		bytes.add(0x00);
+		bytes.add(0x00);
+		sb.append("  .byte ");
+		for (int i = 0; i < bytes.size(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			sb.append("$").append(hex2(bytes.get(i)));
+		}
+		sb.append("\n\n");
+	}
+
+	private List<PrgScreenLine> prgSelectorLines(List<SIDScoreIR.TimedScore> tunes) {
+		List<PrgScreenLine> lines = new ArrayList<>();
+		SIDScoreIR.TimedScore first = tunes.get(0);
+		lines.add(centeredPrgLine(1, 14, "SIDSCORE PRG PLAYER"));
+		lines.add(centeredPrgLine(2, 3, "SELECT SUBTUNE"));
+		lines.add(new PrgScreenLine(4, 1, 1, fitScreenText("TITLE: " + first.title().orElse("Untitled"), 38)));
+		lines.add(new PrgScreenLine(5, 1, 1, fitScreenText("AUTHOR: " + first.author().orElse("Unknown author"), 38)));
+		for (int i = 0; i < tunes.size(); i++) {
+			int column = i < 18 ? 1 : 21;
+			int row = 6 + (i % 18);
+			String title = tunes.get(i).title().orElse("Tune " + (i + 1));
+			String label = selectorTuneLabel(i);
+			lines.add(new PrgScreenLine(row, column, i == 0 ? 7 : 15,
+					fitScreenText(label + " " + title, 18)));
+		}
+		return lines;
+	}
+
+	private String selectorTuneLabel(int index) {
+		if (index < 9) {
+			return Character.toString((char) ('1' + index));
+		}
+		return Character.toString((char) ('A' + (index - 9)));
+	}
+
+	private void appendSelectorScreenLine(StringBuilder sb, int index, PrgScreenLine line) {
+		int screenAddress = 0x0400 + line.row() * 40 + line.column();
+		int colorAddress = 0xD800 + line.row() * 40 + line.column();
+		sb.append("sidscore_selector_line_" + index + ":\n");
+		sb.append("  ldx #$00\n");
+		sb.append("sidscore_selector_line_" + index + "_loop:\n");
+		sb.append("  lda sidscore_selector_line_" + index + "_text,x\n");
+		sb.append("  beq sidscore_selector_line_" + index + "_done\n");
+		sb.append("  sta $" + hex4(screenAddress) + ",x\n");
+		sb.append("  lda #$" + hex2(line.color()) + "\n");
+		sb.append("  sta $" + hex4(colorAddress) + ",x\n");
+		sb.append("  inx\n");
+		sb.append("  jmp sidscore_selector_line_" + index + "_loop\n");
+		sb.append("sidscore_selector_line_" + index + "_done:\n");
+		sb.append("  rts\n");
+		sb.append("sidscore_selector_line_" + index + "_text:\n");
+		sb.append("  .byte ");
+		for (int i = 0; i < line.text().length(); i++) {
+			if (i > 0) {
+				sb.append(", ");
+			}
+			sb.append("$").append(hex2(screenCode(line.text().charAt(i))));
+		}
+		if (!line.text().isEmpty()) {
+			sb.append(", ");
+		}
+		sb.append("$00\n\n");
 	}
 
 	private String buildSidBundleAsm(List<byte[]> payloads, DriverAddresses addresses, int bundleInitAddress)

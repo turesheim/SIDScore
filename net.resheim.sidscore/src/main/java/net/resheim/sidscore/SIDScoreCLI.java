@@ -51,7 +51,8 @@ import java.util.stream.Collectors;
 
   private static final String DEFAULT_DRIVER = "sidscore";
   private static final String USAGE = "Usage: java SIDScoreCLI <file.sidscore> [--stitch <more.sidscore>]... "
-      + "[--wav <out.wav>] [--asm <out.asm>] [--prg <out.prg>] [--sid <out.sid>] [--driver <id>] [--list-drivers] "
+      + "[--wav <out.wav>] [--asm <out.asm>] [--prg <out.prg>] [--sid <out.sid>] [--tune <n>] "
+      + "[--driver <id>] [--list-drivers] "
       + "[--sid-model <6581|8580>] [--sid-waveforms <path>] [--midi] [--midi-device <index|name>] "
       + "[--midi-map <voice:channel,...>] [--list-midi-devices] [--no-play]\n"
       + "       java SIDScoreCLI --midi-probe [--midi-device <index|name>|--all] [--seconds <n>] "
@@ -94,6 +95,7 @@ import java.util.stream.Collectors;
     Path sidWaveforms = null;
     SidModel sidModel = SidModel.MOS6581;
     String driverId = DEFAULT_DRIVER;
+    int selectedTune = 1;
     boolean noPlay = false;
     boolean midiEnabled = false;
     String midiDeviceSelector = null;
@@ -135,6 +137,24 @@ import java.util.stream.Collectors;
             System.exit(2);
           }
           sidOut = Path.of(args[++i]);
+        }
+        case "--tune", "--subtune" -> {
+          if (i + 1 >= args.length) {
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          try {
+            selectedTune = Integer.parseInt(args[++i]);
+          } catch (NumberFormatException e) {
+            System.err.println("--tune requires a positive integer");
+            System.err.println(USAGE);
+            System.exit(2);
+          }
+          if (selectedTune < 1) {
+            System.err.println("--tune requires a positive integer");
+            System.err.println(USAGE);
+            System.exit(2);
+          }
         }
         case "--sid-model" -> {
           if (i + 1 >= args.length) {
@@ -234,7 +254,22 @@ import java.util.stream.Collectors;
     ParsedScore parsed = parseResolved(sourcePath);
     printWarnings(parsed.resolved(), sourcePath.toString());
     SIDScoreIR.ScoreIR scoreIR = parsed.scoreIR();
-    SIDScoreIR.TimedScore timed = parsed.resolved().timedScore();
+    SIDScoreIR.TimedScore baseTimed = parsed.resolved().timedScore();
+    SIDScoreIR.TimedScore timed = baseTimed;
+    boolean hasDeclaredSubtunes = !scoreIR.subtunes().isEmpty() || !scoreIR.songs().isEmpty() || !stitchInputs.isEmpty();
+    boolean wholeScoreProgramExport = hasDeclaredSubtunes
+        && (prgOut != null || (asmOut != null && sidOut == null));
+    boolean sidBundleOnlySelection = selectedTune > 1 && sidOut != null && hasDeclaredSubtunes
+        && !wholeScoreProgramExport && asmOut == null && wavOut == null && noPlay;
+    if (selectedTune > 1 && !sidBundleOnlySelection && !wholeScoreProgramExport) {
+      try {
+        timed = resolveSelectedTune(sourcePath, scoreIR, selectedTune);
+      } catch (IllegalArgumentException | IllegalStateException e) {
+        System.err.println(e.getMessage());
+        System.exit(2);
+        return;
+      }
+    }
     SidDriverBackend driver = driverRegistry.find(driverId).orElse(null);
     if (driver == null) {
       System.err.println("Unknown driver backend: " + driverId);
@@ -244,7 +279,8 @@ import java.util.stream.Collectors;
     }
     List<String> sidBundleSources = new ArrayList<>();
     List<SIDScoreIR.TimedScore> sidBundleTunes = new ArrayList<>();
-    if (sidOut != null && (!scoreIR.subtunes().isEmpty() || !scoreIR.songs().isEmpty() || !stitchInputs.isEmpty())) {
+    if ((sidOut != null || wholeScoreProgramExport)
+        && (!scoreIR.subtunes().isEmpty() || !scoreIR.songs().isEmpty() || !stitchInputs.isEmpty())) {
       Map<Integer, SIDScoreIR.TimedScore> inlineSongs = new TreeMap<>();
       for (var entry : scoreIR.songs().entrySet()) {
         int number = entry.getKey();
@@ -281,7 +317,7 @@ import java.util.stream.Collectors;
 
       if (!inlineSongs.isEmpty() || !externalSubtunes.isEmpty()) {
         sidBundleSources.add(sourcePath.toString());
-        sidBundleTunes.add(timed);
+        sidBundleTunes.add(baseTimed);
         int maxSong = Math.max(
             inlineSongs.isEmpty() ? 1 : inlineSongs.keySet().stream().max(Integer::compareTo).orElse(1),
             externalSubtunes.isEmpty() ? 1 : externalSubtunes.keySet().stream().max(Integer::compareTo).orElse(1));
@@ -311,6 +347,8 @@ import java.util.stream.Collectors;
       Path asmForPrg = null;
       Path asmForSid = null;
       Path compiledProgram = null;
+      boolean prgBundleExport = prgOut != null && !sidBundleTunes.isEmpty();
+      boolean asmOnlyPrgBundleExport = asmOut != null && prgOut == null && sidOut == null && !sidBundleTunes.isEmpty();
 
       if (sidOut != null && sidBundleTunes.isEmpty()) {
         asmForSid = asmOut != null ? asmOut : withExtension(sidOut, ".asm");
@@ -330,7 +368,7 @@ import java.util.stream.Collectors;
         asmForPrg = asmOut;
       }
 
-      if (asmForPrg != null) {
+      if (asmForPrg != null && !prgBundleExport && !asmOnlyPrgBundleExport) {
         deleteIfExists(asmForPrg);
         driver.writeAsm(timed, asmForPrg, true);
         System.out.println("ASM: " + asmForPrg);
@@ -342,18 +380,32 @@ import java.util.stream.Collectors;
       }
 
       Path prgForPrg = null;
+      if (asmOnlyPrgBundleExport) {
+        writePrgSelectorBundle(driver, exporter, sidBundleTunes, sidBundleSources, asmForPrg, null);
+        System.out.println("ASM: " + asmForPrg);
+      }
       if (prgOut != null) {
         prgForPrg = prgOut;
-        if (asmForPrg == null) {
-          asmForPrg = withExtension(prgForPrg, ".asm");
-          deleteIfExists(asmForPrg);
-          driver.writeAsm(timed, asmForPrg, true);
+        if (prgBundleExport) {
+          if (asmForPrg == null) {
+            asmForPrg = withExtension(prgForPrg, ".asm");
+          }
+          writePrgSelectorBundle(driver, exporter, sidBundleTunes, sidBundleSources, asmForPrg, prgForPrg);
           System.out.println("ASM: " + asmForPrg);
+          System.out.println("PRG: " + prgForPrg + " tunes=" + sidBundleTunes.size());
+          compiledProgram = prgForPrg;
+        } else {
+          if (asmForPrg == null) {
+            asmForPrg = withExtension(prgForPrg, ".asm");
+            deleteIfExists(asmForPrg);
+            driver.writeAsm(timed, asmForPrg, true);
+            System.out.println("ASM: " + asmForPrg);
+          }
+          deleteIfExists(prgForPrg);
+          exporter.assemble(asmForPrg, prgForPrg);
+          System.out.println("PRG: " + prgForPrg);
+          compiledProgram = prgForPrg;
         }
-        deleteIfExists(prgForPrg);
-        exporter.assemble(asmForPrg, prgForPrg);
-        System.out.println("PRG: " + prgForPrg);
-        compiledProgram = prgForPrg;
       }
 
       if (sidOut != null) {
@@ -384,6 +436,11 @@ import java.util.stream.Collectors;
           exporter.writeSid(prgForSid, timed, sidOut, sidModel, driver.psidAddresses());
           System.out.println("SID: " + sidOut);
         } else {
+          if (selectedTune > sidBundleTunes.size()) {
+            System.err.println("TUNE " + selectedTune + " is not defined");
+            System.exit(2);
+            return;
+          }
           Path bundleDir = Files.createTempDirectory("sidscore-bundle-");
           List<Path> tunePrgs = new ArrayList<>();
           try {
@@ -397,7 +454,7 @@ import java.util.stream.Collectors;
               System.out.println("SID Tune " + (i + 1) + ": " + sidBundleSources.get(i));
             }
             deleteIfExists(sidOut);
-            exporter.writeSidBundle(tunePrgs, sidBundleTunes, sidOut, sidModel, driver.psidAddresses());
+            exporter.writeSidBundle(tunePrgs, sidBundleTunes, sidOut, sidModel, driver.psidAddresses(), selectedTune);
             System.out.println("SID (bundle): " + sidOut + " tunes=" + sidBundleTunes.size());
             if (Files.exists(sidOut)) {
               System.out.println("SID Size: " + Files.size(sidOut) + " bytes");
@@ -408,7 +465,11 @@ import java.util.stream.Collectors;
         }
       }
       if (compiledProgram != null && Files.exists(compiledProgram)) {
-        printProgramStats(driver, exporter, timed, compiledProgram, sidOut);
+        if (prgBundleExport) {
+          printProgramBundleStats(driver, compiledProgram, sidBundleTunes.size(), sidOut);
+        } else {
+          printProgramStats(driver, exporter, timed, compiledProgram, sidOut);
+        }
       }
       System.out.println();
     }
@@ -496,6 +557,31 @@ import java.util.stream.Collectors;
     return new ParsedScore(scoreIR, resolved);
   }
 
+  private static SIDScoreIR.TimedScore resolveSelectedTune(Path sourcePath,
+                                                           SIDScoreIR.ScoreIR scoreIR,
+                                                           int tuneNumber) throws Exception {
+    if (tuneNumber <= 1) {
+      throw new IllegalArgumentException("Selected subtune must be >= 2 when resolving alternate tune bodies");
+    }
+    SIDScoreIR.SongIR inlineSong = scoreIR.songs().get(tuneNumber);
+    if (inlineSong != null) {
+      SIDScoreIR.ScoreIR inlineScoreIR = buildInlineSongScore(scoreIR, inlineSong);
+      SIDScoreIR.Resolver.Result inlineResult = new SIDScoreIR.Resolver().resolve(inlineScoreIR);
+      printWarnings(inlineResult, sourcePath + " [TUNE " + tuneNumber + "]");
+      return inlineResult.timedScore();
+    }
+
+    Path externalTune = scoreIR.subtunes().get(tuneNumber);
+    if (externalTune != null) {
+      Path tunePath = externalTune.toAbsolutePath().normalize();
+      ParsedScore extra = parseResolved(tunePath);
+      printWarnings(extra.resolved(), tunePath.toString());
+      return extra.resolved().timedScore();
+    }
+
+    throw new IllegalStateException("TUNE " + tuneNumber + " is not defined");
+  }
+
   private static void printWarnings(SIDScoreIR.Resolver.Result result, String sourceLabel) {
     var warnings = result.diagnostics().messages().stream()
         .filter(m -> m.severity() == SIDScoreIR.Diagnostics.Severity.WARNING)
@@ -567,6 +653,40 @@ import java.util.stream.Collectors;
       for (Path p : paths) {
         Files.deleteIfExists(p);
       }
+    }
+  }
+
+  private static void writePrgSelectorBundle(SidDriverBackend driver,
+                                             SIDScoreExporter exporter,
+                                             List<SIDScoreIR.TimedScore> tunes,
+                                             List<String> sources,
+                                             Path outAsm,
+                                             Path outPrg) throws Exception {
+    if (outAsm == null && outPrg == null) {
+      throw new IllegalArgumentException("PRG selector export requires ASM or PRG output");
+    }
+    deleteIfExists(outAsm);
+    deleteIfExists(outPrg);
+    Path bundleDir = Files.createTempDirectory("sidscore-prg-selector-");
+    List<Path> tunePrgs = new ArrayList<>();
+    try {
+      for (int i = 0; i < tunes.size(); i++) {
+        SIDScoreIR.TimedScore tune = tunes.get(i);
+        Path tuneAsm = bundleDir.resolve("tune-" + (i + 1) + ".asm");
+        Path tunePrg = bundleDir.resolve("tune-" + (i + 1) + ".prg");
+        driver.writeAsm(tune, tuneAsm, true);
+        exporter.assemble(tuneAsm, tunePrg);
+        tunePrgs.add(tunePrg);
+        String source = i < sources.size() ? sources.get(i) : "TUNE " + (i + 1);
+        System.out.println("PRG Tune " + (i + 1) + ": " + source);
+      }
+      if (outPrg != null) {
+        exporter.writePrgBundle(tunePrgs, tunes, outAsm, outPrg, driver.psidAddresses());
+      } else {
+        exporter.writePrgBundleAsm(tunePrgs, tunes, outAsm, driver.psidAddresses());
+      }
+    } finally {
+      deleteRecursively(bundleDir);
     }
   }
 
@@ -725,6 +845,20 @@ import java.util.stream.Collectors;
       System.out.println("Size Split: unavailable for backend '" + driver.id() + "'");
     }
 
+    if (sidPath != null && Files.exists(sidPath)) {
+      System.out.println("SID Size: " + Files.size(sidPath) + " bytes");
+    }
+  }
+
+  private static void printProgramBundleStats(SidDriverBackend driver,
+                                              Path prgPath,
+                                              int tuneCount,
+                                              Path sidPath) throws Exception {
+    long imageBytes = prgImageBytes(prgPath);
+    int loadAddress = (int) ((read16le(prgPath) & 0xFFFF));
+    System.out.println("Compiled With Driver: " + driver.id());
+    System.out.println("Program Size: " + imageBytes + " bytes (load $" + hex4(loadAddress) + ")");
+    System.out.println("PRG Selector: tunes=" + tuneCount + ", bundled player images with C64-side tune selection");
     if (sidPath != null && Files.exists(sidPath)) {
       System.out.println("SID Size: " + Files.size(sidPath) + " bytes");
     }

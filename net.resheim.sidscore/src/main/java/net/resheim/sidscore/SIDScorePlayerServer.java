@@ -495,6 +495,15 @@ public final class SIDScorePlayerServer {
 		case 2 -> SidModel.MOS8580;
 		default -> SidModel.MOS6581;
 		};
+		if ((format == ExportFormat.ASM || format == ExportFormat.PRG) && hasDeclaredSubtunes(parsed.scoreIR())) {
+			try {
+				writeWholeScoreProgramExport(parsed, format, outputPath);
+				enqueue(SrapProtocol.EXPORT_RESULT, encodeExportResult(requestId, format, outputPath), true);
+			} catch (Exception e) {
+				enqueueError(requestId, SrapProtocol.ERR_EXPORT_ERROR, e.getMessage(), true);
+			}
+			return;
+		}
 		LoadedScore loaded;
 		try {
 			loaded = selectTune(parsed, sourceUri, sourcePath, tuneNumber, sidModel);
@@ -563,10 +572,94 @@ public final class SIDScorePlayerServer {
 		}
 	}
 
+	private void writeWholeScoreProgramExport(ParsedScore parsed, ExportFormat format, Path outputPath)
+			throws Exception {
+		Path parent = outputPath.getParent();
+		if (parent != null) {
+			Files.createDirectories(parent);
+		}
+		deleteIfExists(outputPath);
+		ProgramExportBundle bundle = buildProgramExportBundle(parsed);
+		SidDriverBackend driver = defaultDriver();
+		SIDScoreExporter exporter = new SIDScoreExporter();
+		Path workDir = Files.createTempDirectory("sidscore-srap-prg-selector-");
+		try {
+			List<Path> tunePrgs = new ArrayList<>();
+			for (int i = 0; i < bundle.tunes().size(); i++) {
+				Path asmPath = workDir.resolve("tune-" + (i + 1) + ".asm");
+				Path prgPath = workDir.resolve("tune-" + (i + 1) + ".prg");
+				driver.writeAsm(bundle.tunes().get(i), asmPath, true);
+				exporter.assemble(asmPath, prgPath);
+				tunePrgs.add(prgPath);
+			}
+			if (format == ExportFormat.ASM) {
+				exporter.writePrgBundleAsm(tunePrgs, bundle.tunes(), outputPath, driver.psidAddresses());
+			} else {
+				exporter.writePrgBundle(tunePrgs, bundle.tunes(), outputPath, driver.psidAddresses());
+			}
+		} finally {
+			deleteRecursively(workDir);
+		}
+	}
+
+	private ProgramExportBundle buildProgramExportBundle(ParsedScore parsed) throws Exception {
+		SIDScoreIR.ScoreIR score = parsed.scoreIR();
+		Map<Integer, SIDScoreIR.TimedScore> inlineSongs = new LinkedHashMap<>();
+		for (var entry : score.songs().entrySet()) {
+			int number = entry.getKey();
+			if (number <= 1) {
+				throw new IllegalStateException("TUNE number must be >= 2, got " + number);
+			}
+			SIDScoreIR.ScoreIR inlineScore = buildInlineSongScore(score, entry.getValue());
+			SIDScoreIR.Resolver.Result resolved = new SIDScoreIR.Resolver().resolve(inlineScore);
+			inlineSongs.put(number, resolved.timedScore());
+		}
+
+		Map<Integer, Path> externalSubtunes = new LinkedHashMap<>();
+		for (var entry : score.subtunes().entrySet()) {
+			int number = entry.getKey();
+			if (number <= 1) {
+				throw new IllegalStateException("IMPORT AS number must be >= 2, got " + number);
+			}
+			if (inlineSongs.containsKey(number)) {
+				throw new IllegalStateException("Duplicate subtune number " + number
+						+ " in both TUNE and IMPORT definitions");
+			}
+			externalSubtunes.put(number, entry.getValue().toAbsolutePath().normalize());
+		}
+
+		List<SIDScoreIR.TimedScore> tunes = new ArrayList<>();
+		tunes.add(parsed.timedScore());
+		int maxSong = Math.max(
+				inlineSongs.keySet().stream().max(Integer::compareTo).orElse(1),
+				externalSubtunes.keySet().stream().max(Integer::compareTo).orElse(1));
+		for (int song = 2; song <= maxSong; song++) {
+			SIDScoreIR.TimedScore inlineTimed = inlineSongs.get(song);
+			if (inlineTimed != null) {
+				tunes.add(inlineTimed);
+				continue;
+			}
+			Path tunePath = externalSubtunes.get(song);
+			if (tunePath == null) {
+				throw new IllegalStateException("Subtune numbers must be contiguous starting at 1 (missing tune " + song + ")");
+			}
+			if (!Files.isRegularFile(tunePath)) {
+				throw new IOException("Subtune file not found: " + tunePath);
+			}
+			ParsedScore subtune = parse(tunePath, Files.readString(tunePath));
+			tunes.add(subtune.timedScore());
+		}
+		return new ProgramExportBundle(tunes);
+	}
+
 	private static SidDriverBackend defaultDriver() throws Exception {
 		return SidDriverRegistry.load()
 				.find(DEFAULT_DRIVER)
 				.orElseThrow(() -> new IllegalStateException("Driver backend not found: " + DEFAULT_DRIVER));
+	}
+
+	private static boolean hasDeclaredSubtunes(SIDScoreIR.ScoreIR score) {
+		return !score.subtunes().isEmpty() || !score.songs().isEmpty();
 	}
 
 	private static void deleteIfExists(Path path) throws IOException {
@@ -2255,6 +2348,9 @@ public final class SIDScorePlayerServer {
 
 	private record LoadedScore(String sourceUri, Path sourcePath, SIDScoreParser.FileContext tree,
 			SIDScoreIR.TimedScore timedScore, SidModel sidModel) {
+	}
+
+	private record ProgramExportBundle(List<SIDScoreIR.TimedScore> tunes) {
 	}
 
 	private record InstrumentState(int source, SIDScoreIR.InstrumentIR instrument) {
