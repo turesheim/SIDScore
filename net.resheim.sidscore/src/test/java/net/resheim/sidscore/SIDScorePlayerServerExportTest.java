@@ -8,6 +8,7 @@
  */
 package net.resheim.sidscore;
 
+import net.resheim.sidscore.ir.SIDScoreIR;
 import net.resheim.sidscore.server.SrapProtocol;
 import org.junit.Test;
 
@@ -67,6 +68,32 @@ public class SIDScorePlayerServerExportTest {
 		}
 	}
 
+
+	@Test
+	public void setInstrumentRoundTripsOptionalVibratoOverSrap() throws Exception {
+		try (ServerHarness server = ServerHarness.start()) {
+			server.hello();
+			server.send(SrapProtocol.SET_INSTRUMENT, setInstrumentPayload(310, true));
+
+			InstrumentState state = InstrumentState.read(server.readFrame(SrapProtocol.INSTRUMENT_STATE, 310));
+			assertEquals(3, state.voiceIndex());
+			assertEquals(2, state.source());
+			assertEquals("vib", state.name());
+			assertEquals(12, state.vibratoDelay());
+			assertEquals(24, state.vibratoRate());
+			assertEquals(36, state.vibratoAmp());
+			assertEquals(48, state.vibratoInc());
+
+			server.send(SrapProtocol.SET_INSTRUMENT, setInstrumentPayload(311, false));
+			InstrumentState legacyState = InstrumentState.read(server.readFrame(SrapProtocol.INSTRUMENT_STATE, 311));
+			assertEquals("vib", legacyState.name());
+			assertEquals(0, legacyState.vibratoDelay());
+			assertEquals(0, legacyState.vibratoRate());
+			assertEquals(0, legacyState.vibratoAmp());
+			assertEquals(0, legacyState.vibratoInc());
+		}
+	}
+
 	private static void assertExport(ServerHarness server, Path sourcePath, String sourceUri, Path outputPath,
 			int format) throws Exception {
 		long requestId = 300 + format;
@@ -96,6 +123,77 @@ public class SIDScorePlayerServerExportTest {
 		assertTrue("Exported file should not be empty: " + outputPath, result.u64() > 0);
 		assertTrue(Files.isRegularFile(outputPath));
 		assertTrue("Exported file should have bytes on disk: " + outputPath, Files.size(outputPath) > 0);
+	}
+
+
+	private static byte[] setInstrumentPayload(long requestId, boolean includeVibrato) {
+		SrapProtocol.PayloadWriter out = SrapProtocol.payload()
+				.u32(requestId)
+				.u8(3)
+				.u8(SIDScoreIR.Wave.PULSE.mask)
+				.u8(1)
+				.u8(2)
+				.u8(3)
+				.u8(4)
+				.u16(0x0900)
+				.i16(-7)
+				.u16(0x0100)
+				.u16(0x0F00)
+				.u8(0)
+				.u16(0)
+				.u8(0)
+				.u8(0)
+				.u8(0)
+				.u8(0)
+				.u8(0)
+				.str("vib");
+		if (includeVibrato) {
+			out.u8(12)
+					.u8(24)
+					.u8(36)
+					.u8(48);
+		}
+		return out.toByteArray();
+	}
+
+	private record InstrumentState(int voiceIndex, int source, String name,
+			int vibratoDelay, int vibratoRate, int vibratoAmp, int vibratoInc) {
+		static InstrumentState read(SrapProtocol.Frame frame) {
+			SrapProtocol.PayloadReader in = SrapProtocol.reader(frame.payload());
+			in.u32();
+			int voiceIndex = in.u8();
+			int source = in.u8();
+			in.u16();
+			in.u8();
+			in.u8();
+			in.u8();
+			in.u8();
+			in.u8();
+			in.u16();
+			in.i16();
+			in.u16();
+			in.u16();
+			in.u8();
+			in.u16();
+			in.u8();
+			in.u8();
+			in.u8();
+			in.u8();
+			in.u8();
+			String name = in.str();
+			int vibratoDelay = 0;
+			int vibratoRate = 0;
+			int vibratoAmp = 0;
+			int vibratoInc = 0;
+			if (in.remaining() >= 4) {
+				vibratoDelay = in.u8();
+				vibratoRate = in.u8();
+				vibratoAmp = in.u8();
+				vibratoInc = in.u8();
+			}
+			return new InstrumentState(voiceIndex, source, name,
+					vibratoDelay, vibratoRate, vibratoAmp, vibratoInc);
+		}
 	}
 
 	private static void deleteRecursively(Path path) throws IOException {

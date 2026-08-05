@@ -126,6 +126,8 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 
 SIDScore can run as a local SRAP server for external tools. The server accepts score playback commands, source playback commands, instrument overrides, MIDI settings, device scans, and telemetry subscriptions. See [SIDScore_Server_Specification.md](SIDScore_Server_Specification.md) for frame formats and protocol details.
 
+The graphical SIDScore playback, MIDI routing, and live instrument editor UI now live in [Commodore Commander](https://github.com/turesheim/commodore-commander). SIDScore remains the parser, renderer, SRAP server, and export toolchain; use Commodore Commander when you want the integrated IDE controls for auditioning and editing live instrument overrides.
+
 ```sh
 java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
   net.resheim.sidscore.SIDScoreCLI --player-server --port 0

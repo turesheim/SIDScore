@@ -889,7 +889,8 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		}
 
 		var instr = new SIDScoreIR.InstrumentIR(name, waveMask, adsr, pw, pwMin, pwMax, pwSweep, waveSeq, pwSeq,
-				gateSeq, pitchSeq, filterModeMask, filterCutoff, filterRes, filterSeq, gateMode, gateMin, sync, ring);
+				gateSeq, pitchSeq, filterModeMask, filterCutoff, filterRes, filterSeq, gateMode, gateMin, sync, ring,
+				SIDScoreIR.VibratoIR.OFF);
 		if (instruments.putIfAbsent(name, instr) != null) {
 			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
 					"Duplicate INSTR name: " + name);

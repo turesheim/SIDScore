@@ -336,9 +336,15 @@ u8  gateMin           0..16
 bool8 sync
 bool8 ring
 str instrumentName
+u8  vibratoDelay      optional trailing v0.7 field, player frames
+u8  vibratoRate       optional trailing v0.7 field, 8-bit LFO phase step per player frame
+u8  vibratoAmp        optional trailing v0.7 field, pitch modulation depth
+u8  vibratoInc        optional trailing v0.7 field, depth ramp-in per player frame
 ```
 
 `SET_INSTRUMENT` stores a complete wired instrument for `voiceIndex`. The server responds with `INSTRUMENT_STATE` when the client advertises that capability.
+
+The vibrato fields are a trailing SIDScore 0.7 extension. If they are absent, the server treats vibrato as off. `vibratoDelay` waits the specified number of player frames before the LFO starts, `vibratoRate` advances an 8-bit phase accumulator once per player frame, `vibratoAmp` sets the target depth, and `vibratoInc` ramps depth toward that target. A zero `vibratoAmp` or `vibratoRate` disables vibrato; a zero `vibratoInc` jumps directly to full depth after the delay.
 
 Wave bits:
 
@@ -399,9 +405,13 @@ u8  gateMin
 bool8 sync
 bool8 ring
 str instrumentName
+u8  vibratoDelay      optional trailing v0.7 field, player frames
+u8  vibratoRate       optional trailing v0.7 field, 8-bit LFO phase step per player frame
+u8  vibratoAmp        optional trailing v0.7 field, pitch modulation depth
+u8  vibratoInc        optional trailing v0.7 field, depth ramp-in per player frame
 ```
 
-The server emits `INSTRUMENT_STATE` for all three voices after `HELLO_ACK` when requested, after successful `PLAY`/`PLAY_SOURCE`, and after `SET_INSTRUMENT`/`RESET_INSTRUMENT`.
+The server emits `INSTRUMENT_STATE` for all three voices after `HELLO_ACK` when requested, after successful `PLAY`/`PLAY_SOURCE`, and after `SET_INSTRUMENT`/`RESET_INSTRUMENT`. Clients that receive older payloads without the trailing vibrato fields should treat vibrato as off.
 
 ## 11. MIDI Commands
 
