@@ -29,6 +29,10 @@ DEFAULT_GRID_FRAMES = 8
 DEFAULT_SECONDS = 60
 DEFAULT_EFFECT_THRESHOLD_SECONDS = 4
 VOICE_COUNT = 3
+VIBRATO_MAX_SEMITONES = 2.0
+VIBRATO_MIN_ACTIVE_FRAMES = 24
+VIBRATO_MIN_AMP_SEMITONES = 0.05
+VIBRATO_SIGN_THRESHOLD_RATIO = 0.25
 
 WAVE_BITS = (
     (0x10, "TRI"),
@@ -81,6 +85,14 @@ class FilterState:
     route: int | None = None
     mode: str | None = None
     volume: int | None = None
+
+
+@dataclass(frozen=True)
+class VibratoSetting:
+    delay: int
+    rate: int
+    amp: int
+    inc: int = 0
 
 
 @dataclass
@@ -483,6 +495,48 @@ def note_to_sidscore(note: str | None) -> str | None:
     return f"O{octave} {name}"
 
 
+NOTE_OFFSETS = {
+    "C": 0,
+    "D": 2,
+    "E": 4,
+    "F": 5,
+    "G": 7,
+    "A": 9,
+    "B": 11,
+}
+
+
+def note_to_midi(note: str | None) -> int | None:
+    if not note:
+        return None
+    match = re.fullmatch(r"([A-G])([#-]?)(-?\d+)", note)
+    if not match:
+        return None
+    accidental = match.group(2)
+    semitone = NOTE_OFFSETS[match.group(1)]
+    if accidental == "#":
+        semitone += 1
+    elif accidental == "-":
+        semitone -= 1
+    return max(0, min(127, (int(match.group(3)) + 1) * 12 + semitone))
+
+
+def freq_reg_from_midi(midi: float, system: str) -> int:
+    clamped = max(0.0, min(127.0, midi))
+    hz = 440.0 * math.pow(2.0, (clamped - 69.0) / 12.0)
+    reg = int(round(hz * 16777216.0 / sid_clock(system)))
+    return max(1, min(0xFFFF, reg))
+
+
+def freq_reg_to_midi(freq: int | None, system: str) -> float | None:
+    if freq is None or freq <= 0:
+        return None
+    hz = freq * sid_clock(system) / 16777216.0
+    if hz <= 0:
+        return None
+    return 69.0 + 12.0 * math.log2(hz / 440.0)
+
+
 def notation_for_voice(rows: list[DumpRow], voice: int, length_frames: int) -> list[str]:
     events: list[str] = []
     last_note: str | None = None
@@ -500,6 +554,136 @@ def notation_for_voice(rows: list[DumpRow], voice: int, length_frames: int) -> l
     return events
 
 
+def active_pitch_offsets(rows: list[DumpRow], voice: int, length_frames: int,
+        system: str) -> list[list[float]]:
+    segments: list[list[float]] = []
+    current: list[float] = []
+    current_note: str | None = None
+    previous_frame: int | None = None
+
+    for row in state_rows(rows):
+        if row.frame >= length_frames:
+            break
+        state = row.voices[voice - 1]
+        base_midi = note_to_midi(state.note)
+        current_midi = freq_reg_to_midi(state.freq, system)
+        active = (
+            base_midi is not None
+            and current_midi is not None
+            and state.wave is not None
+            and has_gate(state.wave)
+            and not has_noise(state.wave)
+        )
+        contiguous = previous_frame is None or row.frame == previous_frame + 1
+        if active and state.note == current_note and contiguous:
+            current.append(current_midi - base_midi)
+        else:
+            if current:
+                segments.append(current)
+            current = [current_midi - base_midi] if active else []
+            current_note = state.note if active else None
+        previous_frame = row.frame
+
+    if current:
+        segments.append(current)
+    return segments
+
+
+def detect_voice_vibrato(rows: list[DumpRow], voice: int, length_frames: int,
+        system: str) -> VibratoSetting | None:
+    candidates: list[tuple[float, VibratoSetting]] = []
+    for offsets in active_pitch_offsets(rows, voice, length_frames, system):
+        candidate = vibrato_from_offsets(offsets)
+        if candidate is not None:
+            score, setting = candidate
+            candidates.append((score, setting))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: item[0])[1]
+
+
+def vibrato_from_offsets(offsets: list[float]) -> tuple[float, VibratoSetting] | None:
+    if len(offsets) < VIBRATO_MIN_ACTIVE_FRAMES:
+        return None
+    raw_amp = percentile([abs(offset) for offset in offsets], 90.0)
+    if raw_amp < VIBRATO_MIN_AMP_SEMITONES or raw_amp > VIBRATO_MAX_SEMITONES * 1.15:
+        return None
+
+    start_threshold = max(0.025, raw_amp * 0.18)
+    delay = 0
+    max_delay = min(255, max(0, len(offsets) - VIBRATO_MIN_ACTIVE_FRAMES))
+    while delay < max_delay and abs(offsets[delay]) < start_threshold:
+        delay += 1
+    if delay < 2:
+        delay = 0
+
+    active = offsets[delay:]
+    if len(active) < VIBRATO_MIN_ACTIVE_FRAMES:
+        return None
+    mean = sum(active) / len(active)
+    centered = [offset - mean for offset in active]
+    amp_semitones = percentile([abs(offset) for offset in centered], 90.0)
+    if amp_semitones < VIBRATO_MIN_AMP_SEMITONES or amp_semitones > VIBRATO_MAX_SEMITONES * 1.15:
+        return None
+    if abs(mean) > max(0.15, amp_semitones * 0.45):
+        return None
+
+    threshold = max(0.02, amp_semitones * VIBRATO_SIGN_THRESHOLD_RATIO)
+    crossings = positive_zero_crossings(centered, threshold)
+    if len(crossings) < 2:
+        return None
+    periods = [right - left for left, right in zip(crossings, crossings[1:]) if right > left]
+    if not periods:
+        return None
+    period = median(periods)
+    if period <= 0:
+        return None
+    spread = max(abs(value - period) for value in periods)
+    if len(periods) > 1 and spread > max(2.0, period * 0.35):
+        return None
+
+    rate = int(round(256.0 / period))
+    if rate < 1 or rate > 255:
+        return None
+    amp = int(round((amp_semitones / VIBRATO_MAX_SEMITONES) * 255.0))
+    if amp < 1:
+        return None
+    setting = VibratoSetting(delay=min(255, delay), rate=rate, amp=min(255, amp), inc=0)
+    confidence = amp_semitones * len(periods) / max(1.0, spread + 1.0)
+    return confidence, setting
+
+
+def positive_zero_crossings(values: list[float], threshold: float) -> list[int]:
+    crossings: list[int] = []
+    previous_sign = 0
+    for index, value in enumerate(values):
+        sign = 1 if value > threshold else -1 if value < -threshold else 0
+        if sign == 0:
+            continue
+        if previous_sign < 0 and sign > 0:
+            crossings.append(index)
+        previous_sign = sign
+    return crossings
+
+
+def percentile(values: list[float], pct: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = int(round((len(ordered) - 1) * pct / 100.0))
+    return ordered[max(0, min(len(ordered) - 1, index))]
+
+
+def median(values: list[int]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[midpoint])
+    return (ordered[midpoint - 1] + ordered[midpoint]) / 2.0
+
+
 def emit_event_lines(events: list[str], indent: str, per_line: int = 12) -> list[str]:
     return [indent + " ".join(events[index:index + per_line])
             for index in range(0, len(events), per_line)]
@@ -514,12 +698,15 @@ def hex_value(value: int, width: int = 4) -> str:
     return f"${value:0{width}X}"
 
 
-def instrument_line(tune: int, voice: int, instrument: VoiceState) -> str:
+def instrument_line(tune: int, voice: int, instrument: VoiceState,
+        vibrato: VibratoSetting | None = None) -> str:
     name = f"t{tune}_v{voice}"
     wave = wave_name(instrument.wave) or "TRI"
     parts = [f"INSTR {name}", f"WAVE={wave}", f"ADSR={adsr_text(instrument.adsr)}"]
     if "PULSE" in wave and instrument.pulse is not None:
         parts.append(f"PW={hex_value(instrument.pulse)}")
+    if vibrato is not None:
+        parts.append(f"VIBRATO={vibrato.delay},{vibrato.rate},{vibrato.amp},{vibrato.inc}")
     parts.extend(["GATE=LEGATO", "GATEMIN=1"])
     return " ".join(parts)
 
@@ -715,6 +902,7 @@ def convert_sid(args: argparse.Namespace) -> None:
     full_rows: dict[int, list[DumpRow]] = {}
     instruments: dict[tuple[int, int], VoiceState] = {}
     dynamic_voices: dict[tuple[int, int], bool] = {}
+    vibratos: dict[tuple[int, int], VibratoSetting | None] = {}
 
     for tune in range(1, header.songs + 1):
         seconds = lengths[tune - 1]
@@ -728,6 +916,7 @@ def convert_sid(args: argparse.Namespace) -> None:
             instruments[(tune, voice)] = choose_instrument(full_rows[tune], voice)
             dynamic_voices[(tune, voice)] = voice_has_dynamic_registers(
                 full_rows[tune], voice, frames, args.grid_frames)
+            vibratos[(tune, voice)] = detect_voice_vibrato(full_rows[tune], voice, frames, system)
 
     base_id = sid_id(header.title or sid_path.stem)
 
@@ -770,7 +959,8 @@ def convert_sid(args: argparse.Namespace) -> None:
     for tune in range(1, header.songs + 1):
         for voice in range(1, VOICE_COUNT + 1):
             if not voice_is_effect(tune, voice):
-                lines.append(instrument_line(tune, voice, instruments[(tune, voice)]))
+                lines.append(instrument_line(
+                    tune, voice, instruments[(tune, voice)], vibratos[(tune, voice)]))
     lines.append("")
 
     def emit_tune_body(tune: int, indent: str) -> list[str]:

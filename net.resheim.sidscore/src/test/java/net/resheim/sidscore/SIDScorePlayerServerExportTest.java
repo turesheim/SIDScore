@@ -43,6 +43,18 @@ public class SIDScorePlayerServerExportTest {
 			  O4 L8 C D
 			""";
 
+	private static final String SOURCE_WITH_VIBRATO = """
+			TITLE "Vibrato Export Test"
+			AUTHOR "SIDScore"
+			TEMPO 120
+			SYSTEM PAL
+
+			INSTR lead WAVE=PULSE ADSR=0,4,10,4 PW=$0800 VIBRATO=4,16,64,0
+
+			VOICE 1 lead:
+			  O4 L8 C D
+			""";
+
 	@Test
 	public void exportSourceWritesAsmPrgSidAndWavOverSrap() throws Exception {
 		Path workDir = Files.createTempDirectory("sidscore-srap-export-test-");
@@ -94,10 +106,63 @@ public class SIDScorePlayerServerExportTest {
 		}
 	}
 
+	@Test
+	public void exportSourceWritesGeneratedVibseqForInstrumentOverride() throws Exception {
+		Path workDir = Files.createTempDirectory("sidscore-srap-vibseq-export-test-");
+		try {
+			Path sourcePath = workDir.resolve("vibseq-export-test.sidscore");
+			Files.writeString(sourcePath, SOURCE);
+
+			try (ServerHarness server = ServerHarness.start()) {
+				server.hello();
+				server.send(SrapProtocol.SET_INSTRUMENT, setInstrumentPayload(312, 1, true));
+				InstrumentState.read(server.readFrame(SrapProtocol.INSTRUMENT_STATE, 312));
+
+				Path asmPath = workDir.resolve("vibseq-export-test.asm");
+				assertExport(server, sourcePath, sourcePath.toUri().toString(), asmPath, 1);
+				String asm = Files.readString(asmPath);
+				assertTrue(asm.contains("jsr v1_vibseq_update"));
+				assertTrue(asm.contains("v1_vibseq_reset:"));
+				assertTrue(asm.contains("adc v1_vib_off"));
+				assertTrue(asm.contains("// VIBSEQ generated fine pitch tables (signed SID frequency deltas)"));
+				assertTrue(asm.contains("vib_table_0_loop:"));
+			}
+		} finally {
+			deleteRecursively(workDir);
+		}
+	}
+
+	@Test
+	public void exportSourceWritesGeneratedVibseqForSourceVibrato() throws Exception {
+		Path workDir = Files.createTempDirectory("sidscore-source-vibseq-export-test-");
+		try {
+			Path sourcePath = workDir.resolve("source-vibseq-export-test.sidscore");
+			Files.writeString(sourcePath, SOURCE_WITH_VIBRATO);
+
+			try (ServerHarness server = ServerHarness.start()) {
+				server.hello();
+
+				Path asmPath = workDir.resolve("source-vibseq-export-test.asm");
+				assertExport(server, sourcePath, sourcePath.toUri().toString(), asmPath, 1, SOURCE_WITH_VIBRATO);
+				String asm = Files.readString(asmPath);
+				assertTrue(asm.contains("jsr v1_vibseq_update"));
+				assertTrue(asm.contains("// vib_table_0: ref MIDI 60 delay 4 rate 16 amp 64 inc 0"));
+				assertTrue(asm.contains("vib_table_0_loop:"));
+			}
+		} finally {
+			deleteRecursively(workDir);
+		}
+	}
+
 	private static void assertExport(ServerHarness server, Path sourcePath, String sourceUri, Path outputPath,
 			int format) throws Exception {
+		assertExport(server, sourcePath, sourceUri, outputPath, format, SOURCE);
+	}
+
+	private static void assertExport(ServerHarness server, Path sourcePath, String sourceUri, Path outputPath,
+			int format, String sourceText) throws Exception {
 		long requestId = 300 + format;
-		byte[] sourceBytes = SOURCE.getBytes(StandardCharsets.UTF_8);
+		byte[] sourceBytes = sourceText.getBytes(StandardCharsets.UTF_8);
 		server.send(SrapProtocol.EXPORT_SOURCE, SrapProtocol.payload()
 				.u32(requestId)
 				.str(sourceUri)
@@ -127,9 +192,13 @@ public class SIDScorePlayerServerExportTest {
 
 
 	private static byte[] setInstrumentPayload(long requestId, boolean includeVibrato) {
+		return setInstrumentPayload(requestId, 3, includeVibrato);
+	}
+
+	private static byte[] setInstrumentPayload(long requestId, int voiceIndex, boolean includeVibrato) {
 		SrapProtocol.PayloadWriter out = SrapProtocol.payload()
 				.u32(requestId)
-				.u8(3)
+				.u8(voiceIndex)
 				.u8(SIDScoreIR.Wave.PULSE.mask)
 				.u8(1)
 				.u8(2)

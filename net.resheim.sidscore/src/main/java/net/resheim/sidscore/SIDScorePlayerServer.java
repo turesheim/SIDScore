@@ -519,7 +519,7 @@ public final class SIDScorePlayerServer {
 		}
 
 		try {
-			writeExport(loaded.timedScore(), loaded.sidModel(), format, outputPath);
+			writeExport(applyInstrumentOverrides(loaded.timedScore()), loaded.sidModel(), format, outputPath);
 			enqueue(SrapProtocol.EXPORT_RESULT, encodeExportResult(requestId, format, outputPath), true);
 		} catch (Exception e) {
 			enqueueError(requestId, SrapProtocol.ERR_EXPORT_ERROR, e.getMessage(), true);
