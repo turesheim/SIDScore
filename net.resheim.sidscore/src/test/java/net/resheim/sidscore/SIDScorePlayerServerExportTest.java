@@ -55,6 +55,18 @@ public class SIDScorePlayerServerExportTest {
 			  O4 L8 C D
 			""";
 
+	private static final String SOURCE_WITH_VIBRATO_RISE = """
+			TITLE "Vibrato Rise Export Test"
+			AUTHOR "SIDScore"
+			TEMPO 120
+			SYSTEM PAL
+
+			INSTR lead WAVE=PULSE ADSR=0,4,10,4 PW=$0800 VIBRATO=0,24,64,16
+
+			VOICE 1 lead:
+			  O4 L8 C D
+			""";
+
 	@Test
 	public void exportSourceWritesAsmPrgSidAndWavOverSrap() throws Exception {
 		Path workDir = Files.createTempDirectory("sidscore-srap-export-test-");
@@ -154,6 +166,28 @@ public class SIDScorePlayerServerExportTest {
 		}
 	}
 
+	@Test
+	public void exportSourceWritesVibseqRiseBeforeLoopForNonZeroInc() throws Exception {
+		Path workDir = Files.createTempDirectory("sidscore-source-vibseq-rise-export-test-");
+		try {
+			Path sourcePath = workDir.resolve("source-vibseq-rise-export-test.sidscore");
+			Files.writeString(sourcePath, SOURCE_WITH_VIBRATO_RISE);
+
+			try (ServerHarness server = ServerHarness.start()) {
+				server.hello();
+
+				Path asmPath = workDir.resolve("source-vibseq-rise-export-test.asm");
+				assertExport(server, sourcePath, sourcePath.toUri().toString(), asmPath, 1,
+						SOURCE_WITH_VIBRATO_RISE);
+				String asm = Files.readString(asmPath);
+				assertTrue(asm.contains("// vib_table_0: ref MIDI 60 delay 0 rate 24 amp 64 inc 16"));
+				assertVibseqHasRampPrefix(asm, "vib_table_0");
+			}
+		} finally {
+			deleteRecursively(workDir);
+		}
+	}
+
 	private static void assertExport(ServerHarness server, Path sourcePath, String sourceUri, Path outputPath,
 			int format) throws Exception {
 		assertExport(server, sourcePath, sourceUri, outputPath, format, SOURCE);
@@ -188,6 +222,18 @@ public class SIDScorePlayerServerExportTest {
 		assertTrue("Exported file should not be empty: " + outputPath, result.u64() > 0);
 		assertTrue(Files.isRegularFile(outputPath));
 		assertTrue("Exported file should have bytes on disk: " + outputPath, Files.size(outputPath) > 0);
+	}
+
+	private static void assertVibseqHasRampPrefix(String asm, String tableLabel) {
+		String dataLabel = tableLabel + "_data:\n";
+		String loopLabel = tableLabel + "_loop:\n";
+		int dataIndex = asm.indexOf(dataLabel);
+		int loopIndex = asm.indexOf(loopLabel);
+		assertTrue("Missing VIBSEQ data label " + dataLabel, dataIndex >= 0);
+		assertTrue("Missing VIBSEQ loop label " + loopLabel, loopIndex >= 0);
+		assertTrue("VIBSEQ loop should follow data label", loopIndex > dataIndex);
+		String prefix = asm.substring(dataIndex + dataLabel.length(), loopIndex);
+		assertTrue("Nonzero inc should emit ramp steps before the VIBSEQ loop", prefix.contains(".word"));
 	}
 
 
