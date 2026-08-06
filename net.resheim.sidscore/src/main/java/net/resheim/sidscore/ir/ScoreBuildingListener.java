@@ -731,6 +731,7 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		int gateMin = 0;
 		boolean sync = false;
 		boolean ring = false;
+		SIDScoreIR.VibratoIR vibrato = SIDScoreIR.VibratoIR.OFF;
 
 		for (SIDScoreParser.InstrParamContext p : ctx.instrParam()) {
 			if (p.WAVE() != null) {
@@ -857,6 +858,17 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 				gateSeq = Optional.of(p.ID().getText());
 			} else if (p.PITCHSEQ() != null) {
 				pitchSeq = Optional.of(p.ID().getText());
+			} else if (p.VIBRATO() != null) {
+				int delay = Integer.parseInt(p.INT(0).getText());
+				int rate = Integer.parseInt(p.INT(1).getText());
+				int amp = Integer.parseInt(p.INT(2).getText());
+				int inc = Integer.parseInt(p.INT(3).getText());
+				if (delay < 0 || delay > 255 || rate < 0 || rate > 255
+						|| amp < 0 || amp > 255 || inc < 0 || inc > 255) {
+					throw new ValidationException(posLine(p.getStart()), posCol(p.getStart()),
+							"VIBRATO values must be in range 0..255");
+				}
+				vibrato = new SIDScoreIR.VibratoIR(delay, rate, amp, inc);
 			} else if (p.SYNC() != null) {
 				sync = p.onOff().ON() != null;
 			} else if (p.RING() != null) {
@@ -889,7 +901,8 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		}
 
 		var instr = new SIDScoreIR.InstrumentIR(name, waveMask, adsr, pw, pwMin, pwMax, pwSweep, waveSeq, pwSeq,
-				gateSeq, pitchSeq, filterModeMask, filterCutoff, filterRes, filterSeq, gateMode, gateMin, sync, ring);
+				gateSeq, pitchSeq, filterModeMask, filterCutoff, filterRes, filterSeq, gateMode, gateMin, sync, ring,
+				vibrato);
 		if (instruments.putIfAbsent(name, instr) != null) {
 			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()),
 					"Duplicate INSTR name: " + name);

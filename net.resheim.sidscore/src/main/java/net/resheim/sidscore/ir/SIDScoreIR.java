@@ -175,11 +175,34 @@ public final class SIDScoreIR {
 			EffectRetriggerMode retriggerMode, List<EffectStepIR> steps) {
 	}
 
+	public static final record VibratoIR(int delay, int rate, int amp, int inc) {
+		public static final VibratoIR OFF = new VibratoIR(0, 0, 0, 0);
+
+		public VibratoIR {
+			delay = clampU8(delay);
+			rate = clampU8(rate);
+			amp = clampU8(amp);
+			inc = clampU8(inc);
+		}
+
+		public boolean active() {
+			return rate > 0 && amp > 0;
+		}
+
+		private static int clampU8(int value) {
+			return Math.max(0, Math.min(255, value));
+		}
+	}
+
 	public static final record InstrumentIR(String name, int waveMask, AdsrIR adsr, OptionalInt pw,
 			OptionalInt pwMin, OptionalInt pwMax, int pwSweep, Optional<String> waveSeq, Optional<String> pwSeq,
 			Optional<String> gateSeq, Optional<String> pitchSeq, int filterModeMask, OptionalInt filterCutoff,
 			OptionalInt filterRes, Optional<String> filterSeq, InstrumentGateMode gateMode,
-			int gateMin, boolean sync, boolean ring) {
+			int gateMin, boolean sync, boolean ring, VibratoIR vibrato) {
+		public InstrumentIR {
+			vibrato = vibrato != null ? vibrato : VibratoIR.OFF;
+		}
+
 		public boolean hasWave(Wave w) {
 			return (waveMask & w.mask) != 0;
 		}

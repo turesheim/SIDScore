@@ -77,7 +77,7 @@ public final class SIDScorePlayerServer {
 					OptionalInt.of(0x0000), OptionalInt.of(0x0FFF), 0,
 					Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
 					0, OptionalInt.empty(), OptionalInt.empty(), Optional.empty(),
-					SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
+					SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false, SIDScoreIR.VibratoIR.OFF);
 	private static final BlockingQueue<String> STDOUT_LOGS = new ArrayBlockingQueue<>(STDOUT_LOG_QUEUE_SIZE);
 	private static final AtomicBoolean STDOUT_LOGGER_STARTED = new AtomicBoolean(false);
 
@@ -519,7 +519,7 @@ public final class SIDScorePlayerServer {
 		}
 
 		try {
-			writeExport(loaded.timedScore(), loaded.sidModel(), format, outputPath);
+			writeExport(applyInstrumentOverrides(loaded.timedScore()), loaded.sidModel(), format, outputPath);
 			enqueue(SrapProtocol.EXPORT_RESULT, encodeExportResult(requestId, format, outputPath), true);
 		} catch (Exception e) {
 			enqueueError(requestId, SrapProtocol.ERR_EXPORT_ERROR, e.getMessage(), true);
@@ -1337,6 +1337,7 @@ public final class SIDScorePlayerServer {
 		boolean sync = in.u8() != 0;
 		boolean ring = in.u8() != 0;
 		String name = in.str();
+		SIDScoreIR.VibratoIR vibrato = readVibrato(in);
 
 		if ((waveMask & SIDScoreIR.Wave.NOISE.mask) != 0) {
 			ring = false;
@@ -1353,7 +1354,17 @@ public final class SIDScorePlayerServer {
 				new SIDScoreIR.AdsrIR(attack, decay, sustain, release),
 				OptionalInt.of(pulseWidth), OptionalInt.of(pulseMin), OptionalInt.of(pulseMax), pulseSweep,
 				Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
-				filterModeMask, cutoff, resonance, Optional.empty(), gateMode, gateMin, sync, ring);
+				filterModeMask, cutoff, resonance, Optional.empty(), gateMode, gateMin, sync, ring, vibrato);
+	}
+
+	private static SIDScoreIR.VibratoIR readVibrato(SrapProtocol.PayloadReader in) {
+		if (in.remaining() == 0) {
+			return SIDScoreIR.VibratoIR.OFF;
+		}
+		if (in.remaining() < 4) {
+			throw new IllegalArgumentException("Short SET_INSTRUMENT vibrato extension");
+		}
+		return new SIDScoreIR.VibratoIR(in.u8(), in.u8(), in.u8(), in.u8());
 	}
 
 	private SIDScoreIR.TimedScore applyInstrumentOverrides(SIDScoreIR.TimedScore score) {
@@ -2020,6 +2031,7 @@ public final class SIDScorePlayerServer {
 
 	private static void writeInstrumentFields(SrapProtocol.PayloadWriter out, SIDScoreIR.InstrumentIR instrument) {
 		int filterModeMask = instrument.filterModeMask() & 0x07;
+		SIDScoreIR.VibratoIR vibrato = instrument.vibrato();
 		out.u8(instrument.waveMask() & 0x0F)
 				.u8(clamp(instrument.adsr().a(), 0, 15))
 				.u8(clamp(instrument.adsr().d(), 0, 15))
@@ -2036,7 +2048,11 @@ public final class SIDScorePlayerServer {
 				.u8(clamp(instrument.gateMin(), 0, 16))
 				.u8(instrument.sync() ? 1 : 0)
 				.u8(instrument.ring() ? 1 : 0)
-				.str(instrument.name());
+				.str(instrument.name())
+				.u8(vibrato.delay())
+				.u8(vibrato.rate())
+				.u8(vibrato.amp())
+				.u8(vibrato.inc());
 	}
 
 	private static int normalizeWaveMask(int waveMask) {
