@@ -891,6 +891,7 @@ public final class RealtimeAudioPlayer {
 		}
 
 		private void startNote(int midi, double bend, float sr) {
+			boolean resetOscillator = shouldResetOscillatorForNoteStart();
 			currentMidi = midi;
 			noteBaseMidi = midi;
 			pitchOffset = 0;
@@ -903,6 +904,9 @@ public final class RealtimeAudioPlayer {
 			resetPitchSeq(sr);
 			osc.setWaveMask(activeWaveMask, OptionalInt.of(pw));
 			applyFrequency(sr);
+			if (resetOscillator) {
+				osc.hardReset();
+			}
 			if (filterRoute) {
 				filter.activate(filterModeMask, filterCutoff, filterRes, filterTable, sr);
 			}
@@ -912,6 +916,10 @@ public final class RealtimeAudioPlayer {
 			} else {
 				triggerGate(sr, true);
 			}
+		}
+
+		private boolean shouldResetOscillatorForNoteStart() {
+			return !gateOn && (!active || lastEnvelopeLevel <= RELEASE_SILENCE);
 		}
 
 		private void releaseGate() {
