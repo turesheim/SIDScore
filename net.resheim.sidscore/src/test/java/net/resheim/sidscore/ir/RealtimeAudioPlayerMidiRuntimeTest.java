@@ -53,7 +53,7 @@ public class RealtimeAudioPlayerMidiRuntimeTest {
 				SIDScoreIR.Wave.PULSE.mask, new SIDScoreIR.AdsrIR(0, 0, 15, 0), OptionalInt.of(0x0800),
 				OptionalInt.empty(), OptionalInt.empty(), 0, Optional.empty(), Optional.empty(), Optional.empty(),
 				Optional.empty(), 0, OptionalInt.empty(), OptionalInt.empty(), Optional.empty(),
-				SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
+				SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false, SIDScoreIR.VibratoIR.OFF);
 		SidWaveforms.TableSet waveTables = SidWaveforms.loadTables(SidModel.MOS6581, null);
 		return new RealtimeAudioPlayer.MidiRuntime(1, instrument, midi, SID_CLOCK_PAL, RASTER_RATE_PAL,
 				Map.of(), new RealtimeAudioPlayer.FilterRuntime(RASTER_RATE_PAL), waveTables, null);
