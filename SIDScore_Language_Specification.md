@@ -249,6 +249,7 @@ WAVE=<wave> [NOTE=<abs|rel|OFF>] [GATE=ON|OFF] [RING=ON|OFF] [SYNC=ON|OFF] [RESE
 
 Wavetables are attached via optional instrument parameters:
 `WAVESEQ=<name>`, `PWSEQ=<name>`, `GATESEQ=<name>`, `PITCHSEQ=<name>`, `FILTERSEQ=<name>`.
+Fine vibrato can also be attached directly with `VIBRATO=delay,rate,amp,inc`.
 
 Rules:
 
@@ -256,6 +257,7 @@ Rules:
 - While a table is active, it drives the corresponding SID parameter
 - Base `WAVE`/`PW` values act as defaults when no table is attached
 - `PITCHSEQ` offsets the event's pitch; `0` means no change
+- `VIBRATO` applies generated fine SID frequency deltas and can run alongside `PITCHSEQ`
 - A note end always forces gate OFF (tables do not extend note length)
 
 Example:
@@ -301,11 +303,13 @@ INSTR <name> WAVE=<wave> ADSR=a,d,s,r [PW=<int|$hex>]
 	[SYNC=ON|OFF] [RING=ON|OFF]
 	[FILTER=OFF|LP|BP|HP|LP+BP|LP+HP|BP+HP|LP+BP+HP] [CUTOFF=<int>] [RES=<int>]
 	[GATE=RETRIGGER|LEGATO] [GATEMIN=<int>] [WAVESEQ=<name>][PWSEQ=<name>]
-	[GATESEQ=<name>] [PITCHSEQ=<name>] [FILTERSEQ=<name>]
+	[GATESEQ=<name>] [PITCHSEQ=<name>] [FILTERSEQ=<name>] [VIBRATO=delay,rate,amp,inc]
 ```
 
 - `<name>` MUST be a valid identifier: `[A-Za-z_][A-Za-z0-9_]*`
 - Instrument names MUST be unique
+- `VIBRATO` values are decimal bytes `0..255`: delay in player frames, rate as 8-bit LFO phase step,
+  amp as depth, and inc as per-frame depth ramp-in (`0` means full depth immediately).
 
 **Import form (reuse an existing definition):**
 
@@ -595,7 +599,7 @@ Notes:
 
 - **Waveform** settings map to `WAVE`, `WAVESEQ`.
 - **Volume Envelope** maps to `ADSR`.
-- **Vibrato** maps to `PITCHSEQ` (small semitone offsets).
+- **Vibrato** maps to `VIBRATO=delay,rate,amp,inc`; use `PITCHSEQ` for coarse semitone offsets.
 - **Pulse Modulation** maps to `PW`, `PWMIN`, `PWMAX`, `PWSWEEP`, or `PWSEQ`.
 - **Articulation** maps to `GATE`, `GATEMIN`, `GATESEQ`.
 - **Filter Modulation** maps to `FILTER`, `CUTOFF`, `RES`, `FILTERSEQ`.
@@ -606,7 +610,7 @@ If you are transcribing a SidTracker64 instrument, this mapping is a practical s
 
 - **Waveform / Wavetable** → `WAVE` + optional `WAVESEQ`
 - **Volume Envelope** → `ADSR` (SIDScore has one ADSR per instrument)
-- **Vibrato** → `PITCHSEQ` (small offsets like `+1`, `-1`, with short durations)
+- **Vibrato** → `VIBRATO=delay,rate,amp,inc` for fine pitch modulation
 - **PWM sweep / PWM table** → `PWSWEEP` or `PWSEQ` (plus `PWMIN`/`PWMAX`)
 - **Hard sync / Ring mod** → `SYNC=ON`, `RING=ON`
 - **Hard restart** → not available (SIDScore does not expose oscillator reset)
@@ -615,13 +619,14 @@ If you are transcribing a SidTracker64 instrument, this mapping is a practical s
 Tip: Start with the readable layout in §5.3 and fill in each section. Anything not supported should be
 commented out until a future version adds it.
 
-#### WAVESEQ / PWSEQ / GATESEQ / PITCHSEQ / FILTERSEQ
+#### WAVESEQ / PWSEQ / GATESEQ / PITCHSEQ / FILTERSEQ / VIBRATO
 
 - OPTIONAL references to wavetable names (see Wavetable Format)
 - `WAVESEQ` overrides the waveform while active, and may also apply NOTE/GATE/RING/SYNC/RESET controls per step
 - `GATESEQ` toggles gate ON/OFF during a note; note end still forces gate OFF
 - `PITCHSEQ` applies per-step semitone offsets to the event pitch
 - `FILTERSEQ` overrides the cutoff while active (only if `FILTER` is enabled)
+- `VIBRATO=delay,rate,amp,inc` applies fine pitch modulation generated from the instrument settings
 
 Notes (current reference runtime):
 - `GATESEQ` ON after OFF retriggers the envelope attack
@@ -683,6 +688,19 @@ PWSEQ drives the pulse width over time while a note is playing.
 
 This will cycle the pulse width through those values for as long as the note sustains, producing PWM
   movement.
+
+##### Fine vibrato - VIBRATO
+
+`VIBRATO=delay,rate,amp,inc` applies fine pitch modulation to each melodic note.
+
+- `delay`: player frames before vibrato starts.
+- `rate`: 8-bit LFO phase step per player frame; higher values produce faster vibrato.
+- `amp`: depth, scaled by the runtime to a maximum of roughly two semitones.
+- `inc`: depth ramp-in per player frame after the delay; `0` starts at full depth.
+
+During assembly/PRG/SID export, SIDScore generates a compact `VIBSEQ`-style table of signed SID frequency
+deltas for the instrument. This keeps playback cheap while preserving finer pitch movement than `PITCHSEQ`,
+which remains a semitone-offset table.
 
 #### SYNC
 

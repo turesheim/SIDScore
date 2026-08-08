@@ -1,4 +1,4 @@
-// Generated from SIDScoreParser.g4 by ANTLR 4.13.1
+// Generated from SIDScoreParser.g4 by ANTLR 4.13.2
 package net.resheim.sidscore.parser;
 import org.antlr.v4.runtime.tree.ParseTreeListener;
 

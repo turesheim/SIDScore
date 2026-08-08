@@ -69,6 +69,7 @@ public final class RealtimeAudioPlayer {
 	private static final double RASTER_RATE_PAL = 50.124542;
 	private static final double RASTER_RATE_NTSC = 60.098814;
 	private static final double MIX_GAIN = 0.25;
+	private static final double VIBRATO_MAX_SEMITONES = 2.0;
 	private static final int OVERSAMPLE_BASE = 2;
 	private static final int OVERSAMPLE_RING = 4;
 	// Output stage reconstruction (not the SID programmable filter).
@@ -76,12 +77,13 @@ public final class RealtimeAudioPlayer {
 	private static final SIDScoreIR.InstrumentIR SILENT_INSTR = new SIDScoreIR.InstrumentIR("silence", 0,
 			new SIDScoreIR.AdsrIR(0, 0, 0, 0), OptionalInt.empty(), OptionalInt.empty(), OptionalInt.empty(), 0,
 			Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), 0, OptionalInt.empty(),
-			OptionalInt.empty(), Optional.empty(), SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
+			OptionalInt.empty(), Optional.empty(), SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false,
+			SIDScoreIR.VibratoIR.OFF);
 	private static final SIDScoreIR.InstrumentIR DEFAULT_MIDI_INSTR = new SIDScoreIR.InstrumentIR("midi",
 			SIDScoreIR.Wave.PULSE.mask, new SIDScoreIR.AdsrIR(0, 4, 10, 4), OptionalInt.of(0x0800),
 			OptionalInt.empty(), OptionalInt.empty(), 0, Optional.empty(), Optional.empty(), Optional.empty(),
 			Optional.empty(), 0, OptionalInt.empty(), OptionalInt.empty(), Optional.empty(),
-			SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false);
+			SIDScoreIR.InstrumentGateMode.RETRIGGER, 0, false, false, SIDScoreIR.VibratoIR.OFF);
 	private final AtomicBoolean stopRequested = new AtomicBoolean(false);
 	private final AtomicBoolean pauseRequested = new AtomicBoolean(false);
 	private volatile SourceDataLine activeLine = null;
@@ -663,6 +665,7 @@ public final class RealtimeAudioPlayer {
 		private int currentMidi = -1;
 		private int noteBaseMidi = -1;
 		private int pitchOffset = 0;
+		private final VibratoRuntime vibrato = new VibratoRuntime();
 		private double currentBend = 0.0;
 		private int currentFreqReg = 0;
 		private double velocityScale = 1.0;
@@ -792,6 +795,7 @@ public final class RealtimeAudioPlayer {
 			advanceWaveSeq(sr);
 			advancePwm(sr);
 			advancePitchSeq(sr);
+			advanceVibrato(sr);
 			osc.setPulseWidth(pw);
 			double e = env.next(sr);
 			double o = activeWaveMask != 0 ? osc.output(activeWaveMask, ring, modMsb) : 0.0;
@@ -804,6 +808,7 @@ public final class RealtimeAudioPlayer {
 				currentMidi = -1;
 				noteBaseMidi = -1;
 				pitchOffset = 0;
+				vibrato.reset();
 			}
 			return out;
 		}
@@ -838,13 +843,14 @@ public final class RealtimeAudioPlayer {
 				flags |= 1 << 6;
 			if (waveTable != null && !waveTable.steps().isEmpty())
 				flags |= 1 << 7;
-			if (pitchTable != null && !pitchTable.steps().isEmpty())
+			if ((pitchTable != null && !pitchTable.steps().isEmpty()) || instr.vibrato().active())
 				flags |= 1 << 8;
 			if (gateTable != null && !gateTable.steps().isEmpty())
 				flags |= 1 << 9;
 
 			return new VoiceSnapshot(voiceIndex, noteKind, noteLetter, accidental, octave, activeWaveMask, flags,
-					currentFreqReg & 0xFFFF, pw & 0x0FFF, pitchOffset + (int) Math.round(currentBend),
+					currentFreqReg & 0xFFFF, pw & 0x0FFF,
+					pitchOffset + (int) Math.round(currentBend + vibrato.offsetSemitones()),
 					(float) clamp01(lastEnvelopeLevel), (float) clamp01(lastOutputLevel / Math.max(0.0001, MIX_GAIN)));
 		}
 
@@ -877,10 +883,12 @@ public final class RealtimeAudioPlayer {
 			waveTable = instr.waveSeq().isPresent() ? tables.get(instr.waveSeq().get()) : null;
 			gateTable = instr.gateSeq().isPresent() ? tables.get(instr.gateSeq().get()) : null;
 			pitchTable = instr.pitchSeq().isPresent() ? tables.get(instr.pitchSeq().get()) : null;
+			vibrato.configure(instr.vibrato());
 			env.setAdsr(instr.adsr().a(), instr.adsr().d(), instr.adsr().s(), instr.adsr().r());
 			if (!live || sr <= 0.0f || !ownsVoice()) {
 				return;
 			}
+			vibrato.reset();
 			resetPwm(sr);
 			resetWaveSeq(sr);
 			resetPitchSeq(sr);
@@ -896,6 +904,7 @@ public final class RealtimeAudioPlayer {
 			noteBaseMidi = midi;
 			pitchOffset = 0;
 			currentBend = bend;
+			vibrato.reset();
 			sync = instr.sync();
 			ring = instr.ring();
 			resetPwm(sr);
@@ -936,7 +945,8 @@ public final class RealtimeAudioPlayer {
 				return;
 			}
 			int baseMidi = noteBaseMidi >= 0 ? noteBaseMidi : currentMidi;
-			double midi = Math.max(0.0, Math.min(127.0, baseMidi + pitchOffset + currentBend));
+			double midi = Math.max(0.0, Math.min(127.0,
+					baseMidi + pitchOffset + currentBend + vibrato.offsetSemitones()));
 			currentFreqReg = RealtimeAudioPlayer.freqRegFromMidi(midi, sidClockHz);
 			osc.setFreq(RealtimeAudioPlayer.freqRegToHz(currentFreqReg, sidClockHz), sr);
 		}
@@ -1138,6 +1148,12 @@ public final class RealtimeAudioPlayer {
 			gateStep++;
 		}
 
+		private void advanceVibrato(float sr) {
+			if (currentMidi >= 0 && vibrato.advance(sr, frameRate)) {
+				applyFrequency(sr);
+			}
+		}
+
 		private void loadPitchTableStep(float sr) {
 			List<SIDScoreIR.TableStepIR> steps = pitchTable.steps();
 			if (pitchStep >= steps.size()) {
@@ -1331,6 +1347,7 @@ public final class RealtimeAudioPlayer {
 		private int baseMidi = -1;
 		private int noteBaseMidi = -1;
 		private int pitchOffset = 0;
+		private final VibratoRuntime vibrato = new VibratoRuntime();
 		private int currentFreqReg = 0;
 		private double lastEnvelopeLevel = 0.0;
 		private double lastOutputLevel = 0.0;
@@ -1408,6 +1425,7 @@ public final class RealtimeAudioPlayer {
 			advanceWaveSeq(sr);
 			advancePwm(sr);
 			advancePitchSeq(sr);
+			advanceVibrato(sr);
 			osc.setPulseWidth(pw);
 
 			double e = env.next(sr);
@@ -1432,7 +1450,8 @@ public final class RealtimeAudioPlayer {
 				noteKind = 2;
 			} else if (baseMidi >= 0 && active) {
 				noteKind = 1;
-				int effectiveMidi = clampMidi(noteBaseMidi >= 0 ? noteBaseMidi + pitchOffset : baseMidi);
+				int effectiveMidi = clampMidi((int) Math.round(
+						(noteBaseMidi >= 0 ? noteBaseMidi + pitchOffset : baseMidi) + vibrato.offsetSemitones()));
 				NoteParts note = noteParts(effectiveMidi);
 				noteLetter = note.letter;
 				accidental = note.accidental;
@@ -1456,13 +1475,14 @@ public final class RealtimeAudioPlayer {
 				flags |= 1 << 6;
 			if (waveTable != null && !waveTable.steps().isEmpty())
 				flags |= 1 << 7;
-			if (pitchTable != null && !pitchTable.steps().isEmpty())
+			if ((pitchTable != null && !pitchTable.steps().isEmpty()) || instr.vibrato().active())
 				flags |= 1 << 8;
 			if (gateTable != null && !gateTable.steps().isEmpty())
 				flags |= 1 << 9;
 
 			return new VoiceSnapshot(voiceIndex, noteKind, noteLetter, accidental, octave, activeWaveMask, flags,
-					currentFreqReg & 0xFFFF, pw & 0x0FFF, pitchOffset, (float) clamp01(lastEnvelopeLevel),
+					currentFreqReg & 0xFFFF, pw & 0x0FFF,
+					pitchOffset + (int) Math.round(vibrato.offsetSemitones()), (float) clamp01(lastEnvelopeLevel),
 					(float) clamp01(lastOutputLevel / Math.max(0.0001, MIX_GAIN)));
 		}
 
@@ -1495,10 +1515,12 @@ public final class RealtimeAudioPlayer {
 			filterCutoff = instr.filterCutoff().orElse(0);
 			filterRes = instr.filterRes().orElse(0);
 			filterTable = instr.filterSeq().isPresent() ? tables.get(instr.filterSeq().get()) : null;
+			vibrato.configure(instr.vibrato());
 			env.setAdsr(instr.adsr().a(), instr.adsr().d(), instr.adsr().s(), instr.adsr().r());
 			if (!live || sr <= 0.0f || !active) {
 				return;
 			}
+			vibrato.reset();
 			resetPwm(sr);
 			resetWaveSeq(sr);
 			resetPitchSeq(sr);
@@ -1539,6 +1561,7 @@ public final class RealtimeAudioPlayer {
 			baseMidi = noise ? -1 : (e.baseNote() & 0x7f);
 			noteBaseMidi = baseMidi;
 			pitchOffset = 0;
+			vibrato.reset();
 			currentFreqReg = e.freq() & 0xFFFF;
 
 			active = gateBit || e.freq() != 0;
@@ -1572,9 +1595,10 @@ public final class RealtimeAudioPlayer {
 				applyGateValue(gateBit, sr);
 			}
 
-			osc.setFreq(freqRegToHz(e.freq(), sidClockHz), sr);
-			if (!noise && gateOn) {
+			if (!noise && active) {
 				applyPitchOffset(sr, pitchOffset);
+			} else {
+				osc.setFreq(freqRegToHz(e.freq(), sidClockHz), sr);
 			}
 		}
 
@@ -1603,6 +1627,7 @@ public final class RealtimeAudioPlayer {
 			pitchSamplesLeft = 0;
 			pitchSampleRemainder = 0.0;
 			pitchHolding = false;
+			vibrato.reset();
 			baseMidi = -1;
 			noteBaseMidi = -1;
 			pitchOffset = 0;
@@ -1874,6 +1899,12 @@ public final class RealtimeAudioPlayer {
 			loadPitchTableStep(sr);
 		}
 
+		private void advanceVibrato(float sr) {
+			if (baseMidi >= 0 && !noise && vibrato.advance(sr, frameRate)) {
+				applyPitchOffset(sr, pitchOffset);
+			}
+		}
+
 		private void loadPitchTableStep(float sr) {
 			if (pitchTable == null || baseMidi < 0)
 				return;
@@ -1911,12 +1942,12 @@ public final class RealtimeAudioPlayer {
 		private void applyPitchOffset(float sr, int offset) {
 			if (noteBaseMidi < 0)
 				return;
-			int midi = noteBaseMidi + offset;
-			if (midi < 0)
-				midi = 0;
-			if (midi > 127)
-				midi = 127;
-			currentFreqReg = freqRegFromMidi(midi, sidClockHz);
+			double midi = noteBaseMidi + offset + vibrato.offsetSemitones();
+			if (midi < 0.0)
+				midi = 0.0;
+			if (midi > 127.0)
+				midi = 127.0;
+			currentFreqReg = RealtimeAudioPlayer.freqRegFromMidi(midi, sidClockHz);
 			double hz = freqRegToHz(currentFreqReg, sidClockHz);
 			osc.setFreq(hz, sr);
 		}
@@ -2855,6 +2886,67 @@ public final class RealtimeAudioPlayer {
 	}
 
 	// -------- Envelope (MAME-style ADSR, BSD-3-Clause data tables) --------
+	private static final class VibratoRuntime {
+		private SIDScoreIR.VibratoIR settings = SIDScoreIR.VibratoIR.OFF;
+		private int delayFramesLeft = 0;
+		private int frameSamplesLeft = 0;
+		private double frameSampleRemainder = 0.0;
+		private int phase = 0;
+		private int depth = 0;
+		private double offsetSemitones = 0.0;
+
+		void configure(SIDScoreIR.VibratoIR settings) {
+			this.settings = settings != null ? settings : SIDScoreIR.VibratoIR.OFF;
+		}
+
+		void reset() {
+			delayFramesLeft = settings.delay();
+			frameSamplesLeft = 0;
+			frameSampleRemainder = 0.0;
+			phase = 0;
+			depth = settings.inc() == 0 ? settings.amp() : 0;
+			offsetSemitones = 0.0;
+		}
+
+		boolean advance(float sr, double frameRate) {
+			double previous = offsetSemitones;
+			if (!settings.active()) {
+				offsetSemitones = 0.0;
+				return Math.abs(previous) > 0.0001;
+			}
+			if (frameSamplesLeft > 0) {
+				frameSamplesLeft--;
+				return false;
+			}
+			setFrameSamplesLeft(sr, frameRate);
+			if (delayFramesLeft > 0) {
+				delayFramesLeft--;
+				offsetSemitones = 0.0;
+				return Math.abs(previous) > 0.0001;
+			}
+			if (settings.inc() == 0) {
+				depth = settings.amp();
+			} else {
+				depth = Math.min(settings.amp(), depth + settings.inc());
+			}
+			phase = (phase + settings.rate()) & 0xFF;
+			double radians = (phase / 256.0) * Math.PI * 2.0;
+			double depthSemitones = (depth / 255.0) * VIBRATO_MAX_SEMITONES;
+			offsetSemitones = Math.sin(radians) * depthSemitones;
+			return Math.abs(previous - offsetSemitones) > 0.0001;
+		}
+
+		double offsetSemitones() {
+			return offsetSemitones;
+		}
+
+		private void setFrameSamplesLeft(float sr, double frameRate) {
+			double samplesExact = sr / frameRate + frameSampleRemainder;
+			frameSamplesLeft = Math.max(1, (int) Math.round(samplesExact));
+			frameSampleRemainder = samplesExact - frameSamplesLeft;
+		}
+	}
+
 	static final class Env {
 		private static final int ENVE_STARTATTACK = 0;
 		private static final int ENVE_STARTRELEASE = 2;

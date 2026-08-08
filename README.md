@@ -126,6 +126,8 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
 
 SIDScore can run as a local SRAP server for external tools. The server accepts score playback commands, source playback commands, instrument overrides, MIDI settings, device scans, and telemetry subscriptions. See [SIDScore_Server_Specification.md](SIDScore_Server_Specification.md) for frame formats and protocol details.
 
+The graphical SIDScore playback, MIDI routing, and live instrument editor UI now live in [Commodore Commander](https://github.com/turesheim/commodore-commander). SIDScore remains the parser, renderer, SRAP server, and export toolchain; use Commodore Commander when you want the integrated IDE controls for auditioning and editing live instrument overrides.
+
 ```sh
 java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
   net.resheim.sidscore.SIDScoreCLI --player-server --port 0
@@ -145,6 +147,10 @@ python3 tools/sid2sidscore.py examples/games/Great_Giana_Sisters.sid \
 ```
 
 By default the converter keeps simple melodic voices as notation, but emits voices with frame-level SID register automation as `EFFECT` timelines. This preserves driver instruments such as pulse-width/gate hi-hats that cannot be represented by one static `INSTR`. Use `--compact-notation` only when a smaller, less register-accurate transcription is preferred.
+
+When a melodic trace contains stable fine pitch oscillation around a note, the converter may emit
+`VIBRATO=delay,rate,amp,inc` on the generated `INSTR`. Less regular pitch movement stays in notation or
+`EFFECT` form to avoid misclassifying slides and arpeggios as vibrato.
 
 ## Eclipse Generic Editor
 
