@@ -688,7 +688,8 @@ public final class SIDScorePlayerServer {
 	private void startResolvedPlayback(long requestId, long scoreId, LoadedScore loaded) {
 		SIDScoreIR.TimedScore timed = applyInstrumentOverrides(loaded.timedScore());
 		ScoreMapExporter.ScoreMap scoreMap = loaded.tree() != null
-				? ScoreMapExporter.build(scoreId, loaded.tree(), timed, loaded.sourceUri(), loaded.sourcePath())
+				? ScoreMapExporter.build(scoreId, loaded.tree(), loaded.tuneNumber(), timed, loaded.sourceUri(),
+						loaded.sourcePath())
 				: emptyScoreMap(scoreId, loaded);
 		currentScoreMap = scoreMap;
 		if ((clientCapabilities & SrapProtocol.CAP_SCORE_MAP) != 0) {
@@ -724,7 +725,7 @@ public final class SIDScorePlayerServer {
 			throw new IllegalArgumentException("Tune number must be in range 1..255, got " + tuneNumber);
 		}
 		if (tuneNumber == 1) {
-			return new LoadedScore(sourceUri, sourcePath, parsed.tree(), parsed.timedScore(), sidModel);
+			return new LoadedScore(sourceUri, sourcePath, parsed.tree(), 1, parsed.timedScore(), sidModel);
 		}
 
 		SIDScoreIR.ScoreIR score = parsed.scoreIR();
@@ -732,7 +733,7 @@ public final class SIDScorePlayerServer {
 		if (inlineSong != null) {
 			SIDScoreIR.ScoreIR inlineScore = buildInlineSongScore(score, inlineSong);
 			SIDScoreIR.Resolver.Result resolved = new SIDScoreIR.Resolver().resolve(inlineScore);
-			return new LoadedScore(sourceUri + "#tune=" + tuneNumber, sourcePath, null, resolved.timedScore(), sidModel);
+			return new LoadedScore(sourceUri, sourcePath, parsed.tree(), tuneNumber, resolved.timedScore(), sidModel);
 		}
 
 		Path tunePath = score.subtunes().get(tuneNumber);
@@ -744,7 +745,7 @@ public final class SIDScorePlayerServer {
 			throw new IOException("Subtune file not found: " + resolvedPath);
 		}
 		ParsedScore subtune = parse(resolvedPath, Files.readString(resolvedPath));
-		return new LoadedScore(resolvedPath.toUri().toString(), resolvedPath, subtune.tree(), subtune.timedScore(),
+		return new LoadedScore(resolvedPath.toUri().toString(), resolvedPath, subtune.tree(), 1, subtune.timedScore(),
 				sidModel);
 	}
 
@@ -2362,7 +2363,7 @@ public final class SIDScorePlayerServer {
 			SIDScoreIR.TimedScore timedScore) {
 	}
 
-	private record LoadedScore(String sourceUri, Path sourcePath, SIDScoreParser.FileContext tree,
+	private record LoadedScore(String sourceUri, Path sourcePath, SIDScoreParser.FileContext tree, int tuneNumber,
 			SIDScoreIR.TimedScore timedScore, SidModel sidModel) {
 	}
 
