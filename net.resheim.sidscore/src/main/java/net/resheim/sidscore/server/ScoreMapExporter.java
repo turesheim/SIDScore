@@ -52,16 +52,17 @@ public final class ScoreMapExporter {
 
 	public static ScoreMap build(long scoreId, SIDScoreParser.FileContext tree, SIDScoreIR.TimedScore timed,
 			String sourceUri, Path sourcePath) {
+		return build(scoreId, tree, 1, timed, sourceUri, sourcePath);
+	}
+
+	public static ScoreMap build(long scoreId, SIDScoreParser.FileContext tree, int tuneNumber,
+			SIDScoreIR.TimedScore timed, String sourceUri, Path sourcePath) {
 		List<SourceEntry> sources = List.of(new SourceEntry(1, sourceUri, sourcePath));
 		List<EventEntry> events = new ArrayList<>();
 		Map<Integer, List<EventEntry>> byVoice = new LinkedHashMap<>();
 		int[] nextEventId = { 1 };
 
-		for (SIDScoreParser.StmtContext stmt : tree.stmt()) {
-			if (stmt.voiceBlock() == null) {
-				continue;
-			}
-			SIDScoreParser.VoiceBlockContext voiceCtx = stmt.voiceBlock();
+		for (SIDScoreParser.VoiceBlockContext voiceCtx : voiceBlocksForTune(tree, tuneNumber)) {
 			int voiceIndex = Integer.parseInt(voiceCtx.INT().getText());
 			if (voiceIndex < 1 || voiceIndex > 3) {
 				continue;
@@ -77,6 +78,37 @@ public final class ScoreMapExporter {
 		}
 
 		return new ScoreMap(scoreId, sources, List.copyOf(events), copyEventMap(byVoice));
+	}
+
+	private static List<SIDScoreParser.VoiceBlockContext> voiceBlocksForTune(SIDScoreParser.FileContext tree,
+			int tuneNumber) {
+		if (tuneNumber <= 1) {
+			return topLevelVoiceBlocks(tree);
+		}
+		for (SIDScoreParser.StmtContext stmt : tree.stmt()) {
+			SIDScoreParser.SongBlockContext songBlock = stmt.songBlock();
+			if (songBlock == null || Integer.parseInt(songBlock.INT().getText()) != tuneNumber) {
+				continue;
+			}
+			List<SIDScoreParser.VoiceBlockContext> voices = new ArrayList<>();
+			for (SIDScoreParser.SongStmtContext songStmt : songBlock.songStmt()) {
+				if (songStmt.voiceBlock() != null) {
+					voices.add(songStmt.voiceBlock());
+				}
+			}
+			return voices;
+		}
+		return List.of();
+	}
+
+	private static List<SIDScoreParser.VoiceBlockContext> topLevelVoiceBlocks(SIDScoreParser.FileContext tree) {
+		List<SIDScoreParser.VoiceBlockContext> voices = new ArrayList<>();
+		for (SIDScoreParser.StmtContext stmt : tree.stmt()) {
+			if (stmt.voiceBlock() != null) {
+				voices.add(stmt.voiceBlock());
+			}
+		}
+		return voices;
 	}
 
 	private static Map<Integer, List<EventEntry>> copyEventMap(Map<Integer, List<EventEntry>> source) {
