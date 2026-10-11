@@ -38,4 +38,8 @@
 
 ## Tests
 
-- No automated tests are present. Validate by building and running the CLI on an example file.
+- JUnit tests run as part of `mvn -f net.resheim.sidscore/pom.xml -q package`.
+- Module export tests assemble with `net.resheim.sidscore/lib/KickAss.jar` and require `python3` to execute the generated 6502 code using the repository emulator.
+- SRAP server tests need permission to bind local loopback ports.
+- Run converter tests with `python3 -m unittest discover -s tools -p 'test_*.py'`.
+- Also validate by running the CLI on an example file with `--no-play` and an output option.

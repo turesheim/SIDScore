@@ -6,3 +6,5 @@ listening-tests/*.prg
 listening-tests/*.sid
 listening-tests/*.wav
 .m2
+
+.DS_Store
