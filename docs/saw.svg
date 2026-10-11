@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="230" viewBox="0 0 660 230" role="img" aria-labelledby="title description">
+  <title id="title">SAW waveform</title>
+  <desc id="description">A sawtooth rises linearly, drops abruptly, and repeats.</desc>
+  <rect width="660" height="230" fill="white"/>
+  <path d="M16 110H644" fill="none" stroke="#57606a" stroke-width="1.5"/>
+  <path d="M40 110L140 20V200L340 20V200L540 20V200L640 110" fill="none" stroke="#1f2328" stroke-width="3" stroke-linejoin="round"/>
+</svg>

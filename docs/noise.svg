@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="230" viewBox="0 0 660 230" role="img" aria-labelledby="title description">
+  <title id="title">NOISE waveform</title>
+  <desc id="description">An illustrative irregular signal without a repeating period; not a capture of the SID noise generator.</desc>
+  <rect width="660" height="230" fill="white"/>
+  <path d="M16 110H644" fill="none" stroke="#57606a" stroke-width="1.5"/>
+  <path d="M40 110L48 78L52 98L59 52L64 91L70 43L82 177L88 150L92 190L102 117L108 139L116 96L123 118L134 78L145 137L157 191L164 159L170 187L177 149L182 168L189 74L200 146L210 99L219 179L226 163L234 210L240 158L248 178L253 30L259 57L264 20L274 124L284 82L289 101L295 55L301 80L309 43L315 69L320 49L331 136L342 210L350 170L358 199L366 167L373 197L381 148L388 171L400 55L408 75L414 25L432 167L439 135L445 178L452 106L459 139L469 54L475 79L486 23L503 103L516 169L522 138L530 158L546 66L566 119L578 164L586 138L601 190L608 167L620 200L628 48L640 110" fill="none" stroke="#1f2328" stroke-width="3" stroke-linejoin="round"/>
+</svg>
