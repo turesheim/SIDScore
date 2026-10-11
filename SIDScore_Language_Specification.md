@@ -79,14 +79,30 @@ RELEASED "string"
 TEMPO <integer>
 ```
 
-- MUST appear exactly once
+- MUST appear exactly once at score level to declare the initial tempo.
+  A `TUNE` block MAY declare its own initial tempo before its voices.
 - Unit: beats per minute (BPM)
 - Valid range: 1–300 (implementation MAY restrict further)
+- Inside a `VOICE`, `TEMPO` changes the tempo from the current musical position
+  for **all voices of that tune**, including notes already held in other voices.
+  It consumes no musical time and does not retrigger a note or reset swing.
+- Each tune has its own tempo changes. An inline `TUNE` inherits the top-level
+  initial tempo unless it declares its own; it does not inherit another tune's changes.
+- Repeats repeat tempo markers at their expanded musical positions. Markers are
+  allowed inside `(leg)` scopes, but not inside `T{}` tuplets.
+- Multiple markers at the same position MUST agree on BPM; conflicting values are an error.
+- Instrument tables and effects retain their frame-based timing.
 
 Example:
 ```
 TEMPO 120
+INSTR lead WAVE=PULSE ADSR=0,4,10,4
+VOICE 1 lead: C4 D4 TEMPO 90 E4 F4
+VOICE 2 lead: O2 C1
 ```
+
+To change tempo during a held note in the same voice, split the note with a tie:
+`C4 TEMPO 60 & C4`. The note stays gated across the change.
 
 ### 3.5 TIME
 

@@ -76,6 +76,24 @@ public class ScoreMapExporterTest {
 		assertEquals(expected, event.displayText());
 	}
 
+	@Test
+	public void inlineTempoKeepsSourceMapAlignedAcrossVoicesAndTies() {
+		ParsedScore parsed = parse("""
+				TEMPO 120
+				INSTR lead WAVE=PULSE ADSR=0,4,10,4
+				VOICE 1 lead: C2
+				VOICE 2 lead: E4 TEMPO 60 & E4 F4
+				""");
+		var map = ScoreMapExporter.build(101, parsed.tree(), 1, parsed.timedScore(), SOURCE_URI, SOURCE_PATH);
+		var first = map.events().stream().filter(event -> event.voiceIndex() == 1).findFirst().orElseThrow();
+		assertEquals(75, first.endFrame());
+		var secondVoice = map.events().stream().filter(event -> event.voiceIndex() == 2).toList();
+		assertEquals(75, secondVoice.get(0).endFrame());
+		assertEquals("F4", secondVoice.get(1).displayText());
+		assertEquals(75, secondVoice.get(1).startFrame());
+		assertEquals(125, secondVoice.get(secondVoice.size() - 1).endFrame());
+	}
+
 	private static ScoreMapExporter.EventEntry eventById(ScoreMapExporter.ScoreMap map, int eventId) {
 		return map.events().stream()
 				.filter(event -> event.eventId() == eventId)

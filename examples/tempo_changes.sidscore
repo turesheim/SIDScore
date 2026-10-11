@@ -1,0 +1,16 @@
+TITLE "Inline tempo changes"
+TEMPO 120
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=0,4,10,4 PW=$0800
+
+; Both voices follow the tempo change after two quarter notes.
+VOICE 1 lead: C4 D4 TEMPO 90 E4 F4
+VOICE 2 lead: O2 C1
+
+TUNE 2 {
+  TEMPO 150
+  ; A held note stays gated while this tune slows down.
+  VOICE 1 lead: G4 TEMPO 75 & G4
+  VOICE 2 lead: O2 G2
+}

@@ -95,6 +95,18 @@ TUNE 2 {
 Inline `TUNE` blocks share top-level instruments/tables. `IMPORT ... AS ...` and inline `TUNE` declarations also produce a selectable multi-tune player for CLI ASM/PRG export; SID export produces PSID subtunes.
 Subtune numbers (from `TUNE`, `IMPORT`, and optional `--stitch`) must be contiguous starting at `1`.
 
+Change tempo inline at a musical position: `VOICE 1 lead: C4 D4 TEMPO 90 E4 F4`.
+The change applies to all voices in that tune, including held notes. Each tune has
+its own changes. Use `C4 TEMPO 60 & C4` to change tempo partway through a held note.
+The Mutopia MIDI importer preserves tempo changes with these inline markers and
+keeps repeated note attacks. Instruments are embedded in each generated score.
+
+Regenerate the Beethoven examples from the local MIDI files:
+
+```sh
+python3 tools/import_mutopia_beetson.py --local-midi-dir examples/L.v.Beethoven
+```
+
 Number notation in `.sidscore`:
 
 - Decimal values are unprefixed (for example `600`).

@@ -311,6 +311,7 @@ voiceItem
   | GT
   | LT
   | swingStmt
+  | tempoStmt
   | noteOrRestOrHit
   | AMP
   | legatoScope

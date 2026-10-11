@@ -1391,7 +1391,7 @@ public final class SIDScorePlayerServer {
 		}
 		return new SIDScoreIR.TimedScore(score.title(), score.author(), score.released(),
 				score.tempoBpm(), score.ticksPerWhole(), score.defaultSwing(), score.system(),
-				score.tables(), score.effects(), voices, score.subtunes());
+				score.tables(), score.effects(), voices, score.subtunes(), score.tempoChanges());
 	}
 
 	private ServerMidiSource openSharedMidiSourceIfEnabled() throws MidiUnavailableException {

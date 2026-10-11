@@ -275,6 +275,13 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		if (importMode)
 			return;
 		int value = Integer.parseInt(ctx.INT().getText());
+		if (value < 1 || value > 300) {
+			throw new ValidationException(posLine(ctx.getStart()), posCol(ctx.getStart()), "TEMPO out of range 1..300");
+		}
+		if (currentVoice != null) {
+			currentVoice.emit(new SIDScoreIR.SetTempoIR(value));
+			return;
+		}
 		if (currentSong != null) {
 			currentSong.tempoBpm = OptionalInt.of(value);
 		} else {

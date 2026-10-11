@@ -42,17 +42,17 @@ public final class FrameEventCompiler {
 
 		SIDScoreIR.InstrumentIR instr = voice.instrument();
 
-		double ticksPerQuarter = score.ticksPerWhole() / 4.0;
-		double secondsPerTick = 60.0 / score.tempoBpm() / ticksPerQuarter;
 		double frameRate = score.system() == SIDScoreIR.VideoSystem.PAL ? RASTER_RATE_PAL : RASTER_RATE_NTSC;
 		double rem = 0.0;
+		int tick = 0;
 
 		int waveBits = waveMaskToCtrl(instr.waveMask());
 		int ctrlBase = waveBits | (instr.sync() ? 0x02 : 0x00) | (instr.ring() ? 0x04 : 0x00);
 		boolean lastGateOn = false;
 
 		for (SIDScoreIR.TimedEvent ev : voice.events()) {
-			double framesExact = ev.durationTicks() * secondsPerTick * frameRate + rem;
+			double framesExact = score.durationSeconds(tick, ev.durationTicks()) * frameRate + rem;
+			tick += ev.durationTicks();
 			int frames = (int) Math.max(1, Math.round(framesExact));
 			rem = framesExact - frames;
 
