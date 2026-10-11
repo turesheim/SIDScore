@@ -360,16 +360,16 @@ Allowed values:
 
 Multiple waveforms MAY be combined using `+` (e.g., `WAVE=SAW+PULSE`).
 
-![SAW](saw.png)
+![SAW: rising sawtooth waveform](docs/saw.svg)
 _SAW_
 
-![TRI](tri.png)
+![TRI: triangle waveform](docs/tri.svg)
 _TRI_
 
-![PULSE](pulse.png)
+![PULSE: pulse waveform with the high time marked as PW](docs/pulse.svg)
 _PULSE_
 
-![NOISE](noise.png)
+![NOISE: illustrative irregular waveform](docs/noise.svg)
 _NOISE_
 
 

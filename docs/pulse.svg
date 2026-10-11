@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="260" viewBox="0 0 660 260" role="img" aria-labelledby="title description">
+  <title id="title">PULSE waveform and pulse width</title>
+  <desc id="description">A pulse alternates between high and low levels. PW marks the high portion of one period.</desc>
+  <rect width="660" height="260" fill="white"/>
+  <path d="M16 110H644" fill="none" stroke="#57606a" stroke-width="1.5"/>
+  <path d="M40 200V20H180V200H240V20H380V200H440V20H580V200H640V20" fill="none" stroke="#1f2328" stroke-width="3" stroke-linejoin="round"/>
+  <path d="M40 208V242M180 208V242M40 234H180" fill="none" stroke="#57606a" stroke-width="1"/>
+  <path d="M40 234L48 230V238ZM180 234L172 230V238Z" fill="#1f2328"/>
+  <text x="110" y="226" text-anchor="middle" font-family="sans-serif" font-size="14" fill="#1f2328">PW (high time)</text>
+</svg>
