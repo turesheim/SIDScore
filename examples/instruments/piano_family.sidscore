@@ -1,50 +1,11 @@
 ; Shared piano-like instrument for Beethoven sonata imports.
-; Fast hammer transient, long wooden-string decay, and a darker filtered tail.
+; Fixed pulse tone with a fast attack and a decaying envelope.
+; Keep the timbre steady across registers and independent of other voices.
 
-; --- Waveform ---
-TABLE wave PianoHammerWave {
-  WAVE=SAW+PULSE RESET @1
-  WAVE=PULSE+TRI @3
-  WAVE=PULSE+TRI HOLD
-}
-
-; --- Pulse Modulation ---
-TABLE pw PianoStringPW {
-  $0700 @4
-  $0780 @6
-  $0840 @8
-  $0800 @10
-  LOOP
-}
-
-; --- Filter Modulation ---
-TABLE filter PianoCutoff {
-  2047 @1
-  1700 @4
-  1250 @8
-  850 @12
-  620 HOLD
-}
-
-; --- Instrument ---
 INSTR piano
-  ; Waveform
-  WAVE=PULSE+TRI
-  WAVESEQ=PianoHammerWave
-
-  ; Volume Envelope
-  ADSR=0,10,0,5
-
-  ; Pulse Modulation
+  WAVE=PULSE
+  ADSR=0,9,0,4
   PW=$0800
-  PWSEQ=PianoStringPW
-
-  ; Filter Modulation
-  FILTER=LP
-  CUTOFF=1400
-  RES=1
-  FILTERSEQ=PianoCutoff
-
-  ; Articulation
+  FILTER=OFF
   GATE=RETRIGGER
   GATEMIN=1

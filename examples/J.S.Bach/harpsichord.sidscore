@@ -1,50 +1,10 @@
-; Shared instrument definition for Bach examples.
-; Noisy quill transient, bright plucked body, quick decay, and narrow pulse shimmer.
-
-TEMPO 200
-
-; --- Waveform ---
-TABLE wave HarpsiWave {
-  WAVE=NOISE+PULSE RESET @1
-  WAVE=SAW+PULSE @2
-  WAVE=PULSE @4
-  WAVE=SAW+PULSE HOLD
-}
-
-; --- Pulse Modulation ---
-TABLE pw HarpsiPW {
-  $0380 @1
-  $0500 @2
-  $0680 @3
-  $0580 @3
-  LOOP
-}
-
-; --- Filter Modulation ---
-TABLE filter HarpsiCutoff {
-  2047 @1
-  1900 @2
-  1750 HOLD
-}
+; Harpsichord instrument for importing into other scores.
+; Fixed pulse tone with a crisp attack and a short plucked decay.
 
 INSTR harpsichord
-  ; Waveform
-  WAVE=SAW+PULSE
-  WAVESEQ=HarpsiWave
-
-  ; Volume Envelope
+  WAVE=PULSE
   ADSR=0,6,0,3
-
-  ; Pulse Modulation
   PW=$0600
-  PWSEQ=HarpsiPW
-
-  ; Filter Modulation
-  FILTER=LP
-  CUTOFF=1850
-  RES=1
-  FILTERSEQ=HarpsiCutoff
-
-  ; Articulation
+  FILTER=OFF
   GATE=RETRIGGER
   GATEMIN=1
