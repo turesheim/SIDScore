@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -eq 0 || "$1" == "--help" || "$1" == "-h" ]]; then
+  echo 'Usage: play <file.sidscore> [SIDScore options]'
+  echo 'Example: ./play examples/games/Forbidden_Forest.sidscore --tune 1'
+  echo 'Press Ctrl+C to stop playback.'
+  exit 0
+fi
+
+repo_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+module_dir="$repo_dir/net.resheim.sidscore"
+classes="$module_dir/bin/classes"
+runtime="$module_dir/lib/antlr-runtime-4.13.1.jar"
+
+if [[ ! -f "$classes/net/resheim/sidscore/SIDScoreCLI.class" || ! -f "$runtime" ]]; then
+  echo 'SIDScore is not built, or its ANTLR runtime is missing. Build it with JDK 21:' >&2
+  printf '  mvn -f "%s/pom.xml" -q package\n' "$module_dir" >&2
+  exit 1
+fi
+
+java_cmd=java
+if [[ -n "${JAVA_HOME:-}" ]]; then
+  java_cmd="$JAVA_HOME/bin/java"
+elif [[ -x /usr/libexec/java_home ]]; then
+  java_home="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
+  if [[ -n "$java_home" ]]; then
+    java_cmd="$java_home/bin/java"
+  fi
+fi
+
+exec "$java_cmd" "-Dsidscore.kickass.jar=$module_dir/lib/KickAss.jar" \
+  -cp "$classes:$runtime" net.resheim.sidscore.SIDScoreCLI "$@"

@@ -35,6 +35,15 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
   net.resheim.sidscore.SIDScoreCLI examples/test.sidscore
 ```
 
+For a shorter shell command, use the executable `play` script after building:
+
+```sh
+./play examples/games/Forbidden_Forest.sidscore
+./play examples/games/Forbidden_Forest.sidscore --tune 2
+```
+
+Press Ctrl+C to stop playback. The script forwards all CLI options, locates the compiled classes relative to itself, and keeps tune/output paths relative to your shell's working directory. It uses `JAVA_HOME` when set, otherwise selects JDK 21 on macOS if available or uses `java` from PATH. You can add the repository root to PATH to invoke it as `play` from another directory.
+
 Use `--no-play` with `--wav`, `--asm`, `--prg`, or `--sid` to export without realtime audio.
 
 Bundle multiple musical scores into one multi-tune SID (subtunes):
