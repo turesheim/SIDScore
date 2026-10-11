@@ -539,18 +539,22 @@ def freq_reg_to_midi(freq: int | None, system: str) -> float | None:
 
 def notation_for_voice(rows: list[DumpRow], voice: int, length_frames: int) -> list[str]:
     events: list[str] = []
-    last_note: str | None = None
     for row in state_rows(rows):
         if row.frame >= length_frames:
             break
         state = row.voices[voice - 1]
         converted = note_to_sidscore(state.note)
-        if converted:
-            last_note = converted
-        if state.wave is None or not has_gate(state.wave) or not last_note:
+        active_note = (
+            state.freq is not None
+            and state.freq > 0
+            and state.wave is not None
+            and has_gate(state.wave)
+            and converted is not None
+        )
+        if not active_note:
             events.append("R8")
         else:
-            events.append(f"{last_note}8")
+            events.append(f"{converted}8")
     return events
 
 
