@@ -4,7 +4,7 @@ import unittest
 import sid2sidscore as sid2
 
 
-def make_row(frame: int, freq: int, note: str = "C4") -> sid2.DumpRow:
+def make_row(frame: int, freq: int | None, note: str | None = "C4") -> sid2.DumpRow:
     return sid2.DumpRow(
         frame=frame,
         voices=[
@@ -17,6 +17,23 @@ def make_row(frame: int, freq: int, note: str = "C4") -> sid2.DumpRow:
 
 
 class Sid2SidScoreVibratoTest(unittest.TestCase):
+    def test_zero_frequency_with_gate_is_rest(self) -> None:
+        rows = [make_row(0, 0, "C-0")]
+
+        self.assertEqual(["R8"], sid2.notation_for_voice(rows, 1, 1))
+
+    def test_missing_note_with_gate_is_rest(self) -> None:
+        rows = [make_row(0, sid2.freq_reg_from_midi(60, "PAL"), None)]
+
+        self.assertEqual(["R8"], sid2.notation_for_voice(rows, 1, 1))
+
+    def test_missing_frequency_is_rest(self) -> None:
+        self.assertEqual(["R8"], sid2.notation_for_voice([make_row(0, None)], 1, 1))
+
+    def test_lowest_note_with_positive_frequency_is_preserved(self) -> None:
+        rows = [make_row(0, sid2.freq_reg_from_midi(12, "PAL"), "C-0")]
+        self.assertEqual(["O0 C8"], sid2.notation_for_voice(rows, 1, 1))
+
     def test_detects_stable_pitch_vibrato(self) -> None:
         delay = 4
         rate = 16
