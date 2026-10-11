@@ -15,7 +15,7 @@ import subprocess
 import sys
 import unicodedata
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable
@@ -25,64 +25,31 @@ from urllib.request import Request, urlopen
 
 DEFAULT_PAGE_URL = "https://www.mutopiaproject.org/cgibin/make-table.cgi?collection=beetson&preview=1"
 USER_AGENT = "sidscore-mutopia-import/1.0"
-INSTRUMENT_REL_PATH = "../instruments/piano_family.sidscore"
-
-PIANO_FAMILY_SIDSCORE = """; Shared piano-like instruments for Beethoven sonata imports.
-; Tuning basis from classic C64 references:
-; - C64 User's Guide "simulate instruments": piano = pulse, AD=9, SR=0,
-;   pulse Hi=0, Lo=255.
-; - C64 Programmer's Reference Guide "piano type sound":
-;   pulse with A=0 D=9 S=0 R=0, PW around $0800.
-; To reduce hard clicks in dense passages, we keep release at 1 on upper/mid
-; and 2 on bass while preserving the short-decay piano contour.
-
-TABLE wave PianoHiWave {
-  WAVE=SAW+PULSE @1
-  WAVE=PULSE HOLD
-}
-
-TABLE wave PianoMidWave {
-  WAVE=PULSE HOLD
-}
-
-TABLE wave PianoLowWave {
-  WAVE=TRI+PULSE @1
-  WAVE=PULSE HOLD
-}
-
-TABLE pw PianoHiPW {
-  $0780 @2
-  $0800 @2
-  $0840 @2
-  $0800 @2
-  LOOP
-}
-
-TABLE pw PianoMidPW {
-  $00FF @3
-  $0120 @3
-  $00FF @3
-  LOOP
-}
-
-TABLE pw PianoLowPW {
-  $0200 @4
-  $0240 @4
-  $0200 @4
-  LOOP
-}
+PIANO_INSTRUMENTS_SIDSCORE = """; Embedded piano reduction: clear melody, soft inner voice, rounded bass.
+; Low sustain keeps long notes audible after the initial decay.
+; Fixed waveforms and no filter automation keep the three voices independent.
 
 INSTR piano_hi
-  WAVE=PULSE ADSR=0,9,0,1 PW=$0800
-  WAVESEQ=PianoHiWave PWSEQ=PianoHiPW
+  WAVE=PULSE
+  ADSR=0,10,3,5
+  PW=$0800
+  FILTER=OFF
+  GATE=RETRIGGER
+  GATEMIN=1
 
 INSTR piano_mid
-  WAVE=PULSE ADSR=0,9,0,1 PW=$00FF
-  WAVESEQ=PianoMidWave PWSEQ=PianoMidPW
+  WAVE=TRI
+  ADSR=0,9,2,4
+  FILTER=OFF
+  GATE=RETRIGGER
+  GATEMIN=1
 
 INSTR piano_low
-  WAVE=PULSE ADSR=0,8,1,2 PW=$0200
-  WAVESEQ=PianoLowWave PWSEQ=PianoLowPW
+  WAVE=TRI
+  ADSR=0,10,4,5
+  FILTER=OFF
+  GATE=RETRIGGER
+  GATEMIN=1
 """
 
 
@@ -107,6 +74,7 @@ class MidiSong:
     time_num: int
     time_den: int
     notes: list[NoteEvent]
+    tempo_changes: list[tuple[int, int]] = field(default_factory=list)
 
 
 def fetch_text(url: str) -> str:
@@ -224,7 +192,7 @@ def parse_midi(data: bytes) -> MidiSong:
     pos = 8 + hdr_len
 
     notes: list[NoteEvent] = []
-    tempo_us_per_qn: int | None = None
+    tempos: dict[int, int] = {}
     time_num: int | None = None
     time_den: int | None = None
 
@@ -271,8 +239,8 @@ def parse_midi(data: bytes) -> MidiSong:
                 tpos += mlen
                 if meta_type == 0x2F:
                     break
-                if meta_type == 0x51 and mlen == 3 and tempo_us_per_qn is None:
-                    tempo_us_per_qn = (meta[0] << 16) | (meta[1] << 8) | meta[2]
+                if meta_type == 0x51 and mlen == 3:
+                    tempos[tick] = (meta[0] << 16) | (meta[1] << 8) | meta[2]
                 if meta_type == 0x58 and mlen >= 2 and time_num is None and time_den is None:
                     time_num = meta[0]
                     time_den = 1 << meta[1]
@@ -322,18 +290,30 @@ def parse_midi(data: bytes) -> MidiSong:
                 if last_tick > s:
                     notes.append(NoteEvent(start_tick=s, end_tick=last_tick, pitch=pitch))
 
-    if tempo_us_per_qn is None:
-        tempo_bpm = 120
-    else:
-        tempo_bpm = int(round(60_000_000.0 / tempo_us_per_qn))
-    tempo_bpm = max(30, min(tempo_bpm, 260))
+    def bpm(tempo_us_per_qn: int) -> int:
+        if tempo_us_per_qn <= 0:
+            raise ValueError("MIDI tempo must be positive")
+        value = int(round(60_000_000.0 / tempo_us_per_qn))
+        if not 1 <= value <= 300:
+            raise ValueError(f"MIDI tempo {value} is outside SIDScore's range 1..300")
+        return value
+
+    tempo_bpm = bpm(tempos.get(0, 500_000))
+    tempo_changes: list[tuple[int, int]] = []
+    previous = tempo_bpm
+    for tick, tempo_us_per_qn in sorted(tempos.items()):
+        value = bpm(tempo_us_per_qn)
+        if tick > 0 and value != previous:
+            tempo_changes.append((tick, value))
+        previous = value
 
     if time_num is None:
         time_num = 4
     if time_den is None:
         time_den = 4
 
-    return MidiSong(ppq=ppq, tempo_bpm=tempo_bpm, time_num=time_num, time_den=time_den, notes=notes)
+    return MidiSong(ppq=ppq, tempo_bpm=tempo_bpm, time_num=time_num, time_den=time_den,
+                    notes=notes, tempo_changes=tempo_changes)
 
 
 def quantize_sid_ticks(raw_tick: int, ppq: int) -> int:
@@ -421,7 +401,8 @@ def extract_voice_segments(song: MidiSong) -> list[list[tuple[int | None, int]]]
             continue
         voices = choose_voices(active, current_pitch)
         for v in range(3):
-            if voices[v] == current_pitch[v]:
+            # A repeated MIDI note is a new attack even when its pitch is unchanged.
+            if voices[v] == current_pitch[v] and voices[v] not in starts.get(tick, []):
                 current_len[v] += dur
             else:
                 if current_len[v] > 0:
@@ -482,24 +463,49 @@ def pitch_to_note(pitch: int) -> tuple[int, str]:
     return octave, name
 
 
-def emit_voice_tokens(segments: Iterable[tuple[int | None, int]]) -> list[str]:
+def emit_voice_tokens(segments: Iterable[tuple[int | None, int]],
+                      tempo_changes: Iterable[tuple[int, int]] = ()) -> list[str]:
     tokens: list[str] = []
     current_octave = 4
-    for pitch, dur in segments:
+    changes = iter(sorted(tempo_changes))
+    change = next(changes, None)
+    tick = 0
+
+    def emit(pitch: int | None, dur: int, continuation: bool) -> None:
+        nonlocal current_octave
         parts = decompose_duration(dur)
         if pitch is None:
             for _, denom, dotted in parts:
                 tokens.append(f"R{denom}{'.' if dotted else ''}")
-            continue
+            return
 
         octave, note_name = pitch_to_note(pitch)
         for i, (_, denom, dotted) in enumerate(parts):
             if octave != current_octave:
                 tokens.append(f"O{octave}")
                 current_octave = octave
-            if i > 0:
+            if i > 0 or continuation:
                 tokens.append("&")
             tokens.append(f"{note_name}{denom}{'.' if dotted else ''}")
+
+    for pitch, dur in segments:
+        end = tick + dur
+        continuation = False
+        while change is not None and change[0] <= end:
+            at, tempo = change
+            if at < tick:
+                raise ValueError("Tempo changes must lie on the voice timeline")
+            if at > tick:
+                emit(pitch, at - tick, continuation)
+                continuation = pitch is not None
+                tick = at
+            tokens.extend(["TEMPO", str(tempo)])
+            change = next(changes, None)
+        if tick < end:
+            emit(pitch, end - tick, continuation)
+        tick = end
+    if change is not None:
+        raise ValueError("Tempo change occurs after the voice ends")
     return tokens
 
 
@@ -517,7 +523,10 @@ def format_voice_tokens(tokens: list[str], indent: str = "  ", max_tokens_per_li
 
 def sidscore_text(piece: PieceLink, song: MidiSong) -> str:
     segments = extract_voice_segments(song)
-    voice1 = format_voice_tokens(emit_voice_tokens(segments[0]))
+    # One voice carries tune-wide changes; all voices share the resolved tempo map.
+    changes = sorted({quantize_sid_ticks(tick, song.ppq): tempo
+                      for tick, tempo in song.tempo_changes}.items())
+    voice1 = format_voice_tokens(emit_voice_tokens(segments[0], changes))
     voice2 = format_voice_tokens(emit_voice_tokens(segments[1]))
     voice3 = format_voice_tokens(emit_voice_tokens(segments[2]))
     title = sidscore_string(piece.title)
@@ -525,6 +534,7 @@ def sidscore_text(piece: PieceLink, song: MidiSong) -> str:
 ; Source: {piece.mid_url}
 ; Conversion is approximate: dense piano texture is reduced to 3 SID voices.
 ; Voice assignment favors top melody, bass foundation, and stable middle motion.
+; Repeated MIDI attacks and tempo changes are preserved.
 
 TITLE "{title}"
 AUTHOR "L. V. Beethoven"
@@ -534,9 +544,7 @@ TEMPO {song.tempo_bpm}
 TIME {song.time_num}/{song.time_den}
 SYSTEM PAL
 
-INSTR piano_hi "{INSTRUMENT_REL_PATH}"
-INSTR piano_mid "{INSTRUMENT_REL_PATH}"
-INSTR piano_low "{INSTRUMENT_REL_PATH}"
+{PIANO_INSTRUMENTS_SIDSCORE.rstrip()}
 
 VOICE 1 piano_hi:
 {voice1}
@@ -549,15 +557,7 @@ VOICE 3 piano_low:
 """
 
 
-def write_shared_instruments(out_root: Path) -> Path:
-    instr_dir = out_root / "instruments"
-    instr_dir.mkdir(parents=True, exist_ok=True)
-    path = instr_dir / "piano_family.sidscore"
-    path.write_text(PIANO_FAMILY_SIDSCORE, encoding="utf-8")
-    return path
-
-
-def write_readme(out_root: Path, source_page: str, pieces: list[PieceLink], instrument_file: Path) -> None:
+def write_readme(out_root: Path, source_page: str, pieces: list[PieceLink]) -> None:
     stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     lines = [
         "# Beethoven Sonata Import (Mutopia)",
@@ -568,7 +568,7 @@ def write_readme(out_root: Path, source_page: str, pieces: list[PieceLink], inst
         f"- Imported: {stamp}",
         f"- MID files: `{(out_root / 'mid').as_posix()}`",
         f"- SIDScore files: `{(out_root / 'sidscore').as_posix()}`",
-        f"- Shared instrument file: `{instrument_file.as_posix()}`",
+        "- Instruments are embedded in each SIDScore file.",
         "",
         "## Pieces",
         "",
@@ -579,18 +579,39 @@ def write_readme(out_root: Path, source_page: str, pieces: list[PieceLink], inst
     (out_root / "README.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def regenerate_local_scores(directory: Path) -> int:
+    midi_files = sorted(directory.glob("*.mid"))
+    if not midi_files:
+        raise ValueError(f"No MIDI files in {directory}")
+    for midi in midi_files:
+        score = midi.with_suffix(".sidscore")
+        previous = score.read_text() if score.exists() else ""
+        title_match = re.search(r'^TITLE "([^"\r\n]*)"$', previous, re.MULTILINE)
+        source_match = re.search(r'^; Source: (.*)$', previous, re.MULTILINE)
+        title = title_match[1] if title_match else midi.stem
+        url = source_match[1] if source_match else midi.resolve().as_uri()
+        piece = PieceLink(title, url, midi.stem)
+        score.write_text(sidscore_text(piece, parse_midi(midi.read_bytes())), encoding="utf-8")
+    return len(midi_files)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--page-url", default=DEFAULT_PAGE_URL)
     ap.add_argument("--out-root", default="examples/L.v.Beethoven/beetson")
+    ap.add_argument("--local-midi-dir", type=Path,
+                    help="Regenerate adjacent scores from local MIDI files, without downloading")
     args = ap.parse_args()
+    if args.local_midi_dir is not None:
+        count = regenerate_local_scores(args.local_midi_dir)
+        print(f"Regenerated {count} scores with embedded instruments in {args.local_midi_dir}")
+        return 0
 
     out_root = Path(args.out_root)
     mid_dir = out_root / "mid"
     sid_dir = out_root / "sidscore"
     mid_dir.mkdir(parents=True, exist_ok=True)
     sid_dir.mkdir(parents=True, exist_ok=True)
-    instrument_file = write_shared_instruments(out_root)
 
     page_html = fetch_text(args.page_url)
     pieces = parse_piece_links(page_html)
@@ -608,7 +629,7 @@ def main() -> int:
         song = parse_midi(mid_path.read_bytes())
         sid_path.write_text(sidscore_text(p, song), encoding="utf-8")
 
-    write_readme(out_root, args.page_url, pieces, instrument_file)
+    write_readme(out_root, args.page_url, pieces)
     print(f"Wrote {len(pieces)} MID + SIDScore pairs to {out_root}")
     return 0
 

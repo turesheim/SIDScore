@@ -13,6 +13,7 @@ package net.resheim.sidscore.ir;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -286,6 +287,16 @@ public final class SIDScoreIR {
 	public static final record VoiceIR(int index, String instrumentName, List<VoiceItemIR> items) {
 	}
 
+	/** A tune-wide tempo change at an absolute musical tick (48 ticks per quarter). */
+	public static final record TempoChangeIR(int tick, int tempoBpm) {
+		public TempoChangeIR {
+			if (tick < 0)
+				throw new IllegalArgumentException("TEMPO tick must be >= 0");
+			if (tempoBpm < 1 || tempoBpm > 300)
+				throw new IllegalArgumentException("TEMPO out of range 1..300");
+		}
+	}
+
 	public static final record SongIR(Optional<String> title,
 			Optional<String> author,
 			Optional<String> released,
@@ -305,7 +316,7 @@ public final class SIDScoreIR {
 	}
 
 	public sealed interface VoiceItemIR
-			permits NoteIR, RestIR, HitIR, SetDefaultLengthIR, SetSwingIR, TieIR, LegatoScopeIR, TupletIR, RepeatIR {
+			permits NoteIR, RestIR, HitIR, SetDefaultLengthIR, SetSwingIR, SetTempoIR, TieIR, LegatoScopeIR, TupletIR, RepeatIR {
 	}
 
 	public static final record NoteIR(PitchIR pitch, Optional<LengthIR> length, boolean dotted) implements VoiceItemIR {
@@ -321,6 +332,9 @@ public final class SIDScoreIR {
 	}
 
 	public static final record SetSwingIR(SwingSetting swing) implements VoiceItemIR {
+	}
+
+	public static final record SetTempoIR(int tempoBpm) implements VoiceItemIR {
 	}
 
 	public static final record TieIR() implements VoiceItemIR {
@@ -371,7 +385,43 @@ public final class SIDScoreIR {
 	public static final record TimedScore(Optional<String> title, Optional<String> author, Optional<String> released,
 			int tempoBpm, int ticksPerWhole, SwingSetting defaultSwing, VideoSystem system,
 			Map<String, TableIR> tables, Map<String, EffectIR> effects, Map<Integer, TimedVoice> voices,
-			Map<Integer, Path> subtunes) {
+			Map<Integer, Path> subtunes, List<TempoChangeIR> tempoChanges) {
+		public TimedScore {
+			tempoChanges = tempoChanges.stream().sorted(Comparator.comparingInt(TempoChangeIR::tick)).toList();
+			for (int i = 1; i < tempoChanges.size(); i++) {
+				if (tempoChanges.get(i - 1).tick() == tempoChanges.get(i).tick()) {
+					throw new IllegalArgumentException("Duplicate TEMPO tick: " + tempoChanges.get(i).tick());
+				}
+			}
+		}
+
+		public TimedScore(Optional<String> title, Optional<String> author, Optional<String> released, int tempoBpm,
+				int ticksPerWhole, SwingSetting defaultSwing, VideoSystem system, Map<String, TableIR> tables,
+				Map<String, EffectIR> effects, Map<Integer, TimedVoice> voices, Map<Integer, Path> subtunes) {
+			this(title, author, released, tempoBpm, ticksPerWhole, defaultSwing, system, tables, effects, voices,
+					subtunes, List.of());
+		}
+
+		/** Integrates tempo across an interval, including changes during a held note. */
+		public double durationSeconds(int startTick, int durationTicks) {
+			int endTick = Math.addExact(startTick, durationTicks);
+			int cursor = startTick;
+			int tempo = tempoBpm;
+			double seconds = 0.0;
+			double ticksPerQuarter = ticksPerWhole / 4.0;
+			for (TempoChangeIR change : tempoChanges) {
+				if (change.tick() <= cursor) {
+					tempo = change.tempoBpm();
+				} else if (change.tick() < endTick) {
+					seconds += (change.tick() - cursor) * (60.0 / tempo / ticksPerQuarter);
+					cursor = change.tick();
+					tempo = change.tempoBpm();
+				} else {
+					break;
+				}
+			}
+			return seconds + (endTick - cursor) * (60.0 / tempo / ticksPerQuarter);
+		}
 	}
 
 	// -------------------------
@@ -392,6 +442,7 @@ public final class SIDScoreIR {
 				diag.error("TEMPO out of range 1..300");
 
 			Map<Integer, TimedVoice> timedVoices = new LinkedHashMap<>();
+			Map<Integer, TempoChangeIR> tempoChanges = new LinkedHashMap<>();
 			Map<Integer, Integer> filterModesByVoice = new LinkedHashMap<>();
 			for (int v = 1; v <= 3; v++) {
 				VoiceIR voice = score.voices().get(v);
@@ -476,7 +527,7 @@ public final class SIDScoreIR {
 							+ "': FILTER is OFF but filter parameters are set (ignored).");
 				}
 
-				VoiceContext ctx = new VoiceContext(v, instr, score.defaultSwing(), diag);
+				VoiceContext ctx = new VoiceContext(v, instr, score.defaultSwing(), diag, tempoChanges);
 				List<TimedEvent> events = resolveVoiceItems(voice.items(), ctx);
 				timedVoices.put(v, new TimedVoice(v, instr, events));
 			}
@@ -504,7 +555,7 @@ public final class SIDScoreIR {
 			VideoSystem system = score.system().orElse(VideoSystem.PAL);
 			TimedScore ts = new TimedScore(score.title(), score.author(), score.released(), score.tempoBpm(),
 					DEFAULT_TICKS_PER_WHOLE, score.defaultSwing(), system, tables, score.effects(),
-					timedVoices, score.subtunes());
+					timedVoices, score.subtunes(), List.copyOf(tempoChanges.values()));
 			return new Result(ts, diag);
 		}
 
@@ -512,17 +563,21 @@ public final class SIDScoreIR {
 			final int voiceIndex;
 			final InstrumentIR instrument;
 			final Diagnostics diag;
+			final Map<Integer, TempoChangeIR> tempoChanges;
+			int tick = 0;
 
 			LengthIR defaultLen = LengthIR.L8;
 			SwingSetting swing;
 			boolean inLegato = false;
 			int swingPhase = 0; // for 8ths only
 
-			VoiceContext(int voiceIndex, InstrumentIR instrument, SwingSetting defaultSwing, Diagnostics diag) {
+			VoiceContext(int voiceIndex, InstrumentIR instrument, SwingSetting defaultSwing, Diagnostics diag,
+					Map<Integer, TempoChangeIR> tempoChanges) {
 				this.voiceIndex = voiceIndex;
 				this.instrument = instrument;
 				this.swing = defaultSwing;
 				this.diag = diag;
+				this.tempoChanges = tempoChanges;
 			}
 		}
 
@@ -536,6 +591,14 @@ public final class SIDScoreIR {
 			for (int i = 0; i < flattened.size(); i++) {
 				VoiceItemIR it = flattened.get(i);
 
+				if (it instanceof SetTempoIR tempo) {
+					TempoChangeIR change = new TempoChangeIR(ctx.tick, tempo.tempoBpm());
+					TempoChangeIR previous = ctx.tempoChanges.putIfAbsent(ctx.tick, change);
+					if (previous != null && previous.tempoBpm() != change.tempoBpm()) {
+						ctx.diag.error("Conflicting TEMPO at tick " + ctx.tick + " in VOICE " + ctx.voiceIndex);
+					}
+					continue;
+				}
 				if (it instanceof SetDefaultLengthIR sl) {
 					ctx.defaultLen = sl.length();
 					continue;
@@ -582,6 +645,7 @@ public final class SIDScoreIR {
 						case NOISE -> TimedEvent.noise(ticks, computeGate(ctx, lastWasNote));
 						};
 						out.add(te);
+						ctx.tick += ticks;
 						lastWasNote = te.type() == TimedType.NOTE || te.type() == TimedType.NOISE;
 						// swing ignored inside tuplets => don't advance swingPhase
 					}
@@ -607,9 +671,12 @@ public final class SIDScoreIR {
 					}
 
 					int add = resolveDurationTicks(nn.length(), nn.dotted(), ctx, false);
-					TimedEvent merged = TimedEvent.note(prevMidi, out.get(out.size() - 1).durationTicks() + add,
-							GateMode.HOLD);
+					TimedEvent previous = out.get(out.size() - 1);
+					// A tie extends the existing event; preserve its initial attack.
+					TimedEvent merged = TimedEvent.note(prevMidi, previous.durationTicks() + add,
+							previous.gateMode().orElse(GateMode.RETRIG));
 					out.set(out.size() - 1, merged);
+					ctx.tick += add;
 					i += 1; // consume next note
 					lastWasNote = true;
 					continue;
@@ -622,6 +689,7 @@ public final class SIDScoreIR {
 					}
 					int ticks = resolveDurationTicks(n.length(), n.dotted(), ctx, true);
 					out.add(TimedEvent.note(n.pitch().toMidi(), ticks, computeGate(ctx, lastWasNote)));
+					ctx.tick += ticks;
 					lastWasNote = true;
 					advanceSwingPhaseIfRelevant(n.length(), ctx);
 					continue;
@@ -630,6 +698,7 @@ public final class SIDScoreIR {
 				if (it instanceof RestIR r) {
 					int ticks = resolveDurationTicks(r.length(), r.dotted(), ctx, true);
 					out.add(TimedEvent.rest(ticks));
+					ctx.tick += ticks;
 					lastWasNote = false;
 					advanceSwingPhaseIfRelevant(r.length(), ctx);
 					continue;
@@ -644,6 +713,7 @@ public final class SIDScoreIR {
 					}
 					int ticks = resolveDurationTicks(h.length(), h.dotted(), ctx, true);
 					out.add(TimedEvent.noise(ticks, computeGate(ctx, lastWasNote)));
+					ctx.tick += ticks;
 					lastWasNote = true;
 					advanceSwingPhaseIfRelevant(h.length(), ctx);
 					continue;

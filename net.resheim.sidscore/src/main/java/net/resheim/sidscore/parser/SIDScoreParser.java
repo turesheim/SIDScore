@@ -3661,6 +3661,9 @@ public class SIDScoreParser extends Parser {
 		public SwingStmtContext swingStmt() {
 			return getRuleContext(SwingStmtContext.class,0);
 		}
+		public TempoStmtContext tempoStmt() {
+			return getRuleContext(TempoStmtContext.class,0);
+		}
 		public NoteOrRestOrHitContext noteOrRestOrHit() {
 			return getRuleContext(NoteOrRestOrHitContext.class,0);
 		}
@@ -3692,7 +3695,7 @@ public class SIDScoreParser extends Parser {
 		VoiceItemContext _localctx = new VoiceItemContext(_ctx, getState());
 		enterRule(_localctx, 92, RULE_voiceItem);
 		try {
-			setState(522);
+			setState(523);
 			_errHandler.sync(this);
 			switch (_input.LA(1)) {
 			case OCTAVE:
@@ -3730,40 +3733,47 @@ public class SIDScoreParser extends Parser {
 				swingStmt();
 				}
 				break;
-			case NOTE:
-			case REST:
-			case HIT:
+			case TEMPO:
 				enterOuterAlt(_localctx, 6);
 				{
 				setState(517);
+				tempoStmt();
+				}
+				break;
+			case NOTE:
+			case REST:
+			case HIT:
+				enterOuterAlt(_localctx, 7);
+				{
+				setState(518);
 				noteOrRestOrHit();
 				}
 				break;
 			case AMP:
-				enterOuterAlt(_localctx, 7);
+				enterOuterAlt(_localctx, 8);
 				{
-				setState(518);
+				setState(519);
 				match(AMP);
 				}
 				break;
 			case LEG_START:
-				enterOuterAlt(_localctx, 8);
+				enterOuterAlt(_localctx, 9);
 				{
-				setState(519);
+				setState(520);
 				legatoScope();
 				}
 				break;
 			case TUPLET_START:
-				enterOuterAlt(_localctx, 9);
+				enterOuterAlt(_localctx, 10);
 				{
-				setState(520);
+				setState(521);
 				tuplet();
 				}
 				break;
 			case LPAREN:
-				enterOuterAlt(_localctx, 10);
+				enterOuterAlt(_localctx, 11);
 				{
-				setState(521);
+				setState(522);
 				repeat();
 				}
 				break;
@@ -3808,7 +3818,7 @@ public class SIDScoreParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(524);
+			setState(525);
 			_la = _input.LA(1);
 			if ( !(((((_la - 91)) & ~0x3f) == 0 && ((1L << (_la - 91)) & 7L) != 0)) ) {
 			_errHandler.recoverInline(this);
@@ -3862,23 +3872,23 @@ public class SIDScoreParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(526);
+			setState(527);
 			match(LEG_START);
-			setState(530);
+			setState(531);
 			_errHandler.sync(this);
 			_la = _input.LA(1);
-			while (((((_la - 30)) & ~0x3f) == 0 && ((1L << (_la - 30)) & -572216637420208127L) != 0)) {
+			while (_la==TEMPO || _la==SWING || ((((_la - 72)) & ~0x3f) == 0 && ((1L << (_la - 72)) & 4064197L) != 0)) {
 				{
 				{
-				setState(527);
+				setState(528);
 				voiceItem();
 				}
 				}
-				setState(532);
+				setState(533);
 				_errHandler.sync(this);
 				_la = _input.LA(1);
 			}
-			setState(533);
+			setState(534);
 			match(LEG_END);
 			}
 		}
@@ -3924,23 +3934,23 @@ public class SIDScoreParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(535);
+			setState(536);
 			match(TUPLET_START);
-			setState(539);
+			setState(540);
 			_errHandler.sync(this);
 			_la = _input.LA(1);
-			while (((((_la - 30)) & ~0x3f) == 0 && ((1L << (_la - 30)) & -572216637420208127L) != 0)) {
+			while (_la==TEMPO || _la==SWING || ((((_la - 72)) & ~0x3f) == 0 && ((1L << (_la - 72)) & 4064197L) != 0)) {
 				{
 				{
-				setState(536);
+				setState(537);
 				voiceItem();
 				}
 				}
-				setState(541);
+				setState(542);
 				_errHandler.sync(this);
 				_la = _input.LA(1);
 			}
-			setState(542);
+			setState(543);
 			match(RBRACE);
 			}
 		}
@@ -3986,23 +3996,23 @@ public class SIDScoreParser extends Parser {
 		try {
 			enterOuterAlt(_localctx, 1);
 			{
-			setState(544);
+			setState(545);
 			match(LPAREN);
-			setState(548);
+			setState(549);
 			_errHandler.sync(this);
 			_la = _input.LA(1);
-			while (((((_la - 30)) & ~0x3f) == 0 && ((1L << (_la - 30)) & -572216637420208127L) != 0)) {
+			while (_la==TEMPO || _la==SWING || ((((_la - 72)) & ~0x3f) == 0 && ((1L << (_la - 72)) & 4064197L) != 0)) {
 				{
 				{
-				setState(545);
+				setState(546);
 				voiceItem();
 				}
 				}
-				setState(550);
+				setState(551);
 				_errHandler.sync(this);
 				_la = _input.LA(1);
 			}
-			setState(551);
+			setState(552);
 			match(REPEAT_END);
 			}
 		}
@@ -4018,7 +4028,7 @@ public class SIDScoreParser extends Parser {
 	}
 
 	public static final String _serializedATN =
-		"\u0004\u0001c\u022a\u0002\u0000\u0007\u0000\u0002\u0001\u0007\u0001\u0002"+
+		"\u0004\u0001c\u022b\u0002\u0000\u0007\u0000\u0002\u0001\u0007\u0001\u0002"+
 		"\u0002\u0007\u0002\u0002\u0003\u0007\u0003\u0002\u0004\u0007\u0004\u0002"+
 		"\u0005\u0007\u0005\u0002\u0006\u0007\u0006\u0002\u0007\u0007\u0007\u0002"+
 		"\b\u0007\b\u0002\t\u0007\t\u0002\n\u0007\n\u0002\u000b\u0007\u000b\u0002"+
@@ -4092,15 +4102,15 @@ public class SIDScoreParser extends Parser {
 		"+\u0001+\u0001+\u0001+\u0001+\u0001+\u0001+\u0001+\u0003+\u01f0\b+\u0001"+
 		",\u0001,\u0001,\u0003,\u01f5\b,\u0001-\u0001-\u0001-\u0001-\u0001-\u0005"+
 		"-\u01fc\b-\n-\f-\u01ff\t-\u0001.\u0001.\u0001.\u0001.\u0001.\u0001.\u0001"+
-		".\u0001.\u0001.\u0001.\u0003.\u020b\b.\u0001/\u0001/\u00010\u00010\u0005"+
-		"0\u0211\b0\n0\f0\u0214\t0\u00010\u00010\u00011\u00011\u00051\u021a\b1"+
-		"\n1\f1\u021d\t1\u00011\u00011\u00012\u00012\u00052\u0223\b2\n2\f2\u0226"+
+		".\u0001.\u0001.\u0001.\u0001.\u0003.\u020c\b.\u0001/\u0001/\u00010\u0001"+
+		"0\u00050\u0212\b0\n0\f0\u0215\t0\u00010\u00010\u00011\u00011\u00051\u021b"+
+		"\b1\n1\f1\u021e\t1\u00011\u00011\u00012\u00012\u00052\u0224\b2\n2\f2\u0227"+
 		"\t2\u00012\u00012\u00012\u0000\u00003\u0000\u0002\u0004\u0006\b\n\f\u000e"+
 		"\u0010\u0012\u0014\u0016\u0018\u001a\u001c\u001e \"$&(*,.02468:<>@BDF"+
 		"HJLNPRTVXZ\\^`bd\u0000\u000e\u0002\u0000..__\u0001\u000001\u0002\u0000"+
 		"\u000e\u000e__\u0001\u0000\u0012\u0014\u0001\u0000\u0015\u0016\u0004\u0000"+
 		"##44@AFF\u0001\u0000\u0018\u001b\u0001\u0000_`\u0001\u0000VW\u0001\u0000"+
-		"./\u0001\u0000)*\u0001\u0000+-\u0002\u0000\f\f__\u0001\u0000[]\u0263\u0000"+
+		"./\u0001\u0000)*\u0001\u0000+-\u0002\u0000\f\f__\u0001\u0000[]\u0265\u0000"+
 		"i\u0001\u0000\u0000\u0000\u0002{\u0001\u0000\u0000\u0000\u0004}\u0001"+
 		"\u0000\u0000\u0000\u0006\u0080\u0001\u0000\u0000\u0000\b\u0083\u0001\u0000"+
 		"\u0000\u0000\n\u0086\u0001\u0000\u0000\u0000\f\u0089\u0001\u0000\u0000"+
@@ -4121,9 +4131,9 @@ public class SIDScoreParser extends Parser {
 		"L\u01b3\u0001\u0000\u0000\u0000N\u01ce\u0001\u0000\u0000\u0000P\u01d6"+
 		"\u0001\u0000\u0000\u0000R\u01d8\u0001\u0000\u0000\u0000T\u01db\u0001\u0000"+
 		"\u0000\u0000V\u01ef\u0001\u0000\u0000\u0000X\u01f4\u0001\u0000\u0000\u0000"+
-		"Z\u01f6\u0001\u0000\u0000\u0000\\\u020a\u0001\u0000\u0000\u0000^\u020c"+
-		"\u0001\u0000\u0000\u0000`\u020e\u0001\u0000\u0000\u0000b\u0217\u0001\u0000"+
-		"\u0000\u0000d\u0220\u0001\u0000\u0000\u0000fh\u0003\u0002\u0001\u0000"+
+		"Z\u01f6\u0001\u0000\u0000\u0000\\\u020b\u0001\u0000\u0000\u0000^\u020d"+
+		"\u0001\u0000\u0000\u0000`\u020f\u0001\u0000\u0000\u0000b\u0218\u0001\u0000"+
+		"\u0000\u0000d\u0221\u0001\u0000\u0000\u0000fh\u0003\u0002\u0001\u0000"+
 		"gf\u0001\u0000\u0000\u0000hk\u0001\u0000\u0000\u0000ig\u0001\u0000\u0000"+
 		"\u0000ij\u0001\u0000\u0000\u0000jl\u0001\u0000\u0000\u0000ki\u0001\u0000"+
 		"\u0000\u0000lm\u0005\u0000\u0000\u0001m\u0001\u0001\u0000\u0000\u0000"+
@@ -4350,34 +4360,35 @@ public class SIDScoreParser extends Parser {
 		"\u01fd\u0005R\u0000\u0000\u01fa\u01fc\u0003\\.\u0000\u01fb\u01fa\u0001"+
 		"\u0000\u0000\u0000\u01fc\u01ff\u0001\u0000\u0000\u0000\u01fd\u01fb\u0001"+
 		"\u0000\u0000\u0000\u01fd\u01fe\u0001\u0000\u0000\u0000\u01fe[\u0001\u0000"+
-		"\u0000\u0000\u01ff\u01fd\u0001\u0000\u0000\u0000\u0200\u020b\u0005Y\u0000"+
-		"\u0000\u0201\u020b\u0005Z\u0000\u0000\u0202\u020b\u0005P\u0000\u0000\u0203"+
-		"\u020b\u0005Q\u0000\u0000\u0204\u020b\u0003\u000e\u0007\u0000\u0205\u020b"+
-		"\u0003^/\u0000\u0206\u020b\u0005O\u0000\u0000\u0207\u020b\u0003`0\u0000"+
-		"\u0208\u020b\u0003b1\u0000\u0209\u020b\u0003d2\u0000\u020a\u0200\u0001"+
-		"\u0000\u0000\u0000\u020a\u0201\u0001\u0000\u0000\u0000\u020a\u0202\u0001"+
-		"\u0000\u0000\u0000\u020a\u0203\u0001\u0000\u0000\u0000\u020a\u0204\u0001"+
-		"\u0000\u0000\u0000\u020a\u0205\u0001\u0000\u0000\u0000\u020a\u0206\u0001"+
-		"\u0000\u0000\u0000\u020a\u0207\u0001\u0000\u0000\u0000\u020a\u0208\u0001"+
-		"\u0000\u0000\u0000\u020a\u0209\u0001\u0000\u0000\u0000\u020b]\u0001\u0000"+
-		"\u0000\u0000\u020c\u020d\u0007\r\u0000\u0000\u020d_\u0001\u0000\u0000"+
-		"\u0000\u020e\u0212\u0005H\u0000\u0000\u020f\u0211\u0003\\.\u0000\u0210"+
-		"\u020f\u0001\u0000\u0000\u0000\u0211\u0214\u0001\u0000\u0000\u0000\u0212"+
-		"\u0210\u0001\u0000\u0000\u0000\u0212\u0213\u0001\u0000\u0000\u0000\u0213"+
-		"\u0215\u0001\u0000\u0000\u0000\u0214\u0212\u0001\u0000\u0000\u0000\u0215"+
-		"\u0216\u0005I\u0000\u0000\u0216a\u0001\u0000\u0000\u0000\u0217\u021b\u0005"+
-		"J\u0000\u0000\u0218\u021a\u0003\\.\u0000\u0219\u0218\u0001\u0000\u0000"+
-		"\u0000\u021a\u021d\u0001\u0000\u0000\u0000\u021b\u0219\u0001\u0000\u0000"+
-		"\u0000\u021b\u021c\u0001\u0000\u0000\u0000\u021c\u021e\u0001\u0000\u0000"+
-		"\u0000\u021d\u021b\u0001\u0000\u0000\u0000\u021e\u021f\u0005K\u0000\u0000"+
-		"\u021fc\u0001\u0000\u0000\u0000\u0220\u0224\u0005N\u0000\u0000\u0221\u0223"+
-		"\u0003\\.\u0000\u0222\u0221\u0001\u0000\u0000\u0000\u0223\u0226\u0001"+
-		"\u0000\u0000\u0000\u0224\u0222\u0001\u0000\u0000\u0000\u0224\u0225\u0001"+
-		"\u0000\u0000\u0000\u0225\u0227\u0001\u0000\u0000\u0000\u0226\u0224\u0001"+
-		"\u0000\u0000\u0000\u0227\u0228\u0005X\u0000\u0000\u0228e\u0001\u0000\u0000"+
+		"\u0000\u0000\u01ff\u01fd\u0001\u0000\u0000\u0000\u0200\u020c\u0005Y\u0000"+
+		"\u0000\u0201\u020c\u0005Z\u0000\u0000\u0202\u020c\u0005P\u0000\u0000\u0203"+
+		"\u020c\u0005Q\u0000\u0000\u0204\u020c\u0003\u000e\u0007\u0000\u0205\u020c"+
+		"\u0003\n\u0005\u0000\u0206\u020c\u0003^/\u0000\u0207\u020c\u0005O\u0000"+
+		"\u0000\u0208\u020c\u0003`0\u0000\u0209\u020c\u0003b1\u0000\u020a\u020c"+
+		"\u0003d2\u0000\u020b\u0200\u0001\u0000\u0000\u0000\u020b\u0201\u0001\u0000"+
+		"\u0000\u0000\u020b\u0202\u0001\u0000\u0000\u0000\u020b\u0203\u0001\u0000"+
+		"\u0000\u0000\u020b\u0204\u0001\u0000\u0000\u0000\u020b\u0205\u0001\u0000"+
+		"\u0000\u0000\u020b\u0206\u0001\u0000\u0000\u0000\u020b\u0207\u0001\u0000"+
+		"\u0000\u0000\u020b\u0208\u0001\u0000\u0000\u0000\u020b\u0209\u0001\u0000"+
+		"\u0000\u0000\u020b\u020a\u0001\u0000\u0000\u0000\u020c]\u0001\u0000\u0000"+
+		"\u0000\u020d\u020e\u0007\r\u0000\u0000\u020e_\u0001\u0000\u0000\u0000"+
+		"\u020f\u0213\u0005H\u0000\u0000\u0210\u0212\u0003\\.\u0000\u0211\u0210"+
+		"\u0001\u0000\u0000\u0000\u0212\u0215\u0001\u0000\u0000\u0000\u0213\u0211"+
+		"\u0001\u0000\u0000\u0000\u0213\u0214\u0001\u0000\u0000\u0000\u0214\u0216"+
+		"\u0001\u0000\u0000\u0000\u0215\u0213\u0001\u0000\u0000\u0000\u0216\u0217"+
+		"\u0005I\u0000\u0000\u0217a\u0001\u0000\u0000\u0000\u0218\u021c\u0005J"+
+		"\u0000\u0000\u0219\u021b\u0003\\.\u0000\u021a\u0219\u0001\u0000\u0000"+
+		"\u0000\u021b\u021e\u0001\u0000\u0000\u0000\u021c\u021a\u0001\u0000\u0000"+
+		"\u0000\u021c\u021d\u0001\u0000\u0000\u0000\u021d\u021f\u0001\u0000\u0000"+
+		"\u0000\u021e\u021c\u0001\u0000\u0000\u0000\u021f\u0220\u0005K\u0000\u0000"+
+		"\u0220c\u0001\u0000\u0000\u0000\u0221\u0225\u0005N\u0000\u0000\u0222\u0224"+
+		"\u0003\\.\u0000\u0223\u0222\u0001\u0000\u0000\u0000\u0224\u0227\u0001"+
+		"\u0000\u0000\u0000\u0225\u0223\u0001\u0000\u0000\u0000\u0225\u0226\u0001"+
+		"\u0000\u0000\u0000\u0226\u0228\u0001\u0000\u0000\u0000\u0227\u0225\u0001"+
+		"\u0000\u0000\u0000\u0228\u0229\u0005X\u0000\u0000\u0229e\u0001\u0000\u0000"+
 		"\u0000\u001ei{\u009f\u00ad\u00b5\u00bf\u00d4\u00d8\u00e3\u0128\u0131\u0137"+
 		"\u0143\u0145\u0192\u0195\u019e\u01a7\u01ae\u01ba\u01ce\u01d6\u01dd\u01ef"+
-		"\u01f4\u01fd\u020a\u0212\u021b\u0224";
+		"\u01f4\u01fd\u020b\u0213\u021c\u0225";
 	public static final ATN _ATN =
 		new ATNDeserializer().deserialize(_serializedATN.toCharArray());
 	static {

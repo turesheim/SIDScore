@@ -215,6 +215,34 @@ public class SIDScoreModuleExporterTest {
 		assertEquals(output, 0, process.waitFor());
 	}
 
+	@Test
+	public void generatedCodeFollowsIndependentInlineTempoChanges() throws Exception {
+		Path root = repositoryRoot();
+		Path directory = temporaryFolder.getRoot().toPath();
+		Path source = directory.resolve("tempo.sidscore");
+		Files.writeString(source, """
+				TEMPO 120
+				INSTR lead WAVE=PULSE ADSR=0,4,10,4 PW=$0800
+				VOICE 1 lead: C2
+				VOICE 2 lead: E4 TEMPO 60 F4
+				TUNE 2 {
+				  TEMPO 150
+				  VOICE 1 lead: G4 TEMPO 75 & G4
+				  VOICE 2 lead: B4 C4
+				}
+				""");
+		Files.writeString(directory.resolve("score.asm"), new SIDScoreModuleExporter().generate(source, "Score"));
+		assembleHost(directory, root.resolve("net.resheim.sidscore/lib/KickAss.jar"), "tempo", """
+				*=$3000 "API"
+				.word Score.init, Score.play
+				#import "score.asm"
+				""");
+		Process process = new ProcessBuilder("python3", root.resolve("tools/tempo_runtime_probe.py").toString(),
+				directory.resolve("tempo.prg").toString()).redirectErrorStream(true).start();
+		String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertEquals(output, 0, process.waitFor());
+	}
+
 	private Path repositoryRoot() {
 		Path root = Path.of("").toAbsolutePath().normalize();
 		return Files.exists(root.resolve("examples/test.sidscore")) ? root : root.getParent();

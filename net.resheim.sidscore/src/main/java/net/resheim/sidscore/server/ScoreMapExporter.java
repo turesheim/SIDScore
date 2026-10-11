@@ -122,19 +122,19 @@ public final class ScoreMapExporter {
 	private static List<EventEntry> buildVoiceEvents(int[] nextEventId, SIDScoreIR.TimedScore score,
 			SIDScoreIR.TimedVoice voice, List<TokenSpan> spans) {
 		List<EventEntry> out = new ArrayList<>();
-		double ticksPerQuarter = score.ticksPerWhole() / 4.0;
-		double secondsPerTick = 60.0 / score.tempoBpm() / ticksPerQuarter;
 		double frameRate = score.system() == SIDScoreIR.VideoSystem.PAL ? RASTER_RATE_PAL : RASTER_RATE_NTSC;
 		int gateMin = Math.max(0, voice.instrument().gateMin());
 		double rem = 0.0;
 		long frameCursor = 0;
+		int tick = 0;
 		boolean lastGateOn = false;
 		List<SIDScoreIR.TimedEvent> events = voice.events();
 
 		for (int i = 0; i < events.size(); i++) {
 			SIDScoreIR.TimedEvent ev = events.get(i);
 			TokenSpan span = i < spans.size() ? spans.get(i) : TokenSpan.approximate();
-			double framesExact = ev.durationTicks() * secondsPerTick * frameRate + rem;
+			double framesExact = score.durationSeconds(tick, ev.durationTicks()) * frameRate + rem;
+			tick += ev.durationTicks();
 			int frames = (int) Math.max(1, Math.round(framesExact));
 			rem = framesExact - frames;
 

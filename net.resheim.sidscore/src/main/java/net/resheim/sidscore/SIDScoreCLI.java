@@ -533,6 +533,9 @@ import java.util.stream.Collectors;
     System.out.println("Author: " + timed.author().orElse("(none)"));
     System.out.println("Released: " + timed.released().orElse("(none)"));
     System.out.println("Tempo: " + timed.tempoBpm() + " BPM");
+    for (var change : timed.tempoChanges()) {
+      System.out.println("  Tempo at tick " + change.tick() + ": " + change.tempoBpm() + " BPM");
+    }
     System.out.println("Ticks: " + timed.ticksPerWhole() + " per whole note");
     System.out.println("System: " + timed.system());
     System.out.println("Voices: " + timed.voices().size());

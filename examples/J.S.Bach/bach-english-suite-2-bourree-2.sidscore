@@ -9,7 +9,14 @@ TEMPO 184
 TIME 2/2
 SYSTEM PAL
 
-INSTR harpsichord "harpsichord.sidscore"
+; Embedded harpsichord: fixed pulse and crisp decay.
+INSTR harpsichord
+  WAVE=PULSE
+  ADSR=0,6,0,3
+  PW=$0600
+  FILTER=OFF
+  GATE=RETRIGGER
+  GATEMIN=1
 
 VOICE 1 harpsichord:
   O4 E4 E4 F#4 G8 F#8 C#8 D8 E4 A8 G#8 A4 E4 F#8 D8 C#8 D8 E8 D8 C#8 < B8 > D8 C#8 < B8 > C#8 < A4 >

@@ -1,49 +1,11 @@
-; Shared harpsichord-like instrument.
-; Noisy quill transient, bright plucked body, quick decay, and narrow pulse shimmer.
+; Shared harpsichord-like instrument for Bach and Mozart examples.
+; Fixed narrow pulse tone with a crisp attack and a short plucked decay.
+; Keep the pitch audible from the start of each note, including ornaments.
 
-; --- Waveform ---
-TABLE wave HarpsichordPluckWave {
-  WAVE=NOISE+PULSE RESET @1
-  WAVE=SAW+PULSE @2
-  WAVE=PULSE @4
-  WAVE=SAW+PULSE HOLD
-}
-
-; --- Pulse Modulation ---
-TABLE pw HarpsichordQuillPW {
-  $0380 @1
-  $0500 @2
-  $0680 @3
-  $0580 @3
-  LOOP
-}
-
-; --- Filter Modulation ---
-TABLE filter HarpsichordCutoff {
-  2047 @1
-  1900 @2
-  1750 HOLD
-}
-
-; --- Instrument ---
 INSTR harpsichord
-  ; Waveform
-  WAVE=SAW+PULSE
-  WAVESEQ=HarpsichordPluckWave
-
-  ; Volume Envelope
+  WAVE=PULSE
   ADSR=0,6,0,3
-
-  ; Pulse Modulation
   PW=$0600
-  PWSEQ=HarpsichordQuillPW
-
-  ; Filter Modulation
-  FILTER=LP
-  CUTOFF=1850
-  RES=1
-  FILTERSEQ=HarpsichordCutoff
-
-  ; Articulation
+  FILTER=OFF
   GATE=RETRIGGER
   GATEMIN=1
