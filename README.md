@@ -15,6 +15,9 @@ In SIDScore, a **renderer** is used for auditioning during development, while a 
 
 ## Quick start
 
+Release preparation and publication are described in [RELEASING.md](RELEASING.md).
+Automated builds run only for published GitHub releases.
+
 Use JDK 21 and Maven, and run the commands below from the repository root. On macOS with multiple JDKs installed, select JDK 21 before building and running:
 
 ```sh

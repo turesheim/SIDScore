@@ -1,0 +1,69 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.event.release.tag_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Validate release version and notes
+        id: metadata
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          python3 tools/release.py check "$RELEASE_TAG"
+          echo "version=${RELEASE_TAG#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+          server-id: github
+          server-username: GITHUB_ACTOR
+          server-password: GITHUB_TOKEN
+
+      - name: Build and test release
+        run: mvn -B -f net.resheim.sidscore/pom.xml clean package
+
+      - name: Test converters and release tooling
+        run: python3 -m unittest discover -s tools -p 'test_*.py'
+
+      - name: Prepare release assets
+        run: python3 tools/release.py artifacts --output release-assets
+
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          GH_REPO: ${{ github.repository }}
+        run: gh release upload "$RELEASE_TAG" release-assets/* --clobber
+
+      - name: Publish Maven package
+        run: >
+          mvn -B -f net.resheim.sidscore/pom.xml
+          org.apache.maven.plugins:maven-deploy-plugin:3.1.3:deploy-file
+          "-Dfile=${GITHUB_WORKSPACE}/release-assets/sidscore-cli-${RELEASE_VERSION}.jar"
+          "-DpomFile=${GITHUB_WORKSPACE}/net.resheim.sidscore/pom.xml"
+          -DrepositoryId=github
+          "-Durl=https://maven.pkg.github.com/${GITHUB_REPOSITORY}"
+        env:
+          RELEASE_VERSION: ${{ steps.metadata.outputs.version }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
