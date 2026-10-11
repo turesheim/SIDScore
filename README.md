@@ -42,7 +42,17 @@ For a shorter shell command, use the executable `play` script after building:
 ./play examples/games/Forbidden_Forest.sidscore --tune 2
 ```
 
+By default, song details (title, author, release, tempo, system, and voice statistics), the selected tune, and a numbered list of available subtunes are printed to stdout before playback starts. Imported subtunes are listed by path until resolved for playback or export.
+
 Press Ctrl+C to stop playback. The script forwards all CLI options, locates the compiled classes relative to itself, and keeps tune/output paths relative to your shell's working directory. It uses `JAVA_HOME` when set, otherwise selects JDK 21 on macOS if available or uses `java` from PATH. You can add the repository root to PATH to invoke it as `play` from another directory.
+
+If TAB does not complete paths after `./play` in zsh, an existing completion for another command named `play` may be taking precedence (for example, Prezto's Play! framework completion). Enable file completion in your current shell:
+
+```zsh
+compdef _files play ./play
+```
+
+To keep this setting, add the same line to `~/.zshrc` after completion initialization (`compinit` or Prezto). It completes file and directory paths, including `.sidscore` files.
 
 Use `--no-play` with `--wav`, `--asm`, `--prg`, or `--sid` to export without realtime audio.
 

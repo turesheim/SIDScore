@@ -340,6 +340,9 @@ import java.util.stream.Collectors;
       }
     }
 
+    System.out.println("Source: " + sourcePath);
+    printScoreSummary(scoreIR, timed, selectedTune, sidBundleTunes);
+
     if (asmOut != null || prgOut != null || sidOut != null) {
       SIDScoreExporter exporter = new SIDScoreExporter();
       System.out.println("Driver: " + driver.id() + " (" + driver.description() + ")");
@@ -519,6 +522,13 @@ import java.util.stream.Collectors;
 		new RealtimeAudioPlayer(sidModel, sidWaveforms).play(timed);
 	}
 
+  }
+
+  private static void printScoreSummary(SIDScoreIR.ScoreIR scoreIR,
+                                        SIDScoreIR.TimedScore timed,
+                                        int selectedTune,
+                                        List<SIDScoreIR.TimedScore> bundledTunes) {
+    System.out.println("Selected tune: " + selectedTune);
     System.out.println("Title: " + timed.title().orElse("(none)"));
     System.out.println("Author: " + timed.author().orElse("(none)"));
     System.out.println("Released: " + timed.released().orElse("(none)"));
@@ -536,6 +546,25 @@ import java.util.stream.Collectors;
       int ticks = tv.events().stream().mapToInt(SIDScoreIR.TimedEvent::durationTicks).sum();
       System.out.println("VOICE " + v + ": events=" + events + " ticks=" + ticks);
     }
+
+    Map<Integer, String> tunes = new TreeMap<>();
+    tunes.put(1, scoreIR.title().orElse("(none)"));
+    for (var entry : scoreIR.songs().entrySet()) {
+      tunes.put(entry.getKey(), entry.getValue().title().orElse(scoreIR.title().orElse("(none)")));
+    }
+    for (var entry : scoreIR.subtunes().entrySet()) {
+      tunes.put(entry.getKey(), "IMPORT " + entry.getValue());
+    }
+    for (int i = 0; i < bundledTunes.size(); i++) {
+      tunes.put(i + 1, bundledTunes.get(i).title().orElse("(none)"));
+    }
+    System.out.println();
+    System.out.println("Subtunes: " + tunes.size());
+    for (var entry : tunes.entrySet()) {
+      String selected = entry.getKey() == selectedTune ? " (selected)" : "";
+      System.out.println("  " + entry.getKey() + ": " + entry.getValue() + selected);
+    }
+    System.out.println();
   }
 
   private static ParsedScore parseResolved(Path sourcePath) throws Exception {
