@@ -82,6 +82,32 @@ java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime
   net.resheim.sidscore.SIDScoreCLI examples/test.sidscore --driver sidscore --sid out.sid --no-play
 ```
 
+## Embed music and sound effects in a C64 program
+
+Use a relocatable module to play SIDScore music and trigger sound effects from a program that already manages its own frame IRQ. An effect can temporarily take over a SID voice; when it finishes, the music continues at its current position. Effects from every subtune share the same voice allocation and priority rules.
+
+`SIDScoreModuleExporter.generate(sourcePath, namespace)` returns KickAssembler source. The host chooses the load address, calls `namespace.init` once and `namespace.play` once per video frame. A selects a one-based tune number on init; zero or an invalid number selects tune 1. Initialization starts effects declared in that tune.
+
+After building with JDK 21, generate and assemble the included embedding example:
+
+```sh
+mkdir -p /tmp/sidscore-module-demo
+java -cp net.resheim.sidscore/bin/classes:net.resheim.sidscore/lib/antlr-runtime-4.13.1.jar \
+  examples/kickassembler/ExportModule.java examples/sfx/effects.sidscore \
+  /tmp/sidscore-module-demo/score.asm
+cp examples/kickassembler/module-host.asm /tmp/sidscore-module-demo/host.asm
+java -jar net.resheim.sidscore/lib/KickAss.jar /tmp/sidscore-module-demo/host.asm \
+  -o /tmp/sidscore-module-demo/host.prg
+```
+
+[ExportModule.java](examples/kickassembler/ExportModule.java) demonstrates the Java API. [module-host.asm](examples/kickassembler/module-host.asm) places the module after the host routines at `$3000`, initializes tune 1 and exposes a frame callback. It is an embedding scaffold: your program calls `start` once, calls `on_frame` from its frame IRQ, and calls `trigger_noise` when needed.
+
+Trigger an effect with `jsr Score.tuneN.effect_Name`, even when that tune is not selected. Effects from tune 1 also have `Score.effect_Name` aliases. `RESTART` restarts an active effect, `IGNORE` leaves it running, and `STEAL` can replace a lower-priority effect on a busy voice. A trigger requiring an occupied voice can be rejected. Global-only filter/volume effects do not reserve a voice.
+
+Reserve zero-page `$fb-$fc` while module routines execute; the frame callback restores their previous values. The module uses SID registers `$d400-$d418` and leaves IRQ installation to the host. Calls can change A/X/Y and arithmetic flags, so preserve the host's registers around an IRQ callback and serialize triggers with playback. Call `play` at the source's PAL or NTSC frame rate.
+
+A module supports up to 254 tunes and 255 effects in total. Each effect can contain 1–4096 frames; long register-trace effects from converted game music may exceed this limit. Shorten or split those effects before module export.
+
 ## Live MIDI input
 
 SRAP can use a USB MIDI keyboard or controller, such as an Arturia MicroLab, as a live input source. MIDI is a realtime audition and protocol-serving feature and does not change `ASM/PRG/SID` export.
