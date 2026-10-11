@@ -60,8 +60,7 @@ public class SIDScoreModuleExporterTest {
 		assertTrue(module.contains("sta $d417"));
 		assertTrue(module.contains("sta $d418"));
 		assertTrue(module.contains("and sfx_shadow417"));
-		String tune2 = module.substring(module.indexOf(".namespace tune2 {"));
-		String frames = tune2.substring(tune2.indexOf("sfx_data_1:\n"));
+		String frames = module.substring(module.indexOf("sfx_data_3:\n"));
 		assertTrue(frames.contains(".byte $00,$40,$00,$08,$81,$04,$82")); // NoiseZap starts on voice 3
 		assertTrue(frames.contains(".byte $00,$30,$00,$08,$81,$04,$82")); // tick 1 frequency
 		assertTrue(frames.contains(".byte $00,$20,$00,$08,$81,$04,$82")); // tick 2 frequency
@@ -121,7 +120,7 @@ public class SIDScoreModuleExporterTest {
 		String module = new SIDScoreModuleExporter().generate(source, "Score");
 		assertTrue(module.contains(".namespace tune2 {"));
 		assertTrue(module.contains("effect_Zap:"));
-		assertTrue(module.contains("jsr effects_start")); // selected effect-only tune auto-triggers on init
+		assertTrue(module.contains("jsr tune2.effect_Zap")); // selected effect-only tune auto-triggers on init
 		Files.writeString(directory.resolve("score.asm"), module, StandardCharsets.US_ASCII);
 		assembleHost(directory, root.resolve("net.resheim.sidscore/lib/KickAss.jar"), "imported-effects", """
 				*=$3000 "HOST"
@@ -136,6 +135,84 @@ public class SIDScoreModuleExporterTest {
 				  rts
 				#import "score.asm"
 				""");
+	}
+
+	@Test
+	public void generatedCodeRestoresMusicAndArbitratesEffectsAcrossTunes() throws Exception {
+		Path root = repositoryRoot();
+		Path directory = temporaryFolder.getRoot().toPath();
+		Path source = directory.resolve("runtime.sidscore");
+		Files.writeString(source, """
+				TITLE "Runtime test"
+				TEMPO 120
+				SYSTEM PAL
+				INSTR lead WAVE=PULSE ADSR=1,2,10,3 PW=$0600 GATE=RETRIGGER
+				VOICE 1 lead: O4 L32 C D E F G A B
+				TUNE 2 {
+				  EFFECT Restart {
+				    VOICE 1
+				    LENGTH 3 TICKS
+				    PRIORITY 10
+				    WAVE=NOISE
+				    ADSR=0,0,15,0
+				    FREQ=$4000
+				    PW=$0100
+				    GATE=ON
+				    FREQ=$3000 @1
+				    VOLUME=5
+				    FILTERROUTE=1
+				    FILTER=LP
+				    CUTOFF=$0300
+				  }
+				  EFFECT Ignore {
+				    VOICE 1
+				    LENGTH 3 TICKS
+				    RETRIGGER IGNORE
+				    WAVE=TRI
+				    FREQ=$2000
+				    GATE=ON
+				    FREQ=$1000 @1
+				  }
+				  EFFECT Any {
+				    VOICE ANY
+				    LENGTH 2 TICKS
+				    WAVE=SAW
+				    FREQ=$1234
+				    GATE=ON
+				  }
+				}
+				TUNE 3 {
+				  EFFECT High {
+				    VOICE 1
+				    LENGTH 2 TICKS
+				    PRIORITY 80
+				    RETRIGGER STEAL
+				    WAVE=SAW
+				    FREQ=$6000
+				    GATE=ON
+				  }
+				  EFFECT FilterOnly {
+				    VOICE ANY
+				    LENGTH 2 TICKS
+				    FILTER=LP
+				    VOLUME=7
+				  }
+				}
+				""");
+		Files.writeString(directory.resolve("score.asm"), new SIDScoreModuleExporter().generate(source, "Score"));
+		byte[] prg = assembleHost(directory, root.resolve("net.resheim.sidscore/lib/KickAss.jar"), "runtime", """
+				*=$3000 "API"
+				.word Score.init, Score.play
+				.word Score.tune2.effect_Restart, Score.tune2.effect_Ignore
+				.word Score.tune3.effect_High, Score.tune2.effect_Any, Score.tune3.effect_FilterOnly
+				#import "score.asm"
+				""");
+		Path program = directory.resolve("runtime.prg");
+		assertTrue(prg.length > 2);
+		Process process = new ProcessBuilder("python3", root.resolve("tools/module_runtime_probe.py").toString(),
+				program.toString()).redirectErrorStream(true).start();
+		String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertEquals(output, 0, process.waitFor());
 	}
 
 	private Path repositoryRoot() {

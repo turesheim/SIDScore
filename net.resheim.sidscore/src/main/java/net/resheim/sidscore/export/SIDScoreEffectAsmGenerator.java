@@ -21,14 +21,15 @@ final class SIDScoreEffectAsmGenerator {
 
 	private SIDScoreEffectAsmGenerator() {}
 
-	static void append(StringBuilder out, SIDScoreIR.TimedScore score) {
-		List<SIDScoreIR.EffectIR> effects = new ArrayList<>(score.effects().values());
-		if (effects.size() > 255) throw new IllegalArgumentException("Module supports at most 255 effects per tune");
+	static void append(StringBuilder out, List<SIDScoreIR.EffectIR> effects,
+			List<SIDScoreIR.VideoSystem> systems) {
+		if (effects.size() > 255) throw new IllegalArgumentException("Module supports at most 255 effects in total");
 		out.append("\n// On-demand SIDScore effects. Call effect_<name>, then play each video frame.\n");
 		out.append("effects_clear:\n");
 		if (effects.isEmpty()) {
 			out.append("  lda #0\n  sta sfx_shadow417\n  lda #$0f\n  sta sfx_shadow418\n  rts\n");
 			out.append("effects_start:\n  rts\n\neffects_play:\n  rts\n");
+			out.append("sfx_owner:\n  .byte 0,0,0,0\n");
 			out.append("sfx_shadow417:\n  .byte 0\nsfx_shadow418:\n  .byte $0f\n");
 			return;
 		}
@@ -57,20 +58,26 @@ final class SIDScoreEffectAsmGenerator {
 				out.append("  lda #>sfx_data_").append(id).append("\n  sta sfx_ptr_hi+").append(id).append("\n");
 			}
 			out.append("  rts\nsfx_new_").append(id).append(":\n");
-			out.append("  lda #").append(id).append("\n  sta sfx_request_id\n");
-			out.append("  lda #").append(effect.preferredVoice().orElse(0)).append("\n  sta sfx_request_voice\n");
-			out.append("  lda #").append(effect.priority()).append("\n  sta sfx_request_priority\n");
-			out.append("  lda #").append(effect.retriggerMode() == SIDScoreIR.EffectRetriggerMode.STEAL ? 1 : 0)
-					.append("\n  sta sfx_request_steal\n  jmp sfx_trigger\n\n");
+			if (!controlsVoice(effect)) {
+				out.append("  lda #1\n  sta sfx_voice+").append(id).append("\n")
+						.append("  lda #<sfx_data_").append(id).append("\n  sta sfx_ptr_lo+").append(id).append("\n")
+						.append("  lda #>sfx_data_").append(id).append("\n  sta sfx_ptr_hi+").append(id).append("\n  rts\n");
+			} else {
+				out.append("  lda #").append(id).append("\n  sta sfx_request_id\n");
+				out.append("  lda #").append(effect.preferredVoice().orElse(0)).append("\n  sta sfx_request_voice\n");
+				out.append("  lda #").append(effect.priority()).append("\n  sta sfx_request_priority\n");
+				out.append("  lda #").append(effect.retriggerMode() == SIDScoreIR.EffectRetriggerMode.STEAL ? 1 : 0)
+						.append("\n  sta sfx_request_steal\n  jmp sfx_trigger\n\n");
+			}
 			out.append("sfx_play_").append(id).append(":\n  lda sfx_voice+").append(id)
 					.append("\n  beq sfx_play_done_").append(id).append("\n  sta sfx_work_voice\n");
 			out.append("  lda sfx_ptr_hi+").append(id).append("\n  cmp #>sfx_end_").append(id)
 					.append("\n  bne sfx_play_apply_").append(id).append("\n");
 			out.append("  lda sfx_ptr_lo+").append(id).append("\n  cmp #<sfx_end_").append(id)
 					.append("\n  bne sfx_play_apply_").append(id).append("\n");
-			out.append("  ldx sfx_work_voice\n  lda #0\n  sta sfx_owner,x\n  sta sfx_voice+").append(id).append("\n");
+			out.append("  lda #0\n  sta sfx_voice+").append(id).append("\n");
 			if (controlsVoice(effect)) {
-				out.append("  lda sfx_sid_ctrl_offset,x\n  tax\n  lda #0\n  sta $d400,x\n");
+				out.append("  ldx sfx_work_voice\n  sta sfx_owner,x\n  jsr sidscore_restore_voice\n");
 			}
 			out.append("  jmp sfx_play_done_").append(id).append("\n");
 			out.append("sfx_play_apply_").append(id).append(":\n");
@@ -87,7 +94,7 @@ final class SIDScoreEffectAsmGenerator {
 		appendState(out, effects);
 		for (int id = 1; id <= effects.size(); id++) {
 			SIDScoreIR.EffectIR effect = effects.get(id - 1);
-			List<Frame> frames = compile(effect, score.system());
+			List<Frame> frames = compile(effect, systems.get(id - 1));
 			out.append("sfx_data_").append(id).append(":\n");
 			for (Frame frame : frames) {
 				out.append("  .byte ").append(byteHex(frame.freq)).append(',').append(byteHex(frame.freq >> 8))
@@ -131,11 +138,11 @@ final class SIDScoreEffectAsmGenerator {
 			if (i < 6) out.append("  inx\n");
 		}
 		out.append("sfx_no_voice:\n  ldy #13\n  lda (TMP_PTR),y\n  and #2\n  beq sfx_no_cutoff\n");
-		out.append("  ldy #7\n  lda (TMP_PTR),y\n  sta $d415\n  iny\n  lda (TMP_PTR),y\n  sta $d416\n");
+		out.append("  ldy #7\n  lda (TMP_PTR),y\n  sta sidscore_effect_globals+0\n  iny\n  lda (TMP_PTR),y\n  sta sidscore_effect_globals+1\n");
 		out.append("sfx_no_cutoff:\n  ldy #9\n  lda (TMP_PTR),y\n  beq sfx_no_resfilt\n");
-		out.append("  eor #$ff\n  and sfx_shadow417\n  sta sfx_tmp\n  iny\n  lda (TMP_PTR),y\n  ora sfx_tmp\n  sta sfx_shadow417\n  sta $d417\n");
+		out.append("  eor #$ff\n  and sfx_shadow417\n  sta sfx_tmp\n  iny\n  lda (TMP_PTR),y\n  ora sfx_tmp\n  sta sfx_shadow417\n  sta sidscore_effect_globals+2\n");
 		out.append("sfx_no_resfilt:\n  ldy #11\n  lda (TMP_PTR),y\n  beq sfx_no_modevol\n");
-		out.append("  eor #$ff\n  and sfx_shadow418\n  sta sfx_tmp\n  iny\n  lda (TMP_PTR),y\n  ora sfx_tmp\n  sta sfx_shadow418\n  sta $d418\n");
+		out.append("  eor #$ff\n  and sfx_shadow418\n  sta sfx_tmp\n  iny\n  lda (TMP_PTR),y\n  ora sfx_tmp\n  sta sfx_shadow418\n  sta sidscore_effect_globals+3\n");
 		out.append("sfx_no_modevol:\n  rts\n\n");
 	}
 

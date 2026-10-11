@@ -86,97 +86,15 @@ public final class SIDScoreExporter {
 		Files.writeString(outAsm, buildAsm(score, installIrq, false), StandardCharsets.US_ASCII);
 	}
 
-	/**
-	 * Returns a relocatable KickAssembler module. The caller chooses the program
-	 * counter before importing it and calls {@code namespace.init} once followed by
-	 * {@code namespace.play} once per video frame. IRQ ownership stays with the host.
-	 */
+	/** Returns a relocatable module whose IRQ and placement are owned by the host. */
 	public String toModuleAsm(SIDScoreIR.TimedScore score, String namespace) {
-		if (namespace == null || !namespace.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-			throw new IllegalArgumentException("Invalid KickAssembler namespace: " + namespace);
-		}
-		return ".namespace " + namespace + " {\n" + buildAsm(score, false, true) + "}\n";
+		return toModuleAsm(List.of(score), namespace);
 	}
 
-	/**
-	 * Emits a selector for all declared tunes. A=1 selects the first tune when
-	 * calling init; zero or an unknown tune number also selects tune 1. play
-	 * advances the selected tune and all effects triggered from other tunes.
-	 */
+	/** All tunes share effect voice ownership; A selects a one-based tune on init. */
 	public String toModuleAsm(List<SIDScoreIR.TimedScore> tunes, String namespace) {
-		if (tunes == null || tunes.isEmpty()) {
-			throw new IllegalArgumentException("At least one tune is required");
-		}
-		if (tunes.size() == 1) return toModuleAsm(tunes.get(0), namespace);
-		if (namespace == null || !namespace.matches("[A-Za-z_][A-Za-z0-9_]*")) {
-			throw new IllegalArgumentException("Invalid KickAssembler namespace: " + namespace);
-		}
-		if (tunes.size() > 254) {
-			throw new IllegalArgumentException("Embedded module supports at most 254 tunes");
-		}
-		StringBuilder sb = new StringBuilder(".namespace ").append(namespace).append(" {\n");
-		sb.append("// A=1..").append(tunes.size()).append(" selects tune; invalid A selects tune 1.\n");
-		sb.append("init:\n");
-		sb.append("  cmp #1\n  bcc sidscore_select_first\n");
-		sb.append("  cmp #").append(tunes.size() + 1).append("\n  bcc sidscore_select_valid\n");
-		sb.append("sidscore_select_first:\n  lda #1\n");
-		sb.append("sidscore_select_valid:\n  sta sidscore_selected_tune\n");
-		for (int i = 1; i <= tunes.size(); i++) {
-			sb.append("  jsr tune").append(i).append(".effects_clear\n");
-		}
-		for (int i = 1; i <= tunes.size(); i++) {
-			sb.append("  lda sidscore_selected_tune\n  cmp #").append(i)
-					.append("\n  bne sidscore_init_next_").append(i).append("\n")
-					.append("  jmp tune").append(i).append(".init\n")
-					.append("sidscore_init_next_").append(i).append(":\n");
-		}
-		sb.append("  rts\n\nplay:\n");
-		for (int i = 1; i <= tunes.size(); i++) {
-			sb.append("  lda sidscore_selected_tune\n  cmp #").append(i)
-					.append("\n  bne sidscore_play_next_").append(i).append("\n")
-					.append("  jsr tune").append(i).append(".play\n")
-					.append("sidscore_play_next_").append(i).append(":\n");
-		}
-		for (int i = 1; i <= tunes.size(); i++) {
-			sb.append("  lda sidscore_selected_tune\n  cmp #").append(i)
-					.append("\n  bne sidscore_shadow_next_").append(i).append("\n")
-					.append("  lda tune").append(i).append(".sfx_shadow417\n  sta sidscore_shadow417\n")
-					.append("  lda tune").append(i).append(".sfx_shadow418\n  sta sidscore_shadow418\n")
-					.append("sidscore_shadow_next_").append(i).append(":\n");
-		}
-		for (int i = 1; i <= tunes.size(); i++) {
-			sb.append("  lda sidscore_selected_tune\n  cmp #").append(i)
-					.append("\n  beq sidscore_effect_next_").append(i).append("\n")
-					.append("  lda sidscore_shadow417\n  sta tune").append(i).append(".sfx_shadow417\n")
-					.append("  lda sidscore_shadow418\n  sta tune").append(i).append(".sfx_shadow418\n")
-					.append("  jsr tune").append(i).append(".effects_play\n")
-					.append("  lda tune").append(i).append(".sfx_shadow417\n  sta sidscore_shadow417\n")
-					.append("  lda tune").append(i).append(".sfx_shadow418\n  sta sidscore_shadow418\n")
-					.append("sidscore_effect_next_").append(i).append(":\n");
-		}
-		for (int i = 1; i <= tunes.size(); i++) {
-			sb.append("  lda sidscore_selected_tune\n  cmp #").append(i)
-					.append("\n  bne sidscore_shadow_restore_next_").append(i).append("\n")
-					.append("  lda sidscore_shadow417\n  sta tune").append(i).append(".sfx_shadow417\n")
-					.append("  lda sidscore_shadow418\n  sta tune").append(i).append(".sfx_shadow418\n")
-					.append("sidscore_shadow_restore_next_").append(i).append(":\n");
-		}
-		sb.append("  rts\n\nsidscore_selected_tune:\n  .byte 1\n")
-				.append("sidscore_shadow417:\n  .byte 0\nsidscore_shadow418:\n  .byte $0f\n\n");
-		for (SIDScoreIR.EffectIR effect : tunes.get(0).effects().values()) {
-			sb.append("effect_").append(effect.name()).append(":\n  jmp tune1.effect_")
-					.append(effect.name()).append("\n");
-		}
-		sb.append("\n");
-		for (int i = 0; i < tunes.size(); i++) {
-			try {
-				sb.append(".namespace tune").append(i + 1).append(" {\n")
-						.append(buildAsm(tunes.get(i), false, true)).append("}\n");
-			} catch (IllegalArgumentException e) {
-				throw new IllegalArgumentException("TUNE " + (i + 1) + ": " + e.getMessage(), e);
-			}
-		}
-		return sb.append("}\n").toString();
+		return SIDScoreModuleAsmGenerator.generate(tunes, namespace,
+				score -> buildAsm(score, false, true));
 	}
 
 	private String buildAsm(SIDScoreIR.TimedScore score, boolean installIrq, boolean module) {
@@ -194,7 +112,7 @@ public final class SIDScoreExporter {
 		}
 		sb.append("// voice data: " + (compactVoiceData ? "compact semantic stream" : "raw 6-byte events") + "\n\n");
 
-		sb.append(".const SID_BASE = $d400\n");
+		sb.append(module ? ".const SID_BASE = sidscore_music_sid\n" : ".const SID_BASE = $d400\n");
 		sb.append(".const V1_FREQ = SID_BASE\n");
 		sb.append(".const V1_PW   = SID_BASE+2\n");
 		sb.append(".const V1_CTRL = SID_BASE+4\n");
@@ -213,7 +131,7 @@ public final class SIDScoreExporter {
 		sb.append(".const SID_FCLO = SID_BASE+21\n");
 		sb.append(".const SID_FCHI = SID_BASE+22\n");
 		sb.append(".const SID_RESFILT = SID_BASE+23\n");
-		sb.append(".const SID_VOL = $d418\n\n");
+		sb.append(".const SID_VOL = SID_BASE+24\n\n");
 		if (installIrq) {
 			sb.append(".const SCREEN_RAM = $0400\n");
 			sb.append(".const COLOR_RAM = $d800\n");
@@ -242,17 +160,15 @@ public final class SIDScoreExporter {
 		sb.append("  lda #$00\n");
 		sb.append("  ldx #$18\n");
 		sb.append("sidscore_clear_sid:\n");
-		sb.append("  sta $d400,x\n");
+		sb.append(module ? "  sta SID_BASE,x\n" : "  sta $d400,x\n");
 		sb.append("  dex\n");
 		sb.append("  bpl sidscore_clear_sid\n");
 		sb.append("  lda #$0f\n");
 		sb.append("  sta SID_VOL\n");
-		if (module) sb.append("  sta sfx_shadow418\n");
 		sb.append("  lda #$00\n");
 		sb.append("  sta SID_FCLO\n");
 		sb.append("  sta SID_FCHI\n");
 		sb.append("  sta SID_RESFILT\n");
-		if (module) sb.append("  sta sfx_shadow417\n");
 
 		int filterRouteMask = 0;
 		for (int v = 1; v <= 3; v++) {
@@ -412,7 +328,6 @@ public final class SIDScoreExporter {
 		sb.append("  sta v2_cnt+1\n");
 		sb.append("  sta v3_cnt\n");
 		sb.append("  sta v3_cnt+1\n");
-		if (module) sb.append("  jsr effects_clear\n  jsr effects_start\n");
 		if (!module) sb.append("  cli\n");
 		sb.append("  rts\n\n");
 
@@ -731,7 +646,6 @@ public final class SIDScoreExporter {
 		sb.append("  sta TMP_PTR\n");
 		sb.append("  lda tmp_ptr_save+1\n");
 		sb.append("  sta TMP_PTR+1\n");
-		if (module) sb.append("  jsr effects_play\n");
 		sb.append("  rts\n\n");
 
 		if (compactVoiceData) {
@@ -781,9 +695,9 @@ public final class SIDScoreExporter {
 		appendApplyNote(sb, "v1", 1);
 		appendApplyNote(sb, "v2", 2);
 		appendApplyNote(sb, "v3", 3);
-		appendFilterSeqUpdate(sb, "v1", 1, v1Filter, filterRouteMask, module);
-		appendFilterSeqUpdate(sb, "v2", 2, v2Filter, filterRouteMask, module);
-		appendFilterSeqUpdate(sb, "v3", 3, v3Filter, filterRouteMask, module);
+		appendFilterSeqUpdate(sb, "v1", 1, v1Filter, filterRouteMask);
+		appendFilterSeqUpdate(sb, "v2", 2, v2Filter, filterRouteMask);
+		appendFilterSeqUpdate(sb, "v3", 3, v3Filter, filterRouteMask);
 		if (installIrq) {
 			appendPrgVisuals(sb, score);
 		}
@@ -799,7 +713,6 @@ public final class SIDScoreExporter {
 		appendVibratoTables(sb, vibratoTables.tables());
 		appendFilterTables(sb, score);
 		appendNoteFreqTable(sb, score);
-		if (module) SIDScoreEffectAsmGenerator.append(sb, score);
 
 		return sb.toString();
 	}
@@ -2610,7 +2523,7 @@ public final class SIDScoreExporter {
 	}
 
 	private void appendFilterSeqUpdate(StringBuilder sb, String label, int voiceIndex, SIDScoreIR.TableIR filterTable,
-			int filterRouteMask, boolean module) {
+			int filterRouteMask) {
 		String cnt = label.toLowerCase() + "_filter_cnt";
 		String idx = label.toLowerCase() + "_filter_idx";
 		String cutoff = label.toLowerCase() + "_filter_cutoff";
@@ -2697,11 +2610,9 @@ public final class SIDScoreExporter {
 			sb.append("  ora #$" + hex2(filterRouteMask & 0x07) + "\n");
 		}
 		sb.append("  sta SID_RESFILT\n");
-		if (module) sb.append("  sta sfx_shadow417\n");
 		sb.append("  lda " + mode + "\n");
 		sb.append("  ora #$0f\n");
 		sb.append("  sta SID_VOL\n");
-		if (module) sb.append("  sta sfx_shadow418\n");
 		sb.append("  rts\n\n");
 
 		sb.append(label + "_filterseq_reset:\n");
