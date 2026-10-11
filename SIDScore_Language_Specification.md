@@ -1,6 +1,6 @@
 # SIDScore Language Specification
 
-Version: **0.3 (draft)**
+Version: **0.8.0 (draft)**
 
 ## 1. Scope and Goals
 
