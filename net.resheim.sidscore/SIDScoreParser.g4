@@ -312,11 +312,16 @@ voiceItem
   | LT
   | swingStmt
   | tempoStmt
+  | instrumentChange
   | noteOrRestOrHit
   | AMP
   | legatoScope
   | tuplet
   | repeat
+  ;
+
+instrumentChange
+  : INSTR EQ ID
   ;
 
 noteOrRestOrHit

@@ -20,7 +20,11 @@ import java.util.List;
  * aligned.
  */
 public final class FrameEventCompiler {
-	public static final record FrameEvent(int frames, int freq, int ctrl, int baseNote) {
+	public static final record FrameEvent(int frames, int freq, int ctrl, int baseNote,
+			SIDScoreIR.InstrumentIR instrument) {
+		public FrameEvent(int frames, int freq, int ctrl, int baseNote) {
+			this(frames, freq, ctrl, baseNote, null);
+		}
 	}
 
 	private static final double SID_CLOCK_NTSC = 1022727.0;
@@ -45,12 +49,14 @@ public final class FrameEventCompiler {
 		double frameRate = score.system() == SIDScoreIR.VideoSystem.PAL ? RASTER_RATE_PAL : RASTER_RATE_NTSC;
 		double rem = 0.0;
 		int tick = 0;
-
-		int waveBits = waveMaskToCtrl(instr.waveMask());
-		int ctrlBase = waveBits | (instr.sync() ? 0x02 : 0x00) | (instr.ring() ? 0x04 : 0x00);
 		boolean lastGateOn = false;
 
 		for (SIDScoreIR.TimedEvent ev : voice.events()) {
+			SIDScoreIR.InstrumentIR selected = ev.instrument().orElse(voice.instrument());
+			boolean changed = !selected.equals(instr);
+			instr = selected;
+			int ctrlBase = waveMaskToCtrl(instr.waveMask()) | (instr.sync() ? 0x02 : 0x00)
+					| (instr.ring() ? 0x04 : 0x00);
 			double framesExact = score.durationSeconds(tick, ev.durationTicks()) * frameRate + rem;
 			tick += ev.durationTicks();
 			int frames = (int) Math.max(1, Math.round(framesExact));
@@ -69,8 +75,8 @@ public final class FrameEventCompiler {
 				int midi = ev.pitchMidi().orElseThrow();
 				freq = freqRegFromMidi(midi, score.system());
 				baseNote = clampMidi(midi);
-				if (gate == SIDScoreIR.GateMode.RETRIG && lastGateOn && frames > RETRIG_GAP_FRAMES) {
-					out.add(new FrameEvent(RETRIG_GAP_FRAMES, freq, ctrlBase, baseNote));
+				if ((changed || gate == SIDScoreIR.GateMode.RETRIG) && lastGateOn && frames > RETRIG_GAP_FRAMES) {
+					out.add(new FrameEvent(RETRIG_GAP_FRAMES, freq, ctrlBase, baseNote, instr));
 					frames -= RETRIG_GAP_FRAMES;
 				}
 				ctrl |= 0x01;
@@ -79,8 +85,8 @@ public final class FrameEventCompiler {
 				SIDScoreIR.GateMode gate = ev.gateMode().orElse(SIDScoreIR.GateMode.RETRIG);
 				freq = freqRegFromHz(NOISE_HZ, score.system());
 				baseNote = 0x80;
-				if (gate == SIDScoreIR.GateMode.RETRIG && lastGateOn && frames > RETRIG_GAP_FRAMES) {
-					out.add(new FrameEvent(RETRIG_GAP_FRAMES, freq, ctrlBase, baseNote));
+				if ((changed || gate == SIDScoreIR.GateMode.RETRIG) && lastGateOn && frames > RETRIG_GAP_FRAMES) {
+					out.add(new FrameEvent(RETRIG_GAP_FRAMES, freq, ctrlBase, baseNote, instr));
 					frames -= RETRIG_GAP_FRAMES;
 				}
 				ctrl = 0x80 | (instr.sync() ? 0x02 : 0x00) | (instr.ring() ? 0x04 : 0x00) | 0x01;
@@ -91,7 +97,7 @@ public final class FrameEventCompiler {
 
 			while (frames > 0) {
 				int chunk = Math.min(frames, 0xFFFF);
-				out.add(new FrameEvent(chunk, freq, ctrl, baseNote));
+				out.add(new FrameEvent(chunk, freq, ctrl, baseNote, instr));
 				frames -= chunk;
 			}
 		}

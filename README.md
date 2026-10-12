@@ -98,6 +98,19 @@ TUNE 2 {
 Inline `TUNE` blocks share top-level instruments/tables. `IMPORT ... AS ...` and inline `TUNE` declarations also produce a selectable multi-tune player for CLI ASM/PRG export; SID export produces PSID subtunes.
 Subtune numbers (from `TUNE`, `IMPORT`, and optional `--stitch`) must be contiguous starting at `1`.
 
+Switch instruments within a voice with `INSTR=<name>`, for example:
+
+```sidscore
+INSTR lead WAVE=PULSE ADSR=0,4,10,4 PW=$0800
+INSTR bass WAVE=SAW ADSR=2,3,8,5
+VOICE 1 lead: O4 C4 E4 INSTR=bass O2 C4 G4 INSTR=lead O4 G4
+```
+
+The selection persists until changed and works inside repeats and legato scopes.
+Switching to a different instrument retriggers the next sounding note; ties cannot
+cross a switch. Playback and exports support this syntax. See
+[`examples/instrument-switch.sidscore`](examples/instrument-switch.sidscore).
+
 Change tempo inline at a musical position: `VOICE 1 lead: C4 D4 TEMPO 90 E4 F4`.
 The change applies to all voices in that tune, including held notes. Each tune has
 its own changes. Use `C4 TEMPO 60 & C4` to change tempo partway through a held note.

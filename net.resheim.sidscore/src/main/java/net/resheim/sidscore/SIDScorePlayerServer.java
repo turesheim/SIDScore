@@ -686,7 +686,8 @@ public final class SIDScorePlayerServer {
 	}
 
 	private void startResolvedPlayback(long requestId, long scoreId, LoadedScore loaded) {
-		SIDScoreIR.TimedScore timed = applyInstrumentOverrides(loaded.timedScore());
+		// Keep source selections so clearing a live override restores the current score instrument.
+		SIDScoreIR.TimedScore timed = loaded.timedScore();
 		ScoreMapExporter.ScoreMap scoreMap = loaded.tree() != null
 				? ScoreMapExporter.build(scoreId, loaded.tree(), loaded.tuneNumber(), timed, loaded.sourceUri(),
 						loaded.sourcePath())
@@ -1160,7 +1161,7 @@ public final class SIDScorePlayerServer {
 
 	private SIDScoreIR.TimedScore buildMidiMonitorScore() {
 		LoadedScore loaded = currentLoadedScore;
-		SIDScoreIR.TimedScore base = loaded != null ? applyInstrumentOverrides(loaded.timedScore()) : null;
+		SIDScoreIR.TimedScore base = loaded != null ? loaded.timedScore() : null;
 		Map<Integer, SIDScoreIR.TimedVoice> voices = new LinkedHashMap<>();
 		for (MidiVoiceAssignment assignment : enabledMidiAssignments()) {
 			int voiceIndex = assignment.voiceIndex();
@@ -1168,7 +1169,7 @@ public final class SIDScorePlayerServer {
 			if (base != null && base.voices().containsKey(voiceIndex)) {
 				instrument = base.voices().get(voiceIndex).instrument();
 			} else {
-				instrument = effectiveInstrumentState(voiceIndex).instrument();
+				instrument = DEFAULT_SERVER_INSTRUMENT;
 			}
 			voices.put(voiceIndex, new SIDScoreIR.TimedVoice(voiceIndex, instrument, List.of()));
 		}
@@ -1386,7 +1387,8 @@ public final class SIDScorePlayerServer {
 				continue;
 			}
 			SIDScoreIR.TimedVoice existing = voices.get(voiceIndex);
-			List<SIDScoreIR.TimedEvent> events = existing != null ? existing.events() : List.of();
+			List<SIDScoreIR.TimedEvent> events = existing != null
+					? existing.events().stream().map(event -> event.withInstrument(override)).toList() : List.of();
 			voices.put(voiceIndex, new SIDScoreIR.TimedVoice(voiceIndex, override, events));
 		}
 		return new SIDScoreIR.TimedScore(score.title(), score.author(), score.released(),
@@ -2008,6 +2010,10 @@ public final class SIDScorePlayerServer {
 		SIDScoreIR.InstrumentIR override = instrumentOverrides.get(voiceIndex - 1);
 		if (override != null) {
 			return override;
+		}
+		// The runtime fallback is the instrument selected at the current score event.
+		if (fallback != null) {
+			return fallback;
 		}
 		LoadedScore loaded = currentLoadedScore;
 		if (loaded != null) {

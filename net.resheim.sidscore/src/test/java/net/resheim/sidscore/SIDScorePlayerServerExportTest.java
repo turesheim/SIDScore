@@ -188,6 +188,31 @@ public class SIDScorePlayerServerExportTest {
 		}
 	}
 
+	@Test
+	public void exportPreservesScoreSwitchesUnlessVoiceHasAnOverride() throws Exception {
+		Path workDir = Files.createTempDirectory("sidscore-srap-instrument-switch-test-");
+		try (ServerHarness server = ServerHarness.start()) {
+			server.hello();
+			Path source = workDir.resolve("switch.sidscore");
+			String score = """
+					TEMPO 120
+					INSTR lead WAVE=PULSE ADSR=0,4,10,4
+					INSTR bass WAVE=SAW ADSR=2,3,8,5
+					VOICE 1 lead: C4 INSTR=bass D4
+					""";
+			Path asm = workDir.resolve("switch.asm");
+			assertExport(server, source, source.toUri().toString(), asm, 1, score);
+			assertTrue(Files.readString(asm).contains("v1_instrument_1.init"));
+			server.send(SrapProtocol.SET_INSTRUMENT, setInstrumentPayload(312, 1, true));
+			InstrumentState.read(server.readFrame(SrapProtocol.INSTRUMENT_STATE, 312));
+			assertExport(server, source, source.toUri().toString(), asm, 1, score);
+			assertTrue(!Files.readString(asm).contains("v1_instrument_1.init"));
+			assertTrue(Files.readString(asm).contains("vib_table_0_loop:"));
+		} finally {
+			deleteRecursively(workDir);
+		}
+	}
+
 	private static void assertExport(ServerHarness server, Path sourcePath, String sourceUri, Path outputPath,
 			int format) throws Exception {
 		assertExport(server, sourcePath, sourceUri, outputPath, format, SOURCE);

@@ -130,27 +130,30 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 				throw new IllegalStateException(prefix + "VOICE " + vIdx + " references undefined instrument: "
 						+ v.instrumentName());
 			}
-			boolean isNoise = instr.hasWave(SIDScoreIR.Wave.NOISE);
-			if (!isNoise && containsHit(v.items())) {
-				String prefix = songNumber != null ? ("TUNE " + songNumber + " ") : "";
-				throw new IllegalStateException(prefix + "VOICE " + vIdx
-						+ " uses X but instrument is not NOISE: " + instr.name());
-			}
+			String prefix = songNumber != null ? ("TUNE " + songNumber + " ") : "";
+			validateVoiceInstruments(v.items(), instr, prefix + "VOICE " + vIdx);
 		}
 	}
 
-	private static boolean containsHit(List<SIDScoreIR.VoiceItemIR> items) {
-		for (SIDScoreIR.VoiceItemIR it : items) {
-			if (it instanceof SIDScoreIR.HitIR)
-				return true;
-			if (it instanceof SIDScoreIR.LegatoScopeIR leg && containsHit(leg.items()))
-				return true;
-			if (it instanceof SIDScoreIR.TupletIR tup && containsHit(tup.items()))
-				return true;
-			if (it instanceof SIDScoreIR.RepeatIR rep && containsHit(rep.items()))
-				return true;
+	private SIDScoreIR.InstrumentIR validateVoiceInstruments(List<SIDScoreIR.VoiceItemIR> items,
+			SIDScoreIR.InstrumentIR instr, String voice) {
+		for (SIDScoreIR.VoiceItemIR item : items) {
+			if (item instanceof SIDScoreIR.SetInstrumentIR change) {
+				instr = instruments.get(change.instrumentName());
+				if (instr == null)
+					throw new IllegalStateException(voice + " references undefined instrument: " + change.instrumentName());
+			} else if (item instanceof SIDScoreIR.HitIR && !instr.hasWave(SIDScoreIR.Wave.NOISE)) {
+				throw new IllegalStateException(voice + " uses X but instrument is not NOISE: " + instr.name());
+			} else if (item instanceof SIDScoreIR.LegatoScopeIR leg) {
+				instr = validateVoiceInstruments(leg.items(), instr, voice);
+			} else if (item instanceof SIDScoreIR.TupletIR tup) {
+				instr = validateVoiceInstruments(tup.items(), instr, voice);
+			} else if (item instanceof SIDScoreIR.RepeatIR rep) {
+				for (int i = 0; i < rep.times(); i++)
+					instr = validateVoiceInstruments(rep.items(), instr, voice);
+			}
 		}
-		return false;
+		return instr;
 	}
 
 	private Path baseDir() {
@@ -954,6 +957,10 @@ public final class ScoreBuildingListener extends SIDScoreParserBaseListener {
 		if (currentVoice == null)
 			return;
 
+		if (ctx.instrumentChange() != null) {
+			currentVoice.emit(new SIDScoreIR.SetInstrumentIR(ctx.instrumentChange().ID().getText()));
+			return;
+		}
 		if (ctx.OCTAVE() != null) {
 			int o = parsePrefixedInt(ctx.OCTAVE().getText(), 'O');
 			currentVoice.setOctave(o);

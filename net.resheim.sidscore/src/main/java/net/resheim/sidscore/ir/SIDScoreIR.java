@@ -316,7 +316,8 @@ public final class SIDScoreIR {
 	}
 
 	public sealed interface VoiceItemIR
-			permits NoteIR, RestIR, HitIR, SetDefaultLengthIR, SetSwingIR, SetTempoIR, TieIR, LegatoScopeIR, TupletIR, RepeatIR {
+			permits NoteIR, RestIR, HitIR, SetDefaultLengthIR, SetSwingIR, SetTempoIR, SetInstrumentIR, TieIR,
+			LegatoScopeIR, TupletIR, RepeatIR {
 	}
 
 	public static final record NoteIR(PitchIR pitch, Optional<LengthIR> length, boolean dotted) implements VoiceItemIR {
@@ -335,6 +336,9 @@ public final class SIDScoreIR {
 	}
 
 	public static final record SetTempoIR(int tempoBpm) implements VoiceItemIR {
+	}
+
+	public static final record SetInstrumentIR(String instrumentName) implements VoiceItemIR {
 	}
 
 	public static final record TieIR() implements VoiceItemIR {
@@ -361,7 +365,15 @@ public final class SIDScoreIR {
 	}
 
 	public static final record TimedEvent(TimedType type, int durationTicks, OptionalInt pitchMidi,
-			Optional<GateMode> gateMode) {
+			Optional<GateMode> gateMode, Optional<InstrumentIR> instrument) {
+		public TimedEvent(TimedType type, int durationTicks, OptionalInt pitchMidi, Optional<GateMode> gateMode) {
+			this(type, durationTicks, pitchMidi, gateMode, Optional.empty());
+		}
+
+		public TimedEvent withInstrument(InstrumentIR instrument) {
+			return new TimedEvent(type, durationTicks, pitchMidi, gateMode, Optional.of(instrument));
+		}
+
 		public static TimedEvent note(int midi, int ticks, GateMode gate) {
 			return new TimedEvent(TimedType.NOTE, ticks, OptionalInt.of(midi), Optional.of(gate));
 		}
@@ -459,76 +471,13 @@ public final class SIDScoreIR {
 					filterModesByVoice.put(v, instr.filterModeMask());
 				}
 
-				if (instr.pwSeq().isPresent()) {
-					String tableName = instr.pwSeq().get();
-					TableIR table = tables.get(tableName);
-					if (table == null) {
-						diag.error("Instrument '" + instr.name() + "': PWSEQ references undefined TABLE: "
-								+ tableName);
-					} else if (table.type() != TableType.PW) {
-						diag.error("Instrument '" + instr.name() + "': PWSEQ references non-PW TABLE: " + tableName);
-					}
-				}
-				if (instr.waveSeq().isPresent()) {
-					String tableName = instr.waveSeq().get();
-					TableIR table = tables.get(tableName);
-					if (table == null) {
-						diag.error("Instrument '" + instr.name() + "': WAVESEQ references undefined TABLE: "
-								+ tableName);
-					} else if (table.type() != TableType.WAVE) {
-						diag.error("Instrument '" + instr.name() + "': WAVESEQ references non-wave TABLE: "
-								+ tableName);
-					}
-				}
-				if (instr.gateSeq().isPresent()) {
-					String tableName = instr.gateSeq().get();
-					TableIR table = tables.get(tableName);
-					if (table == null) {
-						diag.error("Instrument '" + instr.name() + "': GATESEQ references undefined TABLE: "
-								+ tableName);
-					} else if (table.type() != TableType.GATE) {
-						diag.error("Instrument '" + instr.name() + "': GATESEQ references non-gate TABLE: "
-								+ tableName);
-					}
-				}
-				if (instr.pitchSeq().isPresent()) {
-					String tableName = instr.pitchSeq().get();
-					TableIR table = tables.get(tableName);
-					if (table == null) {
-						diag.error("Instrument '" + instr.name() + "': PITCHSEQ references undefined TABLE: "
-								+ tableName);
-					} else if (table.type() != TableType.PITCH) {
-						diag.error("Instrument '" + instr.name() + "': PITCHSEQ references non-pitch TABLE: "
-								+ tableName);
-					}
-				}
-				if (instr.filterSeq().isPresent()) {
-					String tableName = instr.filterSeq().get();
-					TableIR table = tables.get(tableName);
-					if (table == null) {
-						diag.error("Instrument '" + instr.name() + "': FILTERSEQ references undefined TABLE: "
-								+ tableName);
-					} else if (table.type() != TableType.FILTER) {
-						diag.error("Instrument '" + instr.name() + "': FILTERSEQ references non-filter TABLE: "
-								+ tableName);
-					}
-				}
+				validateInstrument(instr, tables, diag);
 
-				boolean hasPwParams = instr.pw().isPresent() || instr.pwMin().isPresent() || instr.pwMax().isPresent()
-						|| instr.pwSweep() != 0 || instr.pwSeq().isPresent();
-				if (!instr.hasWave(Wave.PULSE) && hasPwParams) {
-					diag.warn("Instrument '" + instr.name() + "': PW/PWM set but wave is " + instr.waveMaskString()
-							+ " (ignored by SID).");
-				}
-				boolean hasFilterParams = instr.filterCutoff().isPresent() || instr.filterRes().isPresent()
-						|| instr.filterSeq().isPresent();
-				if (instr.filterModeMask() == 0 && hasFilterParams) {
-					diag.warn("Instrument '" + instr.name()
-							+ "': FILTER is OFF but filter parameters are set (ignored).");
-				}
-
-				VoiceContext ctx = new VoiceContext(v, instr, score.defaultSwing(), diag, tempoChanges);
+				VoiceContext ctx = new VoiceContext(v, instr, score.instruments(), score.defaultSwing(), diag, tempoChanges);
 				List<TimedEvent> events = resolveVoiceItems(voice.items(), ctx);
+				for (InstrumentIR selected : events.stream().map(e -> e.instrument().orElse(instr)).distinct().toList()) {
+					if (!selected.equals(instr)) validateInstrument(selected, tables, diag);
+				}
 				timedVoices.put(v, new TimedVoice(v, instr, events));
 			}
 
@@ -559,9 +508,81 @@ public final class SIDScoreIR {
 			return new Result(ts, diag);
 		}
 
+		private static void validateInstrument(InstrumentIR instr, Map<String, TableIR> tables, Diagnostics diag) {
+			if (instr.pwSeq().isPresent()) {
+				String tableName = instr.pwSeq().get();
+				TableIR table = tables.get(tableName);
+				if (table == null) {
+					diag.error("Instrument '" + instr.name() + "': PWSEQ references undefined TABLE: "
+						+ tableName);
+				} else if (table.type() != TableType.PW) {
+					diag.error("Instrument '" + instr.name() + "': PWSEQ references non-PW TABLE: " + tableName);
+				}
+			}
+			if (instr.waveSeq().isPresent()) {
+				String tableName = instr.waveSeq().get();
+				TableIR table = tables.get(tableName);
+				if (table == null) {
+					diag.error("Instrument '" + instr.name() + "': WAVESEQ references undefined TABLE: "
+						+ tableName);
+				} else if (table.type() != TableType.WAVE) {
+					diag.error("Instrument '" + instr.name() + "': WAVESEQ references non-wave TABLE: "
+						+ tableName);
+				}
+			}
+			if (instr.gateSeq().isPresent()) {
+				String tableName = instr.gateSeq().get();
+				TableIR table = tables.get(tableName);
+				if (table == null) {
+					diag.error("Instrument '" + instr.name() + "': GATESEQ references undefined TABLE: "
+						+ tableName);
+				} else if (table.type() != TableType.GATE) {
+					diag.error("Instrument '" + instr.name() + "': GATESEQ references non-gate TABLE: "
+						+ tableName);
+				}
+			}
+			if (instr.pitchSeq().isPresent()) {
+				String tableName = instr.pitchSeq().get();
+				TableIR table = tables.get(tableName);
+				if (table == null) {
+					diag.error("Instrument '" + instr.name() + "': PITCHSEQ references undefined TABLE: "
+						+ tableName);
+				} else if (table.type() != TableType.PITCH) {
+					diag.error("Instrument '" + instr.name() + "': PITCHSEQ references non-pitch TABLE: "
+						+ tableName);
+				}
+			}
+			if (instr.filterSeq().isPresent()) {
+				String tableName = instr.filterSeq().get();
+				TableIR table = tables.get(tableName);
+				if (table == null) {
+					diag.error("Instrument '" + instr.name() + "': FILTERSEQ references undefined TABLE: "
+						+ tableName);
+				} else if (table.type() != TableType.FILTER) {
+					diag.error("Instrument '" + instr.name() + "': FILTERSEQ references non-filter TABLE: "
+						+ tableName);
+				}
+			}
+
+			boolean hasPwParams = instr.pw().isPresent() || instr.pwMin().isPresent() || instr.pwMax().isPresent()
+					|| instr.pwSweep() != 0 || instr.pwSeq().isPresent();
+			if (!instr.hasWave(Wave.PULSE) && hasPwParams) {
+				diag.warn("Instrument '" + instr.name() + "': PW/PWM set but wave is " + instr.waveMaskString()
+						+ " (ignored by SID).");
+			}
+			boolean hasFilterParams = instr.filterCutoff().isPresent() || instr.filterRes().isPresent()
+					|| instr.filterSeq().isPresent();
+			if (instr.filterModeMask() == 0 && hasFilterParams) {
+				diag.warn("Instrument '" + instr.name()
+						+ "': FILTER is OFF but filter parameters are set (ignored).");
+			}
+
+		}
+
 		private static final class VoiceContext {
 			final int voiceIndex;
-			final InstrumentIR instrument;
+			InstrumentIR instrument;
+			final Map<String, InstrumentIR> instruments;
 			final Diagnostics diag;
 			final Map<Integer, TempoChangeIR> tempoChanges;
 			int tick = 0;
@@ -571,10 +592,12 @@ public final class SIDScoreIR {
 			boolean inLegato = false;
 			int swingPhase = 0; // for 8ths only
 
-			VoiceContext(int voiceIndex, InstrumentIR instrument, SwingSetting defaultSwing, Diagnostics diag,
+			VoiceContext(int voiceIndex, InstrumentIR instrument, Map<String, InstrumentIR> instruments,
+					SwingSetting defaultSwing, Diagnostics diag,
 					Map<Integer, TempoChangeIR> tempoChanges) {
 				this.voiceIndex = voiceIndex;
 				this.instrument = instrument;
+				this.instruments = instruments;
 				this.swing = defaultSwing;
 				this.diag = diag;
 				this.tempoChanges = tempoChanges;
@@ -591,6 +614,15 @@ public final class SIDScoreIR {
 			for (int i = 0; i < flattened.size(); i++) {
 				VoiceItemIR it = flattened.get(i);
 
+				if (it instanceof SetInstrumentIR change) {
+					InstrumentIR selected = ctx.instruments.get(change.instrumentName());
+					if (selected == null) {
+						ctx.diag.error("VOICE " + ctx.voiceIndex + " references undefined instrument: " + change.instrumentName());
+						break;
+					}
+					ctx.instrument = selected;
+					continue;
+				}
 				if (it instanceof SetTempoIR tempo) {
 					TempoChangeIR change = new TempoChangeIR(ctx.tick, tempo.tempoBpm());
 					TempoChangeIR previous = ctx.tempoChanges.putIfAbsent(ctx.tick, change);
@@ -644,7 +676,7 @@ public final class SIDScoreIR {
 						case REST -> TimedEvent.rest(ticks);
 						case NOISE -> TimedEvent.noise(ticks, computeGate(ctx, lastWasNote));
 						};
-						out.add(te);
+						out.add(te.withInstrument(ctx.instrument));
 						ctx.tick += ticks;
 						lastWasNote = te.type() == TimedType.NOTE || te.type() == TimedType.NOISE;
 						// swing ignored inside tuplets => don't advance swingPhase
@@ -675,7 +707,11 @@ public final class SIDScoreIR {
 					// A tie extends the existing event; preserve its initial attack.
 					TimedEvent merged = TimedEvent.note(prevMidi, previous.durationTicks() + add,
 							previous.gateMode().orElse(GateMode.RETRIG));
-					out.set(out.size() - 1, merged);
+					if (!previous.instrument().orElse(ctx.instrument).equals(ctx.instrument)) {
+						ctx.diag.error("Tie '&' cannot cross an instrument change in VOICE " + ctx.voiceIndex);
+						break;
+					}
+					out.set(out.size() - 1, merged.withInstrument(ctx.instrument));
 					ctx.tick += add;
 					i += 1; // consume next note
 					lastWasNote = true;
@@ -688,7 +724,8 @@ public final class SIDScoreIR {
 								"NOTE in NOISE voice (VOICE " + ctx.voiceIndex + "): pitch may be ignored by backend");
 					}
 					int ticks = resolveDurationTicks(n.length(), n.dotted(), ctx, true);
-					out.add(TimedEvent.note(n.pitch().toMidi(), ticks, computeGate(ctx, lastWasNote)));
+					out.add(TimedEvent.note(n.pitch().toMidi(), ticks, computeGate(ctx, lastWasNote))
+							.withInstrument(ctx.instrument));
 					ctx.tick += ticks;
 					lastWasNote = true;
 					advanceSwingPhaseIfRelevant(n.length(), ctx);
@@ -697,7 +734,7 @@ public final class SIDScoreIR {
 
 				if (it instanceof RestIR r) {
 					int ticks = resolveDurationTicks(r.length(), r.dotted(), ctx, true);
-					out.add(TimedEvent.rest(ticks));
+					out.add(TimedEvent.rest(ticks).withInstrument(ctx.instrument));
 					ctx.tick += ticks;
 					lastWasNote = false;
 					advanceSwingPhaseIfRelevant(r.length(), ctx);
@@ -712,7 +749,8 @@ public final class SIDScoreIR {
 						break;
 					}
 					int ticks = resolveDurationTicks(h.length(), h.dotted(), ctx, true);
-					out.add(TimedEvent.noise(ticks, computeGate(ctx, lastWasNote)));
+					out.add(TimedEvent.noise(ticks, computeGate(ctx, lastWasNote))
+							.withInstrument(ctx.instrument));
 					ctx.tick += ticks;
 					lastWasNote = true;
 					advanceSwingPhaseIfRelevant(h.length(), ctx);
