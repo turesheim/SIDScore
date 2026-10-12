@@ -1,0 +1,15 @@
+TITLE "One voice, three instruments"
+AUTHOR "SIDScore"
+TEMPO 120
+SYSTEM PAL
+
+INSTR lead WAVE=PULSE ADSR=0,4,10,4 PW=$0800
+INSTR bass WAVE=SAW ADSR=2,3,8,5
+INSTR drum WAVE=NOISE ADSR=0,3,0,3
+
+VOICE 1 lead:
+  O4 L8
+  ( INSTR=lead C E G E INSTR=bass O2 C G > C < G O4 )x2
+  INSTR=drum X X R X
+  INSTR=lead (leg) C E G INSTR=bass O2 C (end)
+  INSTR=lead O4 C2

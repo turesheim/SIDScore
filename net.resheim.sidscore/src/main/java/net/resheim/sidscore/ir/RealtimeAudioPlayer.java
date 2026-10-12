@@ -1293,7 +1293,7 @@ public final class RealtimeAudioPlayer {
 
 	static final class VoiceRuntime implements RuntimeVoice {
 		private final int voiceIndex;
-		private final SIDScoreIR.InstrumentIR baseInstr;
+		private SIDScoreIR.InstrumentIR baseInstr;
 		private SIDScoreIR.InstrumentIR instr;
 		private final List<FrameEventCompiler.FrameEvent> events;
 		private final double sidClockHz;
@@ -1534,6 +1534,12 @@ public final class RealtimeAudioPlayer {
 		}
 
 		private void start(FrameEventCompiler.FrameEvent e, float sr) {
+			if (e.instrument() != null && !e.instrument().equals(baseInstr)) {
+				applyGateValue(false, sr);
+				baseInstr = e.instrument();
+				loadInstrument(resolveInstrument(), sr, true);
+			}
+
 			if (e.frames() <= 0) {
 				done = true;
 				resetSidState();

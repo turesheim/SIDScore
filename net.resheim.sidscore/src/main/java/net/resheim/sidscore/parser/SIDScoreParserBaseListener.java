@@ -1,4 +1,4 @@
-// Generated from SIDScoreParser.g4 by ANTLR 4.13.2
+// Generated from SIDScoreParser.g4 by ANTLR 4.13.1
 package net.resheim.sidscore.parser;
 
 import org.antlr.v4.runtime.ParserRuleContext;
@@ -576,6 +576,18 @@ public class SIDScoreParserBaseListener implements SIDScoreParserListener {
 	 * <p>The default implementation does nothing.</p>
 	 */
 	@Override public void exitVoiceItem(SIDScoreParser.VoiceItemContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void enterInstrumentChange(SIDScoreParser.InstrumentChangeContext ctx) { }
+	/**
+	 * {@inheritDoc}
+	 *
+	 * <p>The default implementation does nothing.</p>
+	 */
+	@Override public void exitInstrumentChange(SIDScoreParser.InstrumentChangeContext ctx) { }
 	/**
 	 * {@inheritDoc}
 	 *

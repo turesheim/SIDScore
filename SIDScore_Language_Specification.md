@@ -765,7 +765,7 @@ VOICE <1|2|3> <instrument> :
 Rules:
 - Voice index MUST be 1, 2, or 3
 - `<instrument>` MUST reference a defined INSTR
-- Instrument changes inside a voice body are **not allowed in v0.1**
+- The header instrument is the initial selection; `INSTR=<name>` changes it inside the voice body.
 - `EFFECT` definitions do not define persistent voices; they define short-lived SID parameter timelines
 
 ## 7. Voice Body Syntax
@@ -773,6 +773,33 @@ Rules:
 A voice body is a **linear sequence of tokens** evaluated left-to-right.
 
 ### 7.1 Voice-Local State
+
+#### Instrument Selection
+
+```
+INSTR=<name>
+```
+
+- `<name>` MUST reference a defined `INSTR`, including imported instruments.
+- Selection is voice-local and consumes no musical time. It applies to the next note, rest, or hit
+  and persists until another selection; octave, length, swing, and tempo are preserved.
+- Changes are allowed inside repeats and legato scopes. Selection persists after a scope closes,
+  and repeats evaluate changes on each iteration. State changes remain forbidden inside tuplets.
+- A different instrument loads its complete settings, including ADSR, pulse width/sweep,
+  waveform, sync/ring, filter, vibrato, and attached tables. Its next sounding event retriggers,
+  even in legato; tables restart with the new note. Selecting the same instrument is a no-op.
+- A tie MUST NOT span a change to a different instrument. `X` is legal only when the active
+  instrument includes `NOISE`.
+- Realtime/WAV playback and ASM/PRG/SID/module exports support the same selections.
+- The SID filter remains global: routing follows the active instruments, and the last filter update wins.
+
+Example:
+
+```
+INSTR lead WAVE=PULSE ADSR=0,4,10,4 PW=$0800
+INSTR bass WAVE=SAW ADSR=2,3,8,5
+VOICE 1 lead: O4 L8 C E G INSTR=bass O2 C G INSTR=lead O4 E C
+```
 
 #### Octave
 
@@ -986,7 +1013,7 @@ Semantics:
 
 Rules:
 - `X` is only legal if the instrument waveform includes `NOISE`
-- Using `X` in a non-NOISE voice is a compile error
+- Using `X` while the active instrument does not include `NOISE` is a compile error
 
 Example:
 

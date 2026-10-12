@@ -1,4 +1,4 @@
-// Generated from SIDScoreParser.g4 by ANTLR 4.13.2
+// Generated from SIDScoreParser.g4 by ANTLR 4.13.1
 package net.resheim.sidscore.parser;
 import org.antlr.v4.runtime.tree.ParseTreeListener;
 
@@ -477,6 +477,16 @@ public interface SIDScoreParserListener extends ParseTreeListener {
 	 * @param ctx the parse tree
 	 */
 	void exitVoiceItem(SIDScoreParser.VoiceItemContext ctx);
+	/**
+	 * Enter a parse tree produced by {@link SIDScoreParser#instrumentChange}.
+	 * @param ctx the parse tree
+	 */
+	void enterInstrumentChange(SIDScoreParser.InstrumentChangeContext ctx);
+	/**
+	 * Exit a parse tree produced by {@link SIDScoreParser#instrumentChange}.
+	 * @param ctx the parse tree
+	 */
+	void exitInstrumentChange(SIDScoreParser.InstrumentChangeContext ctx);
 	/**
 	 * Enter a parse tree produced by {@link SIDScoreParser#noteOrRestOrHit}.
 	 * @param ctx the parse tree

@@ -82,6 +82,15 @@
     "instrumentDeclaration": {
       "patterns": [
         {
+          "name": "meta.instrument.selection.sidscore",
+          "match": "\\b(INSTR)\\s*(=)\\s*([A-Za-z_][A-Za-z0-9_]*)\\b",
+          "captures": {
+            "1": { "name": "keyword.control.instrument.sidscore" },
+            "2": { "name": "keyword.operator.assignment.sidscore" },
+            "3": { "name": "variable.other.instrument.sidscore" }
+          }
+        },
+        {
           "name": "meta.instrument.sidscore",
           "match": "\\b(INSTR)\\s+([A-Za-z_][A-Za-z0-9_]*)\\b",
           "captures": {

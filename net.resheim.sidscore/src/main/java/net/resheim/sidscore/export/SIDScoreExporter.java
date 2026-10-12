@@ -169,143 +169,19 @@ public final class SIDScoreExporter {
 		sb.append("  sta SID_FCLO\n");
 		sb.append("  sta SID_FCHI\n");
 		sb.append("  sta SID_RESFILT\n");
+		sb.append("  sta filter_routes\n");
 
 		int filterRouteMask = 0;
 		for (int v = 1; v <= 3; v++) {
 			SIDScoreIR.TimedVoice tv = score.voices().get(v);
 			SIDScoreIR.InstrumentIR instr = tv != null ? tv.instrument() : null;
-			int ad = 0;
-			int sr = 0;
-			int pw = 0x0800;
-			int pwMin = 0x0000;
-			int pwMax = 0x0FFF;
-			int pwSweep = 0;
-			int waveBits = 0;
-			int ctrlBase = 0;
-			int filterModeMask = 0;
-			int filterModeBits = 0;
-			int filterRes = 0;
-			int filterCutoff = 0;
-			if (instr != null) {
-				ad = ((instr.adsr().a() & 0x0f) << 4) | (instr.adsr().d() & 0x0f);
-				sr = ((instr.adsr().s() & 0x0f) << 4) | (instr.adsr().r() & 0x0f);
-				if (instr.pw().isPresent()) {
-					pw = instr.pw().getAsInt();
-				}
-				if (instr.pwMin().isPresent()) {
-					pwMin = instr.pwMin().getAsInt();
-				}
-				if (instr.pwMax().isPresent()) {
-					pwMax = instr.pwMax().getAsInt();
-				}
-				pwSweep = instr.pwSweep();
-				waveBits = waveMaskToCtrl(instr.waveMask()) & 0xF0;
-				ctrlBase = waveBits | (instr.sync() ? 0x02 : 0x00) | (instr.ring() ? 0x04 : 0x00);
-				filterModeMask = instr.filterModeMask();
-				filterCutoff = instr.filterCutoff().orElse(0) & 0x07FF;
-				filterRes = instr.filterRes().orElse(0) & 0x0F;
-				if ((filterModeMask & SIDScoreIR.FilterMode.LP.mask) != 0)
-					filterModeBits |= 0x10;
-				if ((filterModeMask & SIDScoreIR.FilterMode.BP.mask) != 0)
-					filterModeBits |= 0x20;
-				if ((filterModeMask & SIDScoreIR.FilterMode.HP.mask) != 0)
-					filterModeBits |= 0x40;
-				if (filterModeMask != 0)
-					filterRouteMask |= (1 << (v - 1));
+			if (instrumentProfiles(tv).size() > 1) {
+				sb.append("  jsr v" + v + "_instrument_0.init\n");
+			} else {
+				appendInstrumentInit(sb, instr, v, compactVoiceData);
 			}
-			pw &= 0x0FFF;
-			pwMin &= 0x0FFF;
-			pwMax &= 0x0FFF;
-			if (pwMin > pwMax) {
-				int tmp = pwMin;
-				pwMin = pwMax;
-				pwMax = tmp;
-			}
-			if (pw < pwMin) pw = pwMin;
-			if (pw > pwMax) pw = pwMax;
-
-			int base = sidVoiceBase(v);
-			sb.append("  lda #$" + hex2(ad) + "\n");
-			sb.append("  sta $" + hex4(base + 5) + "\n");
-			sb.append("  lda #$" + hex2(sr) + "\n");
-			sb.append("  sta $" + hex4(base + 6) + "\n");
-			sb.append("  lda #$" + hex2(pw & 0xff) + "\n");
-			sb.append("  sta $" + hex4(base + 2) + "\n");
-			sb.append("  lda #$" + hex2((pw >> 8) & 0xff) + "\n");
-			sb.append("  sta $" + hex4(base + 3) + "\n");
-			sb.append("  lda #$00\n");
-			sb.append("  sta $" + hex4(base + 0) + "\n");
-			sb.append("  sta $" + hex4(base + 1) + "\n");
-			sb.append("  sta $" + hex4(base + 4) + "\n");
-
-			String label = "v" + v;
-			int sweepWord = pwSweep & 0xFFFF;
-			sb.append("  lda #$" + hex2(ctrlBase) + "\n");
-			if (compactVoiceData) {
-				sb.append("  sta " + label + "_ctrl_base\n");
-			}
-			sb.append("  sta " + label + "_ctrl\n");
-			sb.append("  lda #$" + hex2(waveBits) + "\n");
-			sb.append("  sta " + label + "_wave_base\n");
-			sb.append("  sta " + label + "_wave_bits\n");
-			sb.append("  lda #$" + hex2(pw & 0xff) + "\n");
-			sb.append("  sta " + label + "_pw_base\n");
-			sb.append("  sta " + label + "_pw\n");
-			sb.append("  lda #$" + hex2((pw >> 8) & 0xff) + "\n");
-			sb.append("  sta " + label + "_pw_base+1\n");
-			sb.append("  sta " + label + "_pw+1\n");
-			sb.append("  lda #$" + hex2(pwMin & 0xff) + "\n");
-			sb.append("  sta " + label + "_pw_min\n");
-			sb.append("  lda #$" + hex2((pwMin >> 8) & 0xff) + "\n");
-			sb.append("  sta " + label + "_pw_min+1\n");
-			sb.append("  lda #$" + hex2(pwMax & 0xff) + "\n");
-			sb.append("  sta " + label + "_pw_max\n");
-			sb.append("  lda #$" + hex2((pwMax >> 8) & 0xff) + "\n");
-			sb.append("  sta " + label + "_pw_max+1\n");
-			sb.append("  lda #$" + hex2(sweepWord & 0xff) + "\n");
-			sb.append("  sta " + label + "_pw_sweep\n");
-			sb.append("  lda #$" + hex2((sweepWord >> 8) & 0xff) + "\n");
-			sb.append("  sta " + label + "_pw_sweep+1\n");
-			sb.append("  lda #$00\n");
-			sb.append("  sta " + label + "_pw_cnt\n");
-			sb.append("  sta " + label + "_pw_cnt+1\n");
-			sb.append("  sta " + label + "_pw_idx\n");
-			sb.append("  sta " + label + "_wave_cnt\n");
-			sb.append("  sta " + label + "_wave_cnt+1\n");
-			sb.append("  sta " + label + "_wave_idx\n");
-			sb.append("  sta " + label + "_gate_cnt\n");
-			sb.append("  sta " + label + "_gate_cnt+1\n");
-			sb.append("  sta " + label + "_gate_idx\n");
-			sb.append("  sta " + label + "_gate_on\n");
-			sb.append("  sta " + label + "_pitch_cnt\n");
-			sb.append("  sta " + label + "_pitch_cnt+1\n");
-			sb.append("  sta " + label + "_pitch_idx\n");
-			sb.append("  sta " + label + "_pitch_off\n");
-			sb.append("  sta " + label + "_vib_cnt\n");
-			sb.append("  sta " + label + "_vib_cnt+1\n");
-			sb.append("  sta " + label + "_vib_ptr\n");
-			sb.append("  sta " + label + "_vib_ptr+1\n");
-			sb.append("  sta " + label + "_vib_off\n");
-			sb.append("  sta " + label + "_vib_off+1\n");
-			sb.append("  sta " + label + "_active\n");
-			sb.append("  sta " + label + "_noise\n");
-
-			int fcLo = filterCutoff & 0x07;
-			int fcHi = (filterCutoff >> 3) & 0xFF;
-			sb.append("  lda #$" + hex2(fcLo) + "\n");
-			sb.append("  sta " + label + "_filter_base\n");
-			sb.append("  sta " + label + "_filter_cutoff\n");
-			sb.append("  lda #$" + hex2(fcHi) + "\n");
-			sb.append("  sta " + label + "_filter_base+1\n");
-			sb.append("  sta " + label + "_filter_cutoff+1\n");
-			sb.append("  lda #$" + hex2((filterRes << 4) & 0xF0) + "\n");
-			sb.append("  sta " + label + "_filter_res\n");
-			sb.append("  lda #$" + hex2(filterModeBits & 0x70) + "\n");
-			sb.append("  sta " + label + "_filter_mode\n");
-			sb.append("  lda #$00\n");
-			sb.append("  sta " + label + "_filter_cnt\n");
-			sb.append("  sta " + label + "_filter_cnt+1\n");
-			sb.append("  sta " + label + "_filter_idx\n");
+			if (instr != null && instr.filterModeMask() != 0)
+				filterRouteMask |= 1 << (v - 1);
 		}
 
 		sb.append("\n");
@@ -604,6 +480,7 @@ public final class SIDScoreExporter {
 		sb.append("  .word 0\n");
 		sb.append("v3_filter_idx:\n");
 		sb.append("  .byte 0\n");
+		sb.append("filter_routes:\n  .byte 0\n");
 		sb.append("tmp_ptr_save:\n");
 		sb.append("  .word 0\n\n");
 		sb.append("tmp_byte:\n");
@@ -654,50 +531,21 @@ public final class SIDScoreExporter {
 			appendCompactVoiceUpdate(sb, "v2", 2, noiseFreq);
 			appendCompactVoiceUpdate(sb, "v3", 3, noiseFreq);
 		} else {
-			appendRawVoiceUpdate(sb, "v1", 1);
-			appendRawVoiceUpdate(sb, "v2", 2);
-			appendRawVoiceUpdate(sb, "v3", 3);
+			appendRawVoiceUpdate(sb, "v1", 1, instrumentProfiles(score.voices().get(1)).size() > 1);
+			appendRawVoiceUpdate(sb, "v2", 2, instrumentProfiles(score.voices().get(2)).size() > 1);
+			appendRawVoiceUpdate(sb, "v3", 3, instrumentProfiles(score.voices().get(3)).size() > 1);
 		}
 
-		SIDScoreIR.TableIR v1Pw = resolvePwTable(score, 1);
-		SIDScoreIR.TableIR v2Pw = resolvePwTable(score, 2);
-		SIDScoreIR.TableIR v3Pw = resolvePwTable(score, 3);
-		SIDScoreIR.TableIR v1Wave = resolveWaveTable(score, 1);
-		SIDScoreIR.TableIR v2Wave = resolveWaveTable(score, 2);
-		SIDScoreIR.TableIR v3Wave = resolveWaveTable(score, 3);
-		SIDScoreIR.TableIR v1Gate = resolveGateTable(score, 1);
-		SIDScoreIR.TableIR v2Gate = resolveGateTable(score, 2);
-		SIDScoreIR.TableIR v3Gate = resolveGateTable(score, 3);
-		SIDScoreIR.TableIR v1Pitch = resolvePitchTable(score, 1);
-		SIDScoreIR.TableIR v2Pitch = resolvePitchTable(score, 2);
-		SIDScoreIR.TableIR v3Pitch = resolvePitchTable(score, 3);
-		VibratoTable v1Vib = vibratoTables.byVoice().get(1);
-		VibratoTable v2Vib = vibratoTables.byVoice().get(2);
-		VibratoTable v3Vib = vibratoTables.byVoice().get(3);
-		SIDScoreIR.TableIR v1Filter = resolveFilterTable(score, 1);
-		SIDScoreIR.TableIR v2Filter = resolveFilterTable(score, 2);
-		SIDScoreIR.TableIR v3Filter = resolveFilterTable(score, 3);
-		appendPwmUpdate(sb, "v1", 1, v1Pw);
-		appendPwmUpdate(sb, "v2", 2, v2Pw);
-		appendPwmUpdate(sb, "v3", 3, v3Pw);
-		appendWaveSeqUpdate(sb, "v1", 1, v1Wave);
-		appendWaveSeqUpdate(sb, "v2", 2, v2Wave);
-		appendWaveSeqUpdate(sb, "v3", 3, v3Wave);
-		appendGateSeqUpdate(sb, "v1", 1, v1Gate);
-		appendGateSeqUpdate(sb, "v2", 2, v2Gate);
-		appendGateSeqUpdate(sb, "v3", 3, v3Gate);
-		appendPitchSeqUpdate(sb, "v1", 1, v1Pitch);
-		appendPitchSeqUpdate(sb, "v2", 2, v2Pitch);
-		appendPitchSeqUpdate(sb, "v3", 3, v3Pitch);
-		appendVibSeqUpdate(sb, "v1", 1, v1Vib);
-		appendVibSeqUpdate(sb, "v2", 2, v2Vib);
-		appendVibSeqUpdate(sb, "v3", 3, v3Vib);
-		appendApplyNote(sb, "v1", 1);
-		appendApplyNote(sb, "v2", 2);
-		appendApplyNote(sb, "v3", 3);
-		appendFilterSeqUpdate(sb, "v1", 1, v1Filter, filterRouteMask);
-		appendFilterSeqUpdate(sb, "v2", 2, v2Filter, filterRouteMask);
-		appendFilterSeqUpdate(sb, "v3", 3, v3Filter, filterRouteMask);
+		for (int v = 1; v <= 3; v++) {
+			List<SIDScoreIR.InstrumentIR> profiles = instrumentProfiles(score.voices().get(v));
+			if (profiles.size() > 1) {
+				appendSwitchingInstruments(sb, score, v, profiles);
+			} else {
+				appendInstrumentSequences(sb, score, v, vibratoTables.byVoice().get(v), filterRouteMask);
+			}
+			appendApplyNote(sb, "v" + v, v);
+		}
+
 		if (installIrq) {
 			appendPrgVisuals(sb, score);
 		}
@@ -715,6 +563,145 @@ public final class SIDScoreExporter {
 		appendNoteFreqTable(sb, score);
 
 		return sb.toString();
+	}
+
+	private void appendInstrumentInit(StringBuilder sb, SIDScoreIR.InstrumentIR instr, int v, boolean compactVoiceData) {
+		int ad = 0;
+		int sr = 0;
+		int pw = 0x0800;
+		int pwMin = 0x0000;
+		int pwMax = 0x0FFF;
+		int pwSweep = 0;
+		int waveBits = 0;
+		int ctrlBase = 0;
+		int filterModeMask = 0;
+		int filterModeBits = 0;
+		int filterRes = 0;
+		int filterCutoff = 0;
+		if (instr != null) {
+			ad = ((instr.adsr().a() & 0x0f) << 4) | (instr.adsr().d() & 0x0f);
+			sr = ((instr.adsr().s() & 0x0f) << 4) | (instr.adsr().r() & 0x0f);
+			if (instr.pw().isPresent()) {
+				pw = instr.pw().getAsInt();
+			}
+			if (instr.pwMin().isPresent()) {
+				pwMin = instr.pwMin().getAsInt();
+			}
+			if (instr.pwMax().isPresent()) {
+				pwMax = instr.pwMax().getAsInt();
+			}
+			pwSweep = instr.pwSweep();
+			waveBits = waveMaskToCtrl(instr.waveMask()) & 0xF0;
+			ctrlBase = waveBits | (instr.sync() ? 0x02 : 0x00) | (instr.ring() ? 0x04 : 0x00);
+			filterModeMask = instr.filterModeMask();
+			filterCutoff = instr.filterCutoff().orElse(0) & 0x07FF;
+			filterRes = instr.filterRes().orElse(0) & 0x0F;
+			if ((filterModeMask & SIDScoreIR.FilterMode.LP.mask) != 0)
+				filterModeBits |= 0x10;
+			if ((filterModeMask & SIDScoreIR.FilterMode.BP.mask) != 0)
+				filterModeBits |= 0x20;
+			if ((filterModeMask & SIDScoreIR.FilterMode.HP.mask) != 0)
+				filterModeBits |= 0x40;
+		}
+		pw &= 0x0FFF;
+		pwMin &= 0x0FFF;
+		pwMax &= 0x0FFF;
+		if (pwMin > pwMax) {
+			int tmp = pwMin;
+			pwMin = pwMax;
+			pwMax = tmp;
+		}
+		if (pw < pwMin) pw = pwMin;
+		if (pw > pwMax) pw = pwMax;
+
+		int base = sidVoiceBase(v);
+		sb.append("  lda #$" + hex2(ad) + "\n");
+		sb.append("  sta $" + hex4(base + 5) + "\n");
+		sb.append("  lda #$" + hex2(sr) + "\n");
+		sb.append("  sta $" + hex4(base + 6) + "\n");
+		sb.append("  lda #$" + hex2(pw & 0xff) + "\n");
+		sb.append("  sta $" + hex4(base + 2) + "\n");
+		sb.append("  lda #$" + hex2((pw >> 8) & 0xff) + "\n");
+		sb.append("  sta $" + hex4(base + 3) + "\n");
+		sb.append("  lda #$00\n");
+		sb.append("  sta $" + hex4(base + 0) + "\n");
+		sb.append("  sta $" + hex4(base + 1) + "\n");
+		sb.append("  sta $" + hex4(base + 4) + "\n");
+
+		String label = "v" + v;
+		int sweepWord = pwSweep & 0xFFFF;
+		sb.append("  lda #$" + hex2(ctrlBase) + "\n");
+		if (compactVoiceData) {
+			sb.append("  sta " + label + "_ctrl_base\n");
+		}
+		sb.append("  sta " + label + "_ctrl\n");
+		sb.append("  lda #$" + hex2(waveBits) + "\n");
+		sb.append("  sta " + label + "_wave_base\n");
+		sb.append("  sta " + label + "_wave_bits\n");
+		sb.append("  lda #$" + hex2(pw & 0xff) + "\n");
+		sb.append("  sta " + label + "_pw_base\n");
+		sb.append("  sta " + label + "_pw\n");
+		sb.append("  lda #$" + hex2((pw >> 8) & 0xff) + "\n");
+		sb.append("  sta " + label + "_pw_base+1\n");
+		sb.append("  sta " + label + "_pw+1\n");
+		sb.append("  lda #$" + hex2(pwMin & 0xff) + "\n");
+		sb.append("  sta " + label + "_pw_min\n");
+		sb.append("  lda #$" + hex2((pwMin >> 8) & 0xff) + "\n");
+		sb.append("  sta " + label + "_pw_min+1\n");
+		sb.append("  lda #$" + hex2(pwMax & 0xff) + "\n");
+		sb.append("  sta " + label + "_pw_max\n");
+		sb.append("  lda #$" + hex2((pwMax >> 8) & 0xff) + "\n");
+		sb.append("  sta " + label + "_pw_max+1\n");
+		sb.append("  lda #$" + hex2(sweepWord & 0xff) + "\n");
+		sb.append("  sta " + label + "_pw_sweep\n");
+		sb.append("  lda #$" + hex2((sweepWord >> 8) & 0xff) + "\n");
+		sb.append("  sta " + label + "_pw_sweep+1\n");
+		sb.append("  lda #$00\n");
+		sb.append("  sta " + label + "_pw_cnt\n");
+		sb.append("  sta " + label + "_pw_cnt+1\n");
+		sb.append("  sta " + label + "_pw_idx\n");
+		sb.append("  sta " + label + "_wave_cnt\n");
+		sb.append("  sta " + label + "_wave_cnt+1\n");
+		sb.append("  sta " + label + "_wave_idx\n");
+		sb.append("  sta " + label + "_gate_cnt\n");
+		sb.append("  sta " + label + "_gate_cnt+1\n");
+		sb.append("  sta " + label + "_gate_idx\n");
+		sb.append("  sta " + label + "_gate_on\n");
+		sb.append("  sta " + label + "_pitch_cnt\n");
+		sb.append("  sta " + label + "_pitch_cnt+1\n");
+		sb.append("  sta " + label + "_pitch_idx\n");
+		sb.append("  sta " + label + "_pitch_off\n");
+		sb.append("  sta " + label + "_vib_cnt\n");
+		sb.append("  sta " + label + "_vib_cnt+1\n");
+		sb.append("  sta " + label + "_vib_ptr\n");
+		sb.append("  sta " + label + "_vib_ptr+1\n");
+		sb.append("  sta " + label + "_vib_off\n");
+		sb.append("  sta " + label + "_vib_off+1\n");
+		sb.append("  sta " + label + "_active\n");
+		sb.append("  sta " + label + "_noise\n");
+
+		int fcLo = filterCutoff & 0x07;
+		int fcHi = (filterCutoff >> 3) & 0xFF;
+		sb.append("  lda #$" + hex2(fcLo) + "\n");
+		sb.append("  sta " + label + "_filter_base\n");
+		sb.append("  sta " + label + "_filter_cutoff\n");
+		sb.append("  lda #$" + hex2(fcHi) + "\n");
+		sb.append("  sta " + label + "_filter_base+1\n");
+		sb.append("  sta " + label + "_filter_cutoff+1\n");
+		sb.append("  lda #$" + hex2((filterRes << 4) & 0xF0) + "\n");
+		sb.append("  sta " + label + "_filter_res\n");
+		sb.append("  lda #$" + hex2(filterModeBits & 0x70) + "\n");
+		sb.append("  sta " + label + "_filter_mode\n");
+		sb.append("  lda #$00\n");
+		sb.append("  sta " + label + "_filter_cnt\n");
+		sb.append("  sta " + label + "_filter_cnt+1\n");
+		sb.append("  sta " + label + "_filter_idx\n");
+		sb.append("  lda filter_routes\n  and #$" + hex2(0x07 ^ (1 << (v - 1))) + "\n");
+		if (filterModeMask != 0)
+			sb.append("  ora #$" + hex2(1 << (v - 1)) + "\n");
+		sb.append("  sta filter_routes\n");
+		// Preserve resonance while updating only this voice's routing bit.
+		sb.append("  lda SID_RESFILT\n  and #$f8\n  ora filter_routes\n  sta SID_RESFILT\n");
 	}
 
 	public ProgramStats estimateProgramStats(SIDScoreIR.TimedScore score) {
@@ -752,10 +739,21 @@ public final class SIDScoreExporter {
 			tableBytes += table.steps().size() * 4;       // .word additional frames + signed delta
 		}
 
+		for (SIDScoreIR.TimedVoice voice : score.voices().values()) {
+			List<SIDScoreIR.InstrumentIR> profiles = instrumentProfiles(voice);
+			if (profiles.size() <= 1) continue;
+			for (int i = 0; i < profiles.size(); i++) {
+				VibratoTable table = profileVibrato(score, voice, profiles.get(i), i);
+				if (table != null) tableBytes += table.steps().size() * 4;
+			}
+		}
+
 		return new ProgramStats(voiceEventBytes, rawVoiceEventBytes, tableBytes, NOTE_FREQ_TABLE_BYTES);
 	}
 
 	private boolean useCompactVoiceData(SIDScoreIR.TimedScore score) {
+		if (score.voices().values().stream().anyMatch(v -> instrumentProfiles(v).size() > 1))
+			return false;
 		int compactBytes = 0;
 		int rawBytes = 0;
 		for (int voice = 1; voice <= 3; voice++) {
@@ -1057,7 +1055,7 @@ public final class SIDScoreExporter {
 		Files.writeString(outAsm, asm, StandardCharsets.US_ASCII);
 	}
 
-	private void appendRawVoiceUpdate(StringBuilder sb, String label, int voiceIndex) {
+	private void appendRawVoiceUpdate(StringBuilder sb, String label, int voiceIndex, boolean switching) {
 		int base = sidVoiceBase(voiceIndex);
 		String cnt = label.toLowerCase() + "_cnt";
 		String ptr = label.toLowerCase() + "_ptr";
@@ -1093,6 +1091,14 @@ public final class SIDScoreExporter {
 		sb.append("  sta " + cnt + "+1\n");
 		sb.append("  ora " + cnt + "\n");
 		sb.append("  bne " + label + "_has_event\n");
+		if (switching) {
+			sb.append("  ldy #5\n  lda (TMP_PTR),y\n  cmp #$ff\n  bne " + label + "_end_marker\n");
+			sb.append("  ldy #2\n  lda (TMP_PTR),y\n  tax\n  iny\n  lda (TMP_PTR),y\n  sta TMP_PTR+1\n  stx TMP_PTR\n");
+			sb.append("  clc\n  lda " + ptr + "\n  adc #6\n  sta " + ptr + "\n  bcc " + label + "_instrument_advanced\n  inc " + ptr + "+1\n");
+			sb.append(label + "_instrument_advanced:\n  jsr " + label + "_instrument_call\n  jmp " + label + "_load\n");
+			sb.append(label + "_instrument_call:\n  jmp (TMP_PTR)\n");
+			sb.append(label + "_end_marker:\n");
+		}
 		sb.append("  jmp " + label + "_done\n");
 		sb.append(label + "_has_event:\n");
 		sb.append("  iny\n");
@@ -1587,6 +1593,27 @@ public final class SIDScoreExporter {
 		SIDScoreIR.TimedVoice tv = score.voices().get(voiceIndex);
 		SIDScoreIR.InstrumentIR instr = tv != null ? tv.instrument() : null;
 
+		List<SIDScoreIR.InstrumentIR> profiles = instrumentProfiles(tv);
+		if (profiles.size() > 1) {
+			sb.append("// Voice " + voiceIndex + " raw events with instrument commands\n");
+			sb.append("v" + voiceIndex + "_data:\n");
+			SIDScoreIR.InstrumentIR current = instr;
+			for (FrameEventCompiler.FrameEvent event : FrameEventCompiler.compileVoice(tv, score)) {
+				if (event.instrument() != null && !event.instrument().equals(current)) {
+					current = event.instrument();
+					sb.append("  .word 0, v" + voiceIndex + "_instrument_" + profiles.indexOf(current) + ".init\n  .byte 0,$ff\n");
+				}
+				sb.append("  .byte ");
+				List<Integer> bytes = FrameEventCompiler.toBytes(List.of(event));
+				for (int i = 0; i < bytes.size(); i++) {
+					if (i > 0) sb.append(", ");
+					sb.append("$" + hex2(bytes.get(i)));
+				}
+				sb.append("\n");
+			}
+			sb.append("\n");
+			return;
+		}
 		VoiceData data;
 		if (tv != null && instr != null) {
 			data = buildVoiceData(tv, instr, score);
@@ -1634,7 +1661,8 @@ public final class SIDScoreExporter {
 		List<VibratoTable> tables = new ArrayList<>();
 		for (int voiceIndex = 1; voiceIndex <= 3; voiceIndex++) {
 			SIDScoreIR.TimedVoice tv = score.voices().get(voiceIndex);
-			if (tv == null || tv.instrument() == null || !tv.instrument().vibrato().active()) {
+			if (tv == null || tv.instrument() == null || instrumentProfiles(tv).size() > 1
+					|| !tv.instrument().vibrato().active()) {
 				continue;
 			}
 			int referenceMidi = firstMelodicMidi(tv);
@@ -2607,7 +2635,7 @@ public final class SIDScoreExporter {
 		sb.append("  sta SID_FCHI\n");
 		sb.append("  lda " + res + "\n");
 		if (filterRouteMask != 0) {
-			sb.append("  ora #$" + hex2(filterRouteMask & 0x07) + "\n");
+			sb.append("  ora filter_routes\n");
 		}
 		sb.append("  sta SID_RESFILT\n");
 		sb.append("  lda " + mode + "\n");
@@ -2803,12 +2831,104 @@ public final class SIDScoreExporter {
 		sb.append("\n");
 	}
 
+	private static List<SIDScoreIR.InstrumentIR> instrumentProfiles(SIDScoreIR.TimedVoice voice) {
+		if (voice == null || voice.instrument() == null) return List.of();
+		List<SIDScoreIR.InstrumentIR> profiles = new ArrayList<>();
+		profiles.add(voice.instrument());
+		for (SIDScoreIR.TimedEvent event : voice.events()) {
+			SIDScoreIR.InstrumentIR instrument = event.instrument().orElse(voice.instrument());
+			if (!profiles.contains(instrument)) profiles.add(instrument);
+		}
+		return profiles;
+	}
+
+	private static final List<String> INSTRUMENT_ROUTINES = List.of("pwm", "waveseq", "gateseq",
+			"pitchseq", "vibseq", "filterseq");
+
+	private void appendInstrumentVectors(StringBuilder sb, int voice, int profile) {
+		String label = "v" + voice;
+		for (String routine : INSTRUMENT_ROUTINES) {
+			for (String action : List.of("update", "reset")) {
+				String name = label + "_" + routine + "_" + action;
+				String target = label + "_instrument_" + profile + "." + name;
+				sb.append("  lda #<" + target + "\n  sta " + name + "_vector\n");
+				sb.append("  lda #>" + target + "\n  sta " + name + "_vector+1\n");
+			}
+		}
+	}
+
+	private void appendInstrumentSequences(StringBuilder sb, SIDScoreIR.TimedScore score, int voice,
+			VibratoTable vibrato, int routes) {
+		String label = "v" + voice;
+		appendPwmUpdate(sb, label, voice, resolvePwTable(score, voice));
+		appendWaveSeqUpdate(sb, label, voice, resolveWaveTable(score, voice));
+		appendGateSeqUpdate(sb, label, voice, resolveGateTable(score, voice));
+		appendPitchSeqUpdate(sb, label, voice, resolvePitchTable(score, voice));
+		appendVibSeqUpdate(sb, label, voice, vibrato);
+		appendFilterSeqUpdate(sb, label, voice, resolveFilterTable(score, voice), routes);
+	}
+
+	/** Scoped code shares the outer voice state; vectors select the active instrument's table routines. */
+	private void appendSwitchingInstruments(StringBuilder sb, SIDScoreIR.TimedScore score, int voice,
+			List<SIDScoreIR.InstrumentIR> profiles) {
+		String label = "v" + voice;
+		for (String routine : INSTRUMENT_ROUTINES) {
+			for (String action : List.of("update", "reset")) {
+				String name = label + "_" + routine + "_" + action;
+				sb.append(name + ":\n  jmp (" + name + "_vector)\n  .align 2 // Avoid the 6502 indirect-JMP page-boundary bug.\n" + name + "_vector:\n  .word 0\n");
+			}
+		}
+		for (int i = 0; i < profiles.size(); i++) {
+			SIDScoreIR.InstrumentIR instrument = profiles.get(i);
+			Map<Integer, SIDScoreIR.TimedVoice> voices = new LinkedHashMap<>(score.voices());
+			SIDScoreIR.TimedVoice original = voices.get(voice);
+			voices.put(voice, new SIDScoreIR.TimedVoice(voice, instrument, original.events()));
+			SIDScoreIR.TimedScore profileScore = new SIDScoreIR.TimedScore(score.title(), score.author(), score.released(),
+					score.tempoBpm(), score.ticksPerWhole(), score.defaultSwing(), score.system(), score.tables(),
+					score.effects(), voices, score.subtunes(), score.tempoChanges());
+			VibratoTable vibrato = profileVibrato(score, original, instrument, i);
+			sb.append(".namespace " + label + "_instrument_" + i + " {\ninit:\n");
+			appendInstrumentInit(sb, instrument, voice, false);
+			appendInstrumentVectors(sb, voice, i);
+			sb.append("  rts\n");
+			appendInstrumentSequences(sb, profileScore, voice, vibrato,
+					instrument.filterModeMask() != 0 ? 1 << (voice - 1) : 0);
+			if (vibrato != null) appendVibratoTables(sb, List.of(vibrato));
+			sb.append("}\n");
+		}
+	}
+
+	private VibratoTable profileVibrato(SIDScoreIR.TimedScore score, SIDScoreIR.TimedVoice voice,
+			SIDScoreIR.InstrumentIR instrument, int profile) {
+		int reference = voice.events().stream()
+				.filter(e -> e.type() == SIDScoreIR.TimedType.NOTE
+						&& e.instrument().orElse(voice.instrument()).equals(instrument))
+				.mapToInt(e -> clampMidi(e.pitchMidi().orElseThrow())).findFirst().orElse(-1);
+		if (!instrument.vibrato().active() || reference < 0) return null;
+		var v = instrument.vibrato();
+		return buildVibratoTable("v" + voice.index() + "_instrument_" + profile,
+				new VibratoKey(score.system(), reference, v.delay(), v.rate(), v.amp(), v.inc()));
+	}
+
 	private static final record VoiceData(List<Integer> compactBytes, List<Integer> rawBytes, boolean compactSupported) {
 	}
 
 	private VoiceData buildVoiceData(SIDScoreIR.TimedVoice tv, SIDScoreIR.InstrumentIR instr,
 								 SIDScoreIR.TimedScore score) {
 		List<FrameEventCompiler.FrameEvent> events = FrameEventCompiler.compileVoice(tv, score);
+		if (instrumentProfiles(tv).size() > 1) {
+			List<Integer> raw = new ArrayList<>();
+			SIDScoreIR.InstrumentIR current = instr;
+			for (FrameEventCompiler.FrameEvent event : events) {
+				if (event.instrument() != null && !event.instrument().equals(current)) {
+					current = event.instrument();
+					// Relocatable init address is supplied by appendVoiceData; count its six-byte command here.
+					raw.addAll(List.of(0, 0, 0, 0, 0, 0xff));
+				}
+				raw.addAll(FrameEventCompiler.toBytes(List.of(event)));
+			}
+			return new VoiceData(raw, raw, false);
+		}
 		List<Integer> raw = FrameEventCompiler.toBytes(events);
 		List<Integer> compact;
 		boolean compactSupported = true;

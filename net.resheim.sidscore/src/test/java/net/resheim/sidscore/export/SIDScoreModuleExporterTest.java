@@ -243,6 +243,35 @@ public class SIDScoreModuleExporterTest {
 		assertEquals(output, 0, process.waitFor());
 	}
 
+	@Test
+	public void generatedCodeSwitchesCompleteInstrumentsAndRestoresOnInit() throws Exception {
+		Path root = repositoryRoot();
+		Path directory = temporaryFolder.getRoot().toPath();
+		Path source = directory.resolve("instruments.sidscore");
+		Files.writeString(source, """
+				TEMPO 120
+				TABLE wave shape { TRI HOLD }
+				TABLE pw pulse { $0300 HOLD }
+				TABLE pitch bend { 12 HOLD }
+				TABLE filter cutoff { $0600 HOLD }
+				INSTR lead WAVE=PULSE ADSR=0,4,10,4 PW=$0800 FILTER=LP CUTOFF=$0200 RES=3
+				INSTR shaped WAVE=SAW ADSR=2,3,8,5 PW=$0200 WAVESEQ=shape PWSEQ=pulse PITCHSEQ=bend
+				INSTR filtered WAVE=TRI ADSR=0,0,15,0 FILTER=HP CUTOFF=$0400 RES=7 FILTERSEQ=cutoff VIBRATO=0,4,32,0
+				VOICE 1 lead: C4 INSTR=shaped D4 INSTR=filtered E4 INSTR=lead F4
+				VOICE 2 lead: G1
+				""");
+		Files.writeString(directory.resolve("score.asm"), new SIDScoreModuleExporter().generate(source, "Score"));
+		assembleHost(directory, root.resolve("net.resheim.sidscore/lib/KickAss.jar"), "instruments", """
+				*=$3000 "API"
+				.word Score.init, Score.play
+				#import "score.asm"
+				""");
+		Process process = new ProcessBuilder("python3", root.resolve("tools/instrument_runtime_probe.py").toString(),
+				directory.resolve("instruments.prg").toString()).redirectErrorStream(true).start();
+		String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+		assertEquals(output, 0, process.waitFor());
+	}
+
 	private Path repositoryRoot() {
 		Path root = Path.of("").toAbsolutePath().normalize();
 		return Files.exists(root.resolve("examples/test.sidscore")) ? root : root.getParent();
